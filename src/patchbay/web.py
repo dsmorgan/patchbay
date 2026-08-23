@@ -120,6 +120,12 @@ def _conn() -> sqlite3.Connection:
     settings = load_settings()
     conn = sqlite3.connect(settings.db_path)
     conn.row_factory = sqlite3.Row
+    # Not optional, and not only for reads: /ops runs a full poll and normalize
+    # on this connection, and the pragma is per-connection. Without it, a
+    # device retired from the ops page left its interface rows behind while the
+    # identical poll from the CLI cleaned up after itself -- two code paths
+    # with different integrity guarantees, which is the worst kind.
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 

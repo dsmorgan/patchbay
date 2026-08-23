@@ -773,6 +773,13 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
     # housekeeping: raw payloads are a debugging window, not an archive
     conn.execute("DELETE FROM raw_payloads WHERE fetched_at < ?",
                  (db.now() - 7 * 86400,))
+    # Interfaces are keyed by device *id*, so retiring a device (a deleted VM,
+    # a merged duplicate) leaves its ports behind with nothing to join to.
+    # They are invisible on every page and harmless until something counts
+    # rows, but they never leave on their own. Name-keyed tables (fdb,
+    # port_vlans, endpoints) don't need this: their writers refresh them.
+    conn.execute("DELETE FROM interfaces "
+                 "WHERE device_id NOT IN (SELECT id FROM devices)")
     after = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
     n_links = conn.execute("SELECT COUNT(*) FROM links").fetchone()[0]
     return (f"{before} -> {after} devices, {n_links} links, "

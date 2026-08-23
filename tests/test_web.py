@@ -261,3 +261,33 @@ def test_empty_sections_are_hidden(clean_env, tmp_path, client):
     body = client.get("/").text
     assert "<h2>Fabric</h2>" in body and "<h2>Links</h2>" in body
     assert "<h2>Access points</h2>" not in body   # the seed has no APs
+
+
+def test_every_connection_enforces_foreign_keys(clean_env, tmp_path):
+    """The pragma is per-connection, so each place that opens one has to set
+    it. /ops polls and normalizes on the web app's connection, so a missing
+    pragma there silently stopped device retirement from cascading."""
+    import sqlite3
+
+    from patchbay import db as pdb
+    import patchbay.web as web
+
+    dbp = str(tmp_path / "fk.db")
+    clean_env.setenv("PATCHBAY_DB", dbp)
+    with pdb.connect(dbp) as c:
+        pdb.init(c)
+
+    c = web._conn()
+    assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1, "web._conn"
+    c.close()
+    with pdb.connect(dbp) as c:
+        assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1, "db.connect"
+
+    # and the constraint it guards actually cascades through that connection
+    c = web._conn()
+    pdb.init(c)
+    did = pdb.upsert_device(c, name="gone", source="vsphere", role="vm")
+    pdb.upsert_interface(c, device_id=did, name="vmx0")
+    c.execute("DELETE FROM devices WHERE name = 'gone'")
+    assert c.execute("SELECT COUNT(*) FROM interfaces").fetchone()[0] == 0
+    c.close()

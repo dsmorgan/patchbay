@@ -529,3 +529,32 @@ def test_endpoints_on_a_port_are_withdrawn_when_a_link_appears(conn):
     assert conn.execute("SELECT COUNT(*) FROM endpoints").fetchone()[0] == 1
     normalize(conn, declared_links=[("edge1", "e1/1/30", "nas1", "lan2")])
     assert conn.execute("SELECT COUNT(*) FROM endpoints").fetchone()[0] == 0
+
+
+def test_retiring_a_device_takes_its_interfaces_with_it(conn):
+    """Interfaces are keyed by device id and the schema cascades on delete --
+    but only while PRAGMA foreign_keys is ON, which is per-connection. The web
+    app's connection did not set it, so every device retired from a /ops poll
+    left its ports behind, while the same poll from the CLI cleaned up. Found
+    by comparing a long-running database against a fresh install of the same
+    network: the interface counts disagreed by one.
+    """
+    keep = dev(conn, "core1", "librenms", last_seen=NOW, role="switch")
+    doomed = dev(conn, "vm-gone", "vsphere", last_seen=NOW, role="vm")
+    pdb.upsert_interface(conn, device_id=keep, name="1/0/1")
+    pdb.upsert_interface(conn, device_id=doomed, name="vmx0")
+
+    # exactly what the ops-page connection used to do: retire a guest with
+    # the constraint unenforced
+    conn.commit()   # SQLite ignores the pragma inside a transaction
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DELETE FROM devices WHERE name = 'vm-gone'")
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON")
+    assert conn.execute("SELECT COUNT(*) FROM interfaces").fetchone()[0] == 2
+
+    normalize(conn)
+    left = [r[0] for r in conn.execute(
+        "SELECT name FROM interfaces WHERE device_id NOT IN (SELECT id FROM devices)")]
+    assert left == [], left
+    assert [r[0] for r in conn.execute("SELECT name FROM interfaces")] == ["1/0/1"]

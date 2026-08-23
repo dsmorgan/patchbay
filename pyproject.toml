@@ -1,6 +1,6 @@
 [project]
 name = "patchbay"
-version = "0.1.0"
+version = "0.1.1"
 description = "Unified visual console for homelab networks"
 readme = "README.md"
 license = { file = "LICENSE" }

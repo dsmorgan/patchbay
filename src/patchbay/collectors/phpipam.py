@@ -62,8 +62,10 @@ class PhpIpamCollector:
                     continue
                 fetched.append((s, self._get(client, settings, f"subnets/{s['id']}/addresses/")))
             conn.execute("DELETE FROM ipam_addresses")  # full refresh: IPAM is the master here
+            seen_cidrs: list[str] = []
             for s, addrs in fetched:
                 cidr = f"{s['subnet']}/{s['mask']}"
+                seen_cidrs.append(cidr)
                 db.upsert_subnet(
                     conn, cidr=cidr, source=NAME,
                     description=s.get("description"),
@@ -94,6 +96,20 @@ class PhpIpamCollector:
                             conn, mac=mac, source=NAME,
                             ip=a.get("ip"), hostname=a.get("hostname"),
                         )
+            # Retire subnets phpIPAM no longer documents. The address book
+            # above gets a full refresh, but subnets were upsert-only, so one
+            # deleted in phpIPAM stayed on the VLAN pages and in drift for
+            # good. Guarded on a non-empty listing, like every other prune: an
+            # IPAM hiccup returning zero subnets must not wipe the table.
+            # phpIPAM is the only writer of `subnets`, so scoping by source is
+            # both safe and complete. `vlans` gets no such prune -- three
+            # collectors write it and the conflict clause doesn't update
+            # `source`, so the column can't say who owns a row.
+            if seen_cidrs:
+                q = ",".join("?" * len(seen_cidrs))
+                conn.execute(
+                    f"DELETE FROM subnets WHERE source = ? AND cidr NOT IN ({q})",
+                    (NAME, *seen_cidrs))
         return f"{n_subnets} subnets, {n_vlans} vlans, {n_addrs} addresses"
 
 

@@ -6,6 +6,33 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [0.1.1] — 2026-08-23
+
+Three fixes, all found by deploying 0.1.0 fresh against a real network and
+comparing the result to a database that had been running for weeks. Each one
+is invisible to a fresh install and only shows up over time, so none was
+reachable from the test suite as it stood.
+
+### Fixed
+
+- **The ops page polled without foreign keys enforced.** `PRAGMA foreign_keys`
+  is per-connection, and the web app's connection never set it. `/ops` runs a
+  full poll and normalize on that connection, so a device retired there left
+  its interface rows behind, while the identical poll from `patchbay poll`
+  cleaned up correctly — two code paths with different integrity guarantees.
+- **phpIPAM never retired subnets it stopped reporting.** The address book got
+  a full refresh each poll but subnets were upsert-only, so a subnet deleted in
+  phpIPAM stayed on the VLAN pages and in the drift report indefinitely. Now
+  pruned, scoped to phpIPAM's own rows and guarded on a non-empty listing.
+  VLANs are deliberately left alone: three collectors write that table and the
+  `source` column can't say who owns a row.
+- **Retired devices left orphaned interfaces.** Normalize now sweeps interface
+  rows whose device is gone, which repairs databases already carrying them
+  rather than only preventing new ones.
+
+A database carrying all three now converges on exactly what a fresh install
+produces, across every table.
+
 ## [0.1.0] — 2026-08-23
 
 First tagged release. Everything below is read-only: patchbay never writes to
@@ -67,4 +94,5 @@ token server-side and recolors graphs in transit.
   work for topology, load, and status, but their per-port VLAN membership
   falls back to SNMP and declarations.
 
+[0.1.1]: https://github.com/dsmorgan/patchbay/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.1.0

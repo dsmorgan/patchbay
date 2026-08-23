@@ -197,3 +197,81 @@ def test_vsphere_retracts_its_labels_when_a_real_collector_appears(conn):
 
     names = sorted(r[0] for r in conn.execute("SELECT name FROM interfaces"))
     assert names == ["vmx0", "vmx1"], names
+
+
+class ShrinkingClient:
+    """Serves two subnets, then only the first — a subnet deleted in phpIPAM."""
+
+    subnets = [
+        {"subnet": "192.0.2.0", "mask": "24", "id": 1, "sectionId": 1},
+        {"subnet": "198.51.100.0", "mask": "24", "id": 2, "sectionId": 1},
+    ]
+
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, url, **kw):
+        if url.endswith("vlan/"):
+            return FakeResponse([])
+        if url.endswith("subnets/"):
+            return FakeResponse(self.subnets)
+        return FakeResponse([])
+
+
+def test_phpipam_retires_subnets_it_stops_reporting(conn, clean_env, monkeypatch):
+    """Subnets were upsert-only while the address book got a full refresh, so
+    a subnet deleted in phpIPAM stayed on the VLAN pages and in drift forever.
+    Caught by comparing a long-running database against a fresh install: the
+    older one held three prefixes its own last poll had not reported."""
+    from patchbay.collectors.phpipam import PhpIpamCollector
+    from patchbay.config import load_settings
+
+    clean_env.setenv("IPAM_URL", "https://ipam.example/api")
+    clean_env.setenv("IPAM_APP_ID", "app")
+    clean_env.setenv("IPAM_TOKEN", "t")
+    monkeypatch.setattr(httpx, "Client", ShrinkingClient)
+
+    PhpIpamCollector().collect(load_settings(), conn)
+    assert {r[0] for r in conn.execute("SELECT cidr FROM subnets")} == {
+        "192.0.2.0/24", "198.51.100.0/24"}
+
+    # the second subnet is deleted in phpIPAM
+    ShrinkingClient.subnets = ShrinkingClient.subnets[:1]
+    try:
+        PhpIpamCollector().collect(load_settings(), conn)
+        assert {r[0] for r in conn.execute("SELECT cidr FROM subnets")} == {
+            "192.0.2.0/24"}
+
+        # a source that returns nothing is a hiccup, not a decommission: the
+        # guard every other prune uses applies here too
+        ShrinkingClient.subnets = []
+        PhpIpamCollector().collect(load_settings(), conn)
+        assert {r[0] for r in conn.execute("SELECT cidr FROM subnets")} == {
+            "192.0.2.0/24"}
+    finally:
+        ShrinkingClient.subnets = [
+            {"subnet": "192.0.2.0", "mask": "24", "id": 1, "sectionId": 1},
+            {"subnet": "198.51.100.0", "mask": "24", "id": 2, "sectionId": 1},
+        ]
+
+
+def test_phpipam_never_prunes_another_sources_subnets(conn, clean_env, monkeypatch):
+    """The prune is scoped by source. phpIPAM is the only writer today, but a
+    site-specific or third-party collector writing subnets must not have them
+    swept away by an unrelated IPAM poll."""
+    from patchbay.collectors.phpipam import PhpIpamCollector
+    from patchbay.config import load_settings
+
+    pdb.upsert_subnet(conn, cidr="203.0.113.0/24", source="netbox")
+    clean_env.setenv("IPAM_URL", "https://ipam.example/api")
+    clean_env.setenv("IPAM_APP_ID", "app")
+    clean_env.setenv("IPAM_TOKEN", "t")
+    monkeypatch.setattr(httpx, "Client", ShrinkingClient)
+    PhpIpamCollector().collect(load_settings(), conn)
+    assert "203.0.113.0/24" in {r[0] for r in conn.execute("SELECT cidr FROM subnets")}
