@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block refresh %}{% endblock %}
+{% block title %}sign in — patchbay{% endblock %}
+{% block main %}
+<div class="card" style="max-width: 340px; margin: 3rem auto; padding: 1.4rem">
+  <div class="name" style="margin-bottom: 0.8rem">Sign in</div>
+  {% if error %}<p style="color: var(--crit); font-size: 0.85rem">{{ error }}</p>{% endif %}
+  {% if mode == "password" %}
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{{ next }}">
+    <input type="password" name="password" placeholder="password" autofocus
+           style="width: 100%; padding: 0.5rem 0.7rem; border-radius: 6px;
+                  border: 1px solid var(--line); background: var(--bg);
+                  color: var(--ink); font: inherit">
+    <button type="submit"
+            style="margin-top: 0.7rem; width: 100%; padding: 0.5rem;
+                   border-radius: 6px; border: 1px solid var(--accent);
+                   background: transparent; color: var(--accent); font: inherit;
+                   cursor: pointer">enter</button>
+  </form>
+  {% elif mode == "oidc" %}
+  <a href="/auth/oidc/login?next={{ next | urlencode }}"
+     style="display: block; text-align: center; padding: 0.5rem;
+            border-radius: 6px; border: 1px solid var(--accent)">
+    sign in with SSO</a>
+  {% endif %}
+</div>
+{% endblock %}

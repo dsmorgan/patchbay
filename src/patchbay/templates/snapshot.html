@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>patchbay snapshot — {{ generated }}</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
+{% include "_style.html" %}
+<style>
+  details { margin-bottom: 0.5rem; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+  details pre { background: var(--card); border: 1px solid var(--line);
+                border-radius: 8px; padding: 0.8rem 1rem; font-size: 0.75rem;
+                overflow-x: auto; }
+  section.dev { margin-bottom: 1.8rem; scroll-margin-top: 1rem; }
+  .snapgraphs { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.5rem; }
+  .snapgraphs figure { margin: 0; }
+  .snapgraphs figcaption { color: var(--muted); font-size: 0.72rem;
+                           font-family: ui-monospace, Menlo, monospace; }
+  .snapgraphs img { max-width: 640px; width: 100%; border-radius: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>{% include "_mark.html" %}patchbay snapshot</h1>
+  <nav class="muted">generated {{ generated }} · build {{ BUILD }}</nav>
+  <span class="ages">data age at generation: {% for s, m in ages.items() %}{{ s }} {{ m }}m{{ " · " if not loop.last }}{% endfor %}</span>
+</header>
+<main>
+<p class="muted" style="max-width: 76ch">Break-glass snapshot: fully
+self-contained, needs no network. Everything below is as of generation time.
+Device configs are redacted, but treat the file itself as sensitive — it
+describes a real network.</p>
+
+{% set snapshot = true %}
+{% include "_topomap.html" %}
+
+<h2 id="devices">Devices ({{ devices | length }})</h2>
+{% for d in devices %}
+<section class="dev" id="dev-{{ d.name }}">
+  <div class="card {{ d.role }}" style="max-width: 560px">
+    <div class="name"><span class="dot {{ d.status }}"></span>{{ d.name }}</div>
+    <div class="sub">{{ d.role or '?' }} · {{ d | hw or '?' }}</div>
+    <div class="sub">{{ d.os or '' }}{% if d.serial %} · s/n {{ d.serial }}{% endif %}</div>
+    <div class="sub mono">{{ d.mgmt_ip or '' }}{% if d.parent %} · on {{ d.parent }}{% endif %}</div>
+  </div>
+  {% if d.ports %}
+  <div class="scroll" style="margin-top: 0.5rem">
+  <table>
+    <tr><th>Port</th><th>Oper</th><th>Admin</th><th>Speed</th><th>MAC</th><th>Description</th></tr>
+    {% for p in d.ports %}
+    <tr>
+      <td class="mono">{{ p.name }}</td>
+      <td><span class="dot {{ 'up' if p.oper_status == 'up' else 'down' }}"></span>{{ p.oper_status or '?' }}</td>
+      <td class="muted">{{ p.admin_status or '-' }}</td>
+      <td class="mono">{{ p.speed_bps | speed }}</td>
+      <td class="mono muted">{{ p.mac or '-' }}</td>
+      <td class="muted">{{ p.description or '' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% endif %}
+  {% if d.graphs %}
+  <div class="snapgraphs">
+    {% for g in d.graphs %}
+    <figure><figcaption>{{ d.name }} {{ g.iface }} · 24h</figcaption>
+      <img src="{{ g.uri }}" alt="{{ d.name }} {{ g.iface }} traffic"></figure>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+
+<h2>Links ({{ links | length }})</h2>
+<div class="scroll">
+<table>
+  <tr><th>A</th><th>Port</th><th>B</th><th>Port</th><th>Evidence</th></tr>
+  {% for l in links %}
+  <tr>
+    <td>{{ l.a_device }}</td><td class="mono">{{ l.a_interface }}</td>
+    <td>{{ l.b_device }}</td><td class="mono">{{ l.b_interface }}</td>
+    <td class="muted">{{ l.source }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+
+<h2>VLANs ({{ vlans | length }})</h2>
+<div class="scroll">
+<table>
+  <tr><th>VID</th><th>Name</th><th>Devices carrying</th></tr>
+  {% for v in vlans %}
+  <tr><td class="mono">{{ v.vid }}</td><td>{{ v.name or '-' }}</td>
+      <td class="mono">{{ v.devices }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+
+<h2>Subnets ({{ subnets | length }}{% if n_ipam %} · {{ n_ipam }} IPAM addresses at generation{% endif %})</h2>
+<div class="scroll">
+<table>
+  <tr><th>CIDR</th><th>Description</th><th>VLAN</th><th>Source</th></tr>
+  {% for s in subnets %}
+  <tr><td class="mono">{{ s.cidr }}</td><td>{{ s.description or '-' }}</td>
+      <td class="mono">{{ s.vlan or '-' }}</td><td class="muted">{{ s.source }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+
+<h2>Endpoints ({{ endpoints | length }}) — ARP / leases / FDB / IPAM</h2>
+<div class="scroll">
+<table>
+  <tr><th>Hostname</th><th>IP</th><th>MAC</th><th>Seen at</th><th>Port / SSID</th><th>VLAN</th></tr>
+  {% for e in endpoints %}
+  <tr>
+    <td>{{ e.hostname or '-' }}</td>
+    <td class="mono">{{ e.ip or '-' }}</td>
+    <td class="mono muted">{{ e.mac }}</td>
+    <td>{{ e.device or '-' }}</td>
+    <td class="mono">{{ e.interface or '-' }}</td>
+    <td class="mono">{{ e.vlan or '-' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+
+{% if gateways %}
+<h2>Gateways</h2>
+<div class="scroll">
+<table>
+  <tr><th>Name</th><th>Address</th><th>Status</th><th>Loss</th><th>Delay</th></tr>
+  {% for g in gateways %}
+  <tr><td>{{ g.name }}</td><td class="mono">{{ g.address or '-' }}</td>
+      <td>{{ g.status or '-' }}</td><td class="mono">{{ g.loss or '-' }}</td>
+      <td class="mono">{{ g.delay or '-' }}</td></tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if configs %}
+<h2>Device configs (redacted)</h2>
+{% for c in configs %}
+<details>
+  <summary>{{ c.name }} — {{ c.lines }} lines{% if c.redacted %}, {{ c.redacted }} redactions{% endif %}</summary>
+  <pre>{{ c.text }}</pre>
+</details>
+{% endfor %}
+{% endif %}
+</main>
+</body>
+</html>

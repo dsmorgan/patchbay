@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block refresh %}{% endblock %}{# a diff being read must not vanish — and ?v=current refetches live config on every reload #}
+{% block title %}{{ node }} configs — patchbay{% endblock %}
+{% block crumb %}<span class="muted">/ <a href="/configs">configs</a> / {{ node }}</span>{% endblock %}
+{% block main %}
+
+<style>
+  pre.cfg { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+            padding: 0.8rem 1rem; overflow-x: auto; font-size: 0.78rem; line-height: 1.45; }
+  .dl-add { color: var(--ok); } .dl-del { color: var(--crit); }
+  .dl-hunk { color: var(--accent); } .dl-ctx { color: var(--muted); }
+</style>
+
+<h2>Versions — {{ node }}
+  <a class="mono" style="text-transform: none; letter-spacing: 0" href="/configs/{{ node }}?v=current">view running config</a></h2>
+{% if error %}
+<p><span class="dot down"></span><span class="muted">{{ error }}</span></p>
+{% endif %}
+{% if versions %}
+<div class="scroll"><table>
+  <tr><th>when</th><th>commit</th><th>message</th><th></th><th></th></tr>
+  {% for v in versions %}
+  <tr>
+    <td class="muted">{{ v.date or "" }}</td>
+    <td class="mono">{{ v.oid[:10] }}</td>
+    <td class="muted">{{ v.message }}</td>
+    <td><a href="/configs/{{ node }}?v={{ v.oid }}">view</a></td>
+    <td>{% if v.prev %}<a href="/configs/{{ node }}?v={{ v.oid }}&prev={{ v.prev }}">diff vs previous</a>{% else %}<span class="muted">first version</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% elif not error %}
+<p class="muted">No versions recorded yet for this node.</p>
+{% endif %}
+
+{% if diff_lines is not none %}
+<h2>Diff <span class="mono" style="text-transform: none">{{ prev[:10] }} → {{ want[:10] }}</span></h2>
+{% if diff_lines %}
+<pre class="cfg">{% for cls, ln in diff_lines %}<span class="dl-{{ cls }}">{{ ln }}</span>
+{% endfor %}</pre>
+{% else %}
+<p class="muted">No differences between these two versions.</p>
+{% endif %}
+{% elif text is not none %}
+<h2>{{ "Running config (live fetch)" if want == "current" else "Config @ " + want[:10] }}</h2>
+<pre class="cfg">{{ text }}</pre>
+{% endif %}
+
+{% endblock %}

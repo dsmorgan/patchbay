@@ -1,0 +1,449 @@
+{# The interactive topology map: toolbar + svg + legend + all its JS.
+   Shared verbatim by the live /topology page and the offline snapshot —
+   set `snapshot = true` before including to inline d3, stub persistence,
+   and turn device clicks into in-page anchors. #}
+<style>
+  main { max-width: none; }  /* the map earns the whole viewport */
+  #topo { width: 100%; height: 72vh; min-height: 500px; background: var(--bg);
+          border: 1px solid var(--line); border-radius: 8px; cursor: grab; }
+  #topo:active { cursor: grabbing; }
+  /* edge color = who reported the link (teal switch · blue hypervisor ·
+     ink operator · grey infra), dash = stated vs inferred */
+  .edge { stroke: var(--muted); opacity: 0.7; fill: none; }
+  .edge.lldp, .edge.fdbuplink { stroke: var(--accent); }
+  .edge.declared { stroke: var(--ink); }
+  .edge.vspherehint { stroke: var(--r-hyp); }
+  .edge.fdbuplink { stroke-dasharray: 7 3; }
+  .edge.fdbinference { stroke-dasharray: 5 4; }
+  .edge.virtualized { stroke-dasharray: 3 5; opacity: 0.65; stroke: var(--r-hyp); }
+  .edge.wan { stroke-dasharray: 8 4; }
+  .edge.oob { stroke-dasharray: 2 4; opacity: 0.6; }
+  .edge.fdbhost { opacity: 0.45; }
+  .portlab, .speedlab { font: 10.5px ui-monospace, Menlo, monospace; fill: var(--muted);
+             paint-order: stroke; stroke: var(--bg); stroke-width: 3.5px; }
+  .portlab.trunk { fill: var(--accent); font-weight: 600; }
+  /* a mirror destination carries copies, not conversation — mark the port and
+     lighten the cable so it doesn't read as a normal path through the fabric */
+  .portlab.monitor { fill: var(--r-firewall); font-weight: 600; }
+  .edge.monitor { opacity: 0.4; }
+  .speedlab { fill: var(--accent); font-weight: 600; }
+  /* the *speed label* warns — the line keeps its evidence color */
+  .speedlab.slow { fill: var(--warn); }    /* ≤100M */
+  .speedlab.vslow { fill: var(--crit); }   /* ≤10M */
+  .node rect { fill: var(--card); stroke: var(--line); stroke-width: 1.4; }
+  .node.switch rect { stroke: var(--r-switch); }
+  .node.firewall rect { stroke: var(--r-firewall); }
+  .node.hypervisor rect { stroke: var(--r-hyp); }
+  .node.ap rect { stroke: var(--r-ap); }
+  .node:hover rect, .node:hover ellipse { stroke-width: 2.6; }
+  .node.pinned rect { stroke-width: 2; }
+  .node text.nm { font: 600 12.5px -apple-system, system-ui, sans-serif; fill: var(--ink); }
+  .node text.sub { font: 10.5px -apple-system, system-ui, sans-serif; fill: var(--muted); }
+  .node.unmanaged-switch rect { stroke-dasharray: 5 4; stroke: var(--muted); }
+  .node { cursor: pointer; }
+  .ricon { fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: 0.5;
+           stroke-linecap: round; stroke-linejoin: round; }
+  /* colored roles match the legend's full brightness; unmanaged/host stay
+     dimmed with the base rule */
+  .node.switch .ricon { stroke: var(--r-switch); opacity: 1; }
+  .node.firewall .ricon { stroke: var(--r-firewall); opacity: 1; }
+  .node.hypervisor .ricon { stroke: var(--r-hyp); opacity: 1; }
+  .node.ap .ricon { stroke: var(--r-ap); opacity: 1; }
+  .legend svg.licon { width: 16px; height: 16px; vertical-align: -3px; }
+  .sdot.up { fill: var(--ok); } .sdot.down { fill: var(--crit); }
+  .sdot.unknown, .sdot.notResponding, .sdot.disabled { fill: var(--warn); }
+  .toolbar { display: flex; align-items: center; gap: 0.4rem 1rem; flex-wrap: wrap;
+             margin-bottom: 0.55rem; font-size: 0.8rem; }
+  .toolbar label { display: inline-flex; align-items: center; gap: 0.35rem;
+                   cursor: pointer; user-select: none; color: var(--ink); }
+  .toolbar input { accent-color: var(--accent); }
+  .toolbar select { background: var(--card); color: var(--ink); border: 1px solid var(--line);
+                    border-radius: 4px; font-size: 0.78rem; padding: 0.1rem 0.2rem; }
+  .toolbar .grp { display: inline-flex; align-items: center; gap: 0.55rem;
+                  padding: 0.25rem 0.6rem; border: 1px solid var(--line);
+                  border-radius: 999px; background: var(--card); }
+  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1.1rem;
+            margin-top: 0.6rem; color: var(--muted); font-size: 0.76rem; }
+  .legend .item { display: inline-flex; align-items: center; gap: 0.4rem; white-space: nowrap; }
+  .legend .item svg { flex: none; display: block; }
+  .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+  .legend .hint { flex-basis: 100%; font-size: 0.72rem; opacity: 0.75; }
+</style>
+
+<div class="toolbar">
+  <span class="grp">
+    <label><input type="checkbox" id="hideoff" checked> hide offline &amp; unlinked</label>
+    <label><input type="checkbox" id="coreonly"> core only</label>
+    <label><input type="checkbox" id="hosts"> wired hosts</label>
+    <label><input type="checkbox" id="unmhosts"> behind unmanaged</label>
+  </span>
+  <span class="grp">
+    <label><input type="checkbox" id="loadview"> load</label>
+    <select id="loadmode">
+      <option value="now">now</option>
+      <option value="peak">24h peak{% if not peak_ready %} — no samples{% endif %}</option>
+    </select>
+    {% if not peak_ready %}<span class="muted" style="font-size: 0.72rem"
+      title="peaks come from poll samples; nothing has polled in the last 24h">⚠</span>{% endif %}
+  </span>
+  <span class="grp">
+    <label for="vlansel">vlan</label>
+    <select id="vlansel"></select>
+  </span>
+</div>
+
+<svg id="topo"></svg>
+
+<p class="legend" id="legend">
+  <span class="item"><svg width="30" height="10"><line x1="0" y1="7" x2="12" y2="7" stroke="var(--muted)" stroke-width="1.4"/><line x1="16" y1="5" x2="30" y2="5" stroke="var(--muted)" stroke-width="5"/></svg> thicker = faster</span>
+  <span class="item lnksrc"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--accent)" stroke-width="2"/></svg> LLDP/CDP-confirmed</span>
+  <span class="item lnksrc"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--accent)" stroke-width="2" stroke-dasharray="7 3"/></svg> switch MAC-table (inferred)</span>
+  <span class="item lnksrc"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-hyp)" stroke-width="2"/></svg> hypervisor-reported</span>
+  <span class="item lnksrc"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-hyp)" stroke-width="2" stroke-dasharray="3 5"/></svg> VM on host</span>
+  <span class="item lnksrc"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--ink)" stroke-width="2"/></svg> declared (operator)</span>
+  <span class="item lnksrc"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--muted)" stroke-width="2" stroke-dasharray="5 4"/></svg> unmanaged feed</span>
+  <span class="item lnksrc"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--muted)" stroke-width="2" stroke-dasharray="8 4"/></svg> WAN</span>
+  <span class="item lnksrc"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--muted)" stroke-width="2" stroke-dasharray="2 4"/></svg> BMC / out-of-band</span>
+  <span class="item">ports: <span class="mono" style="color: var(--accent); font-weight: 600">1/2/2</span> trunk · <span class="mono">1/1/5</span> access · <span class="mono" style="color: var(--r-firewall); font-weight: 600">1/0/14</span> port mirror · <span class="mono">[n]</span> patch panel</span>
+  <span class="item">nodes:
+    <svg class="licon" data-role="switch" style="color: var(--r-switch)"></svg> switch
+    <svg class="licon" data-role="firewall" style="color: var(--r-firewall)"></svg> firewall
+    <svg class="licon" data-role="hypervisor" style="color: var(--r-hyp)"></svg> VM host
+    <svg class="licon" data-role="ap" style="color: var(--r-ap)"></svg> AP
+    <svg class="licon" data-role="unmanaged-switch" style="color: var(--muted)"></svg> unmanaged
+    <svg class="licon" data-role="host" style="color: var(--muted)"></svg> wired host</span>
+  <span class="item" id="leg-heat" style="display: none">load:
+    <span class="swatch" style="background: var(--line)"></span>no data
+    <span class="swatch" style="background: #5b84a8"></span>idle
+    <span class="swatch" style="background: #4a9d6e"></span>&lt;5%
+    <span class="swatch" style="background: #8fc45f"></span>&lt;15%
+    <span class="swatch" style="background: #c9cf56"></span>&lt;30%
+    <span class="swatch" style="background: var(--warn)"></span>&lt;60%
+    <span class="swatch" style="background: var(--crit)"></span>60%+
+    <span id="leg-peak" style="display: none">· pk = 24h peak</span></span>
+  <span class="item" id="leg-vlan" style="display: none; color: var(--ink)"></span>
+  <span class="hint">drag pins a node{% if not snapshot %} (persists) · shift-click unpins · reset layout clears all pins{% endif %} · scroll zooms · background pans · hover an edge for speed, load &amp; VLANs · click a device for detail</span>
+</p>
+
+{% if snapshot %}<script>{{ d3_js | safe }}</script>
+{% else %}<script src="/static/d3.v7.min.js"></script>
+{% endif %}
+<script>
+const SNAPSHOT = {{ "true" if snapshot else "false" }};
+const graph = {{ graph_json | safe }};
+const svg = d3.select("#topo");
+const { width, height } = svg.node().getBoundingClientRect();
+const rankY = { "-1": height * 0.06, 0: height * 0.22, 1: height * 0.52, 2: height * 0.86 };
+const CORE_ROLES = new Set(["cloud", "firewall", "switch", "hypervisor"]);
+const OFF_STATUS = new Set(["down", "notresponding", "disabled"]);
+
+// degree from the raw data, before d3 rewrites link endpoints into objects
+const degree = {}, oobPartner = {}, byName = {};
+graph.nodes.forEach(n => byName[n.name] = n);
+graph.links.forEach(l => { degree[l.source] = (degree[l.source] || 0) + 1;
+                           degree[l.target] = (degree[l.target] || 0) + 1;
+                           if (l.cls.startsWith("oob")) {
+                             oobPartner[l.source] = l.target;
+                             oobPartner[l.target] = l.source;
+                           } });
+
+// parallel-link fan-out: links sharing a device pair get perpendicular offsets
+const pairCount = {};
+graph.links.forEach(l => {
+  const k = [l.source, l.target].sort().join(" ");
+  l._pair = k; pairCount[k] = (pairCount[k] || 0) + 1;
+});
+const seen = {};
+graph.links.forEach(l => {
+  const i = (seen[l._pair] = (seen[l._pair] || 0) + 1) - 1;
+  l.off = (i - (pairCount[l._pair] - 1) / 2) * 14;
+  l.stag = i * 20;  // stagger port labels along the edge so parallel runs stay legible
+  // mid-edge speed labels are wide (~90px): spread them symmetrically around
+  // the midpoint by a full label-width so parallel pairs never collide
+  l.sstag = (i - (pairCount[l._pair] - 1) / 2) * 100;
+});
+
+const g = svg.append("g");
+svg.call(d3.zoom().scaleExtent([0.4, 3]).on("zoom", e => g.attr("transform", e.transform)));
+
+// even slot targets per rank keep unpinned nodes spread instead of
+// center-crowded; recomputed whenever toggles change what's visible
+function assignSlots(nodes) {
+  const byRank = {};
+  nodes.forEach(n => (byRank[n.rank] = byRank[n.rank] || []).push(n));
+  Object.values(byRank).forEach(members => {
+    members.sort((a, b) => (a.fx ?? a.x ?? 0) - (b.fx ?? b.x ?? 0) || a.name.localeCompare(b.name));
+    members.forEach((n, i) => { n.sx = (i + 1) * width / (members.length + 1); });
+  });
+}
+assignSlots(graph.nodes);
+graph.nodes.forEach(n => {
+  n.x = n.px ?? n.sx;
+  n.y = n.py ?? rankY[n.rank];
+  if (n.px != null) { n.fx = n.px; n.fy = n.py; }
+});
+
+const link = g.append("g").selectAll("line").data(graph.links).join("line")
+    .attr("class", d => `edge ${d.cls}`)
+    .attr("stroke-width", d => d.sw);
+link.append("title").text(d =>
+    `${d.source} ${d.alab || ""} ↔ ${d.target} ${d.blab || ""}` +
+    `${d.speed ? ` · ${d.speed}` : ""}${d.util != null ? ` · ${d.util}% used` : ""}` +
+    `${d.vlans ? ` · vlans ${d.vlans.length > 8 ? d.vlans.length + " (all)" : d.vlans.join(",")}` : ""}` +
+    `${d.note ? `\n${d.note}` : ""}`);
+const alab = g.append("g").selectAll("text").data(graph.links.filter(d => d.alab)).join("text")
+    .attr("class", d => "portlab" + (d.amode ? " " + d.amode : "")).text(d => d.alab);
+const blab = g.append("g").selectAll("text").data(graph.links.filter(d => d.blab)).join("text")
+    .attr("class", d => "portlab" + (d.bmode ? " " + d.bmode : "")).text(d => d.blab);
+const slab = g.append("g").selectAll("text").data(graph.links.filter(d => d.speed)).join("text")
+    .attr("class", d => "speedlab" + (d.cls.includes("vslow") ? " vslow"
+                                      : d.cls.includes("slow") ? " slow" : ""))
+    .attr("text-anchor", "middle").text(d => d.speed);
+
+// role icons come from the shared server-side dictionary (web.py ICONS)
+const ICONS = {{ ICONS | tojson }};
+
+const node = g.append("g").selectAll("g").data(graph.nodes).join("g")
+    .attr("class", d => `node ${d.role}` + (d.px != null ? " pinned" : ""));
+node.filter(d => d.role !== "cloud").append("rect")
+    .attr("x", d => -d.w / 2).attr("y", -24).attr("width", d => d.w).attr("height", 48)
+    .attr("rx", 8);
+node.filter(d => d.role === "cloud").append("ellipse")
+    .attr("rx", d => d.w / 2 + 8).attr("ry", 30)
+    .attr("fill", "var(--card)").attr("stroke", "var(--line)");
+node.filter(d => ICONS[d.role]).append("path")
+    .attr("class", "ricon").attr("d", d => ICONS[d.role])
+    .attr("transform", d => `translate(${d.w / 2 - 26}, -9)`);
+node.append("circle").attr("class", d => `sdot ${d.status}`)
+    .attr("cx", d => -d.w / 2 + 14).attr("cy", -6).attr("r", 4.5);
+node.append("text").attr("class", "nm").attr("x", d => -d.w / 2 + 24).attr("y", -2)
+    .text(d => d.label ?? d.name);
+node.append("text").attr("class", "sub").attr("x", d => -d.w / 2 + 24).attr("y", 14)
+    .text(d => d.sub);
+node.append("title").text(d => d.title ?? d.name);
+node.on("click", (e, d) => {
+  if (e.defaultPrevented) return;      // this was the tail of a drag
+  if (e.shiftKey && !SNAPSHOT) {       // shift-click unpins (plain click navigates)
+    d.fx = d.fy = null;
+    savePos(d.name, null, null);
+    d3.select(node.nodes()[graph.nodes.indexOf(d)]).classed("pinned", false);
+    sim.alpha(0.3).restart();
+    return;
+  }
+  if (d.role !== "cloud" && d.role !== "host") {
+    if (SNAPSHOT) window.location.hash = "dev-" + d.name;
+    else window.location = `/device/${encodeURIComponent(d.name)}`;
+  }
+});
+
+// offset endpoints for a link, shifted perpendicular for parallel runs
+function ends(d) {
+  const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+  const len = Math.hypot(dx, dy) || 1, px = -dy / len, py = dx / len;
+  return { ax: d.source.x + px * d.off, ay: d.source.y + py * d.off,
+           bx: d.target.x + px * d.off, by: d.target.y + py * d.off };
+}
+// distance from a node's center to its box border along a direction — port
+// labels sit a consistent gap outside the border whatever the edge angle
+function exitDist(n, dx, dy, len) {
+  const ux = Math.abs(dx / len), uy = Math.abs(dy / len);
+  return Math.min(ux > 1e-6 ? (n.w / 2) / ux : Infinity,
+                  uy > 1e-6 ? 24 / uy : Infinity);
+}
+function placePortLabel(sel, d, from, dx, dy) {
+  const len = Math.hypot(dx, dy) || 1;
+  const t = exitDist(from.n, dx, dy, len) + 16 + d.stag;
+  sel.attr("x", from.x + dx / len * t)
+     .attr("y", from.y + dy / len * t + (dy > 0 ? 11 : -5))
+     // text runs away from the node, never back across it
+     .attr("text-anchor", Math.abs(dx) < len * 0.35 ? "middle" : (dx < 0 ? "end" : "start"));
+}
+
+const sim = d3.forceSimulation(graph.nodes)
+    .force("link", d3.forceLink(graph.links).id(d => d.name).distance(200).strength(0.3))
+    .force("charge", d3.forceManyBody().strength(-900))
+    .force("y", d3.forceY(d => rankY[d.rank]).strength(0.9))
+    .force("x", d3.forceX(d => d.sx).strength(0.08))
+    .force("collide", d3.forceCollide(d => d.w / 2 + 26))
+    .on("tick", () => {
+      link.each(function (d) {
+        const e = ends(d);
+        d3.select(this).attr("x1", e.ax).attr("y1", e.ay).attr("x2", e.bx).attr("y2", e.by);
+      });
+      alab.each(function (d) {
+        const e = ends(d);
+        placePortLabel(d3.select(this), d, { n: d.source, x: e.ax, y: e.ay },
+                       e.bx - e.ax, e.by - e.ay);
+      });
+      blab.each(function (d) {
+        const e = ends(d);
+        placePortLabel(d3.select(this), d, { n: d.target, x: e.bx, y: e.by },
+                       e.ax - e.bx, e.ay - e.by);
+      });
+      slab.each(function (d) {
+        const e = ends(d), dx = e.bx - e.ax, dy = e.by - e.ay,
+              len = Math.hypot(dx, dy) || 1;
+        d3.select(this)
+          .attr("x", (e.ax + e.bx) / 2 + dx / len * d.sstag)
+          .attr("y", (e.ay + e.by) / 2 + dy / len * d.sstag - 5);
+      });
+      node.attr("transform", d => `translate(${d.x},${d.y})`);
+    });
+
+// --- visibility toggles -----------------------------------------------------
+function baseVisible(n) {
+  if (n.role === "host" &&
+      !document.getElementById(n.viaUn ? "unmhosts" : "hosts").checked) return false;
+  if (document.getElementById("coreonly").checked && !CORE_ROLES.has(n.role)) return false;
+  if (document.getElementById("hideoff").checked) {
+    if (!degree[n.name]) return false;
+    if (OFF_STATUS.has((n.status || "").toLowerCase())) return false;
+  }
+  return true;
+}
+function nodeVisible(n) {
+  if (baseVisible(n)) return true;
+  // a powered-off box stays on the map while its out-of-band controller is
+  // visible (the BMC being up proves the hardware is racked and reachable)
+  const p = oobPartner[n.name];
+  return !!p && byName[p] != null && baseVisible(byName[p]) &&
+         !(document.getElementById("coreonly").checked && !CORE_ROLES.has(n.role));
+}
+
+// load view: heat-color edges by utilization. Fine steps at the low end —
+// on a lightly-loaded network the interesting differences live under 30%.
+// Ramp gets brighter AND warmer with load so intensity reads correctly on
+// a dark background (dark green would read as *less* than light green).
+function heat(u) {
+  if (u == null) return "var(--line)";   // no measurement (unlike idle, which IS one)
+  if (u < 0.1) return "#5b84a8";         // idle: cold blue — truly nothing moving
+  if (u < 5) return "#4a9d6e";           // green — any real traffic at all
+  if (u < 15) return "#8fc45f";          // bright yellow-green
+  if (u < 30) return "#c9cf56";          // yellow
+  if (u < 60) return "var(--warn)";      // amber
+  return "var(--crit)";                  // red
+}
+// load view and the VLAN overlay both drive edge opacity — a single applier
+// keeps them from fighting (toggling one must never strand the other's dim)
+function currentVid() {
+  const raw = document.getElementById("vlansel").value;
+  return raw === "" ? null : +raw;
+}
+function vlanLit(d) {
+  const vid = currentVid();
+  if (vid == null) return true;
+  const carries = n => (n.vlans || []).includes(vid);
+  return carries(d.source) && carries(d.target) && (!d.vlans || d.vlans.includes(vid));
+}
+function syncEdgeOpacity() {
+  const on = document.getElementById("loadview").checked;
+  const vid = currentVid();
+  link.style("opacity", d => {
+    if (vid != null && !vlanLit(d)) return 0.06;  // the VLAN dim always wins
+    // in load view: uniform (same band must read as the same color);
+    // otherwise fall back to the per-evidence CSS opacities
+    return on ? 0.9 : null;
+  });
+}
+function applyLoadView() {
+  const on = document.getElementById("loadview").checked;
+  const mode = document.getElementById("loadmode").value;
+  const u = d => mode === "peak" ? d.putil : d.util;   // peak = max poll sample, 24h
+  link.style("stroke", on ? d => heat(u(d)) : null);
+  // in load view the question is "how full", not "how known" — drop the
+  // evidence dashes so only heat color and speed thickness speak
+  link.style("stroke-dasharray", on ? "none" : null);
+  syncEdgeOpacity();
+  slab.text(on ? d => (u(d) != null ? `${d.speed} · ${u(d)}%${mode === "peak" ? " pk" : ""}`
+                                    : d.speed)
+               : d => d.speed);
+  // heat coloring overrides stroke colors, so swap the relevant legend items
+  document.getElementById("leg-heat").style.display = on ? "" : "none";
+  document.getElementById("leg-peak").style.display = mode === "peak" ? "" : "none";
+  document.querySelectorAll("#legend .lnksrc").forEach(el => el.style.display = on ? "none" : "");
+}
+document.getElementById("loadview").addEventListener("change", applyLoadView);
+document.getElementById("loadmode").addEventListener("change", applyLoadView);
+function applyFilters() {
+  const vis = new Set(graph.nodes.filter(nodeVisible).map(n => n.name));
+  const linkVisible = d =>
+      vis.has(d.source.name ?? d.source) && vis.has(d.target.name ?? d.target);
+  node.style("display", d => vis.has(d.name) ? null : "none");
+  link.style("display", d => linkVisible(d) ? null : "none");
+  alab.style("display", d => linkVisible(d) ? null : "none");
+  blab.style("display", d => linkVisible(d) ? null : "none");
+  slab.style("display", d => linkVisible(d) ? null : "none");
+  const visNodes = graph.nodes.filter(n => vis.has(n.name));
+  assignSlots(visNodes);
+  sim.nodes(visNodes);
+  sim.force("link").links(graph.links.filter(linkVisible));
+  sim.alpha(0.5).restart();
+}
+document.getElementById("hideoff").addEventListener("change", applyFilters);
+document.getElementById("coreonly").addEventListener("change", applyFilters);
+document.getElementById("hosts").addEventListener("change", applyFilters);
+document.getElementById("unmhosts").addEventListener("change", applyFilters);
+applyFilters();
+
+// --- VLAN overlay: dim everything that doesn't carry the chosen VLAN --------
+const vlansel = document.getElementById("vlansel");
+vlansel.append(new Option("all", ""));
+(graph.vlans || []).forEach(v =>
+    vlansel.append(new Option(v.name ? `${v.vid} · ${v.name}` : `${v.vid}`, v.vid)));
+function applyVlan() {
+  const vid = currentVid();
+  const carries = n => vid == null || (n.vlans || []).includes(vid);
+  node.style("opacity", d => carries(d) ? null : 0.15);
+  // an edge stays lit only if both ends carry the VLAN AND the specific
+  // cable passes it (per-port evidence: filters / IPs seen on the port) —
+  // edge opacity itself goes through the shared applier so the load view
+  // and this overlay compose instead of overwriting each other
+  syncEdgeOpacity();
+  alab.style("opacity", d => vlanLit(d) ? null : 0.06);
+  blab.style("opacity", d => vlanLit(d) ? null : 0.06);
+  slab.style("opacity", d => vlanLit(d) ? null : 0.06);
+  const lv = document.getElementById("leg-vlan");
+  lv.style.display = vid == null ? "none" : "";
+  if (vid != null)
+    lv.textContent = `dimmed = not carrying vlan ${vid}${vlansel.selectedOptions[0].text.includes("·")
+        ? " (" + vlansel.selectedOptions[0].text.split("·")[1].trim() + ")" : ""}`;
+}
+vlansel.addEventListener("change", applyVlan);
+// run once at init: browsers (Firefox notably) restore checkbox/select state
+// across reloads, and the drawing must match whatever came back
+applyLoadView();
+applyVlan();
+
+function savePos(name, x, y) {
+  if (SNAPSHOT) return;  // nothing to persist to — the file IS the state
+  fetch("/api/positions", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, x, y }) }).catch(() => {});
+}
+
+node.call(d3.drag()
+    .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.25).restart(); d.fx = d.x; d.fy = d.y; })
+    .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
+    .on("end", (e, d) => {
+      if (!e.active) sim.alphaTarget(0);
+      savePos(d.name, d.fx, d.fy);
+      d3.select(node.nodes()[graph.nodes.indexOf(d)]).classed("pinned", true);
+    }));
+// legend chips draw the same icons, tinted by role color
+document.querySelectorAll("svg.licon").forEach(s => {
+  s.setAttribute("viewBox", "0 0 18 18");
+  const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", ICONS[s.dataset.role]);
+  p.setAttribute("fill", "none");
+  p.setAttribute("stroke", "currentColor");
+  p.setAttribute("stroke-width", "1.5");
+  p.setAttribute("stroke-linecap", "round");
+  p.setAttribute("stroke-linejoin", "round");
+  s.appendChild(p);
+});
+
+const resetBtn = document.getElementById("resetlayout");
+if (resetBtn) resetBtn.addEventListener("click", e => {
+  e.preventDefault();
+  fetch("/api/positions/reset", { method: "POST" }).then(() => location.reload());
+});
+</script>

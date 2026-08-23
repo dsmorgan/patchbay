@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ sel }} — patchbay{% endblock %}
+{% block crumb %}<span class="muted">/ patch panels</span>{% endblock %}
+{% block main %}
+
+<h2 style="margin-top: 0.4rem; display: flex; align-items: center; gap: 0.8rem">
+  {{ sel }}{% if size %} <span style="text-transform: none; letter-spacing: 0">({{ size }} positions)</span>{% endif %}
+  {% if panels | length > 1 %}
+  <select onchange="location = '?panel=' + encodeURIComponent(this.value)"
+          style="background: var(--card); color: var(--ink); border: 1px solid var(--line);
+                 border-radius: 4px; font-size: 0.8rem; padding: 0.1rem 0.3rem">
+    {% for p in panels %}
+    <option value="{{ p }}" {{ 'selected' if p == sel }}>{{ p }}{% endfor %}
+  </select>
+  {% endif %}
+</h2>
+
+<div class="scroll">
+<table>
+  <tr><th>Position</th><th>Switch</th><th>Port</th><th>Status</th><th>Speed</th><th>Description</th></tr>
+  {% for r in rows %}
+  {% if r.dev %}
+  <tr>
+    <td class="mono">{{ r.port }}</td>
+    <td><a href="/device/{{ r.dev | urlencode }}">{{ r.dev }}</a></td>
+    <td class="mono">{{ r.iface }}</td>
+    <td><span class="dot {{ 'up' if r.oper == 'up' else 'down' }}"></span>{{ r.oper or '?' }}</td>
+    <td class="mono">{{ r.speed | speed }}</td>
+    <td class="muted">{{ r.descr }}</td>
+  </tr>
+  {% else %}
+  <tr>
+    <td class="mono muted">{{ r.port }}</td>
+    <td class="muted">—</td>
+    <td class="muted">—</td>
+    <td class="muted">—</td>
+    <td class="muted">—</td>
+    <td class="muted">—</td>
+  </tr>
+  {% endif %}
+  {% endfor %}
+</table>
+</div>
+{% if not rows %}<p class="muted">No switch port descriptions match this panel's tag pattern yet.</p>{% endif %}
+
+{% endblock %}

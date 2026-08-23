@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block refresh %}{% endblock %}{# results on screen must not vanish mid-read #}
+{% block title %}ops — patchbay{% endblock %}
+{% block crumb %}<span class="muted">/ ops</span>{% endblock %}
+{% block main %}
+
+<h2>Collect now</h2>
+<p class="muted" style="max-width: 62ch; margin-top: 0.2rem">Run the collectors now
+instead of waiting for the next poll. Each source button runs that source alone.
+Rediscovery is slower: MAC tables and CDP/LLDP neighbors refresh only on LibreNMS's
+own discovery cycle, so that button queues one and the results arrive with a later
+poll.</p>
+
+<p style="display: flex; gap: 0.6rem; flex-wrap: wrap">
+  <button class="act" data-url="/ops/poll">poll all sources</button>
+  {% for s in sources %}
+  <button class="act" data-url="/ops/poll?source={{ s }}">{{ s }}</button>
+  {% endfor %}
+  <button class="act" data-url="/ops/rediscover">rediscover (LibreNMS)</button>
+  <button class="act" data-url="/ops/snapshot">snapshot now</button>
+  {% if has_snapshot %}<a href="/ops/snapshot/latest"
+     style="align-self: center; font-size: 0.8rem">download the latest snapshot</a>{% endif %}
+</p>
+
+<pre id="out" class="mono muted" style="display: none; background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px; padding: 0.8rem 1rem;
+  white-space: pre-wrap"></pre>
+
+{% if last_poll %}
+<details style="max-width: 900px">
+  <summary class="muted" style="cursor: pointer; font-size: 0.8rem">
+    Last poll: {{ last_poll.ago }} min ago{% if last_poll.failed %}
+    · <span style="color: var(--crit)">some sources failed</span>{% endif %}</summary>
+  <pre class="mono muted" style="background: var(--card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 0.8rem 1rem; white-space: pre-wrap; font-size: 0.78rem"
+  >{{ last_poll.lines | join("\n") }}</pre>
+</details>
+{% endif %}
+
+<h2>Effective configuration</h2>
+<p class="muted" style="max-width: 62ch; margin-top: 0.2rem">The values patchbay is
+acting on, with secrets redacted. To change one, edit your env file and restart.
+Nothing on this page writes to that file.</p>
+{% if conflicts %}
+<div style="border: 1px solid var(--warn); border-radius: 8px; padding: 0.6rem 1rem;
+            margin-bottom: 0.8rem; max-width: 760px">
+  <div style="color: var(--warn); font-weight: 600; font-size: 0.85rem">
+    ⚠ Declarations that disagree with the network</div>
+  {% for cf in conflicts %}<div style="font-size: 0.8rem; margin-top: 0.2rem">{{ cf }}</div>{% endfor %}
+  <div class="muted" style="font-size: 0.78rem; margin-top: 0.4rem">
+    A port carries one cable. If live discovery contradicts a declaration, the
+    observation wins and patchbay drops the declared link. If only a port
+    description disagrees, patchbay changes nothing and reports it — a
+    description goes stale as easily as a declaration does. Port descriptions
+    never draw links on their own.</div>
+</div>
+{% endif %}
+{% if warnings %}
+<div style="border: 1px solid var(--warn); border-radius: 8px; padding: 0.6rem 1rem;
+            margin-bottom: 0.8rem; max-width: 700px">
+  <div style="color: var(--warn); font-weight: 600; font-size: 0.85rem">
+    ⚠ Skipped configuration entries</div>
+  {% for w in warnings %}<div class="mono" style="font-size: 0.8rem">{{ w }}</div>{% endfor %}
+  <div class="muted" style="font-size: 0.78rem; margin-top: 0.3rem">
+    A skipped declaration does more than go missing: patchbay <em>removes</em> an
+    undeclared link on the next poll. Fix the entry in your env file.</div>
+</div>
+{% endif %}
+<div class="scroll" style="max-width: 900px">
+{% for section, rows in config %}
+<table style="margin-bottom: 1rem">
+  <tr><th colspan="2">{{ section }}</th></tr>
+  {% for k, v in rows %}
+  <tr><td class="mono muted" style="white-space: nowrap; padding-right: 1.4rem">{{ k }}</td>
+      <td class="mono" style="word-break: break-word">{{ v }}</td></tr>
+  {% endfor %}
+</table>
+{% endfor %}
+</div>
+
+<h2>Declarations</h2>
+<p class="muted" style="max-width: 66ch; margin-top: 0.2rem">Facts no protocol can
+discover. Each declaration has one owner. <strong>If your env file sets it, the env
+file wins</strong> and the field here is read-only. Otherwise, edit it here and
+patchbay stores it in its database. Either way, the change takes effect on the next
+poll.</p>
+{% if not decls | selectattr("editable") | list %}
+<p class="muted" style="max-width: 66ch; border-left: 2px solid var(--line);
+   padding-left: 0.8rem; font-size: 0.82rem">
+  Your env file sets every declaration below, so all of them are read-only. That is
+  the precedence rule working, not a missing feature. To manage one from this page,
+  remove its line from the env file and restart.</p>
+{% endif %}
+<div style="max-width: 940px">
+{% for d in decls %}
+  <div style="display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.45rem">
+    <span class="mono muted" style="flex: 0 0 200px; font-size: 0.78rem">{{ d.var }}</span>
+    {% if d.editable %}
+    <input class="dcl mono" data-var="{{ d.var }}" value="{{ d.value }}"
+           placeholder="unset"
+           style="flex: 1; min-width: 0; padding: 0.3rem 0.55rem; border-radius: 6px;
+                  font-size: 0.78rem; border: 1px solid var(--line);
+                  background: var(--bg); color: var(--ink)">
+    <button class="dclsave" data-var="{{ d.var }}"
+            style="flex: 0 0 auto; background: var(--card); color: var(--accent);
+                   border: 1px solid var(--accent); border-radius: 6px;
+                   padding: 0.28rem 0.7rem; font-size: 0.75rem; cursor: pointer">save</button>
+    <span class="muted" style="flex: 0 0 66px; font-size: 0.72rem">{{ d.source or "unset" }}</span>
+    {% else %}
+    <span class="mono" style="flex: 1; min-width: 0; padding: 0.3rem 0.55rem;
+          font-size: 0.78rem; border: 1px dashed var(--line); border-radius: 6px;
+          color: var(--muted); word-break: break-word">{{ d.value or "—" }}</span>
+    <span class="muted" style="flex: 0 0 66px; font-size: 0.72rem"
+          title="set in the env file — edit it there">env file</span>
+    {% endif %}
+  </div>
+{% endfor %}
+</div>
+{% if export %}
+<details style="max-width: 900px; margin-top: 0.6rem">
+  <summary class="muted" style="cursor: pointer; font-size: 0.8rem">
+    Export the declarations stored here as env-file lines</summary>
+  <pre class="mono" style="background: var(--card); border: 1px solid var(--line);
+       border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.78rem">{{ export }}</pre>
+</details>
+{% endif %}
+
+<style>
+  button.act { background: var(--card); color: var(--ink); border: 1px solid var(--accent);
+               border-radius: 999px; padding: 0.35rem 0.9rem; font-size: 0.85rem;
+               cursor: pointer; }
+  button.act:hover { background: var(--line); }
+  button.act:disabled { opacity: 0.5; cursor: wait; }
+</style>
+<script>
+const out = document.getElementById("out");
+const buttons = [...document.querySelectorAll("button.act")];
+buttons.forEach(b => b.addEventListener("click", async () => {
+  buttons.forEach(x => x.disabled = true);
+  out.style.display = "";
+  out.textContent = `running ${b.textContent}…`;
+  try {
+    const r = await fetch(b.dataset.url, {method: "POST"});
+    const body = await r.json();
+    out.textContent = (body.lines || [body.detail || r.statusText]).join("\n");
+  } catch (e) {
+    out.textContent = `failed: ${e}`;
+  }
+  buttons.forEach(x => x.disabled = false);
+}));
+document.querySelectorAll(".dclsave").forEach(a => a.addEventListener("click", async e => {
+  e.preventDefault();
+  const input = document.querySelector(`input.dcl[data-var="${a.dataset.var}"]`);
+  a.textContent = "…";
+  try {
+    const r = await fetch("/ops/config", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({var: a.dataset.var, value: input.value})});
+    const body = await r.json();
+    if (!r.ok) { a.textContent = "save"; alert(body.detail || r.statusText); return; }
+    a.textContent = (body.warnings || []).length ? "⚠ saved" : "saved";
+    if ((body.warnings || []).length) input.title = body.warnings.join("\n");
+    setTimeout(() => { a.textContent = "save"; }, 2500);
+  } catch (err) { a.textContent = "save"; alert(err); }
+}));
+</script>
+
+{% endblock %}

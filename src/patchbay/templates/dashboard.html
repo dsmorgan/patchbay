@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block main %}
+
+{% if onboarding %}
+<div style="border: 1px solid var(--accent); border-radius: 10px;
+            padding: 1rem 1.2rem; margin-bottom: 1.4rem; max-width: 78ch">
+  <h2 style="margin-top: 0">Nothing to show yet</h2>
+  {% if not onboarding.configured %}
+  <p style="margin-top: 0.2rem">patchbay has no data sources configured, so it
+  has nothing to draw. It reads from tools you probably already run — LibreNMS,
+  Oxidized, phpIPAM, UniFi, OPNsense, and vSphere — and correlates them into one
+  picture. Configure whichever you have; each one you add fills in more.</p>
+  <p>Copy <code class="mono">.env.example</code> to
+  <code class="mono">{{ onboarding.env_path }}</code>, fill in the credentials
+  for the tools you run, and restart. Every variable is documented in
+  <a href="https://github.com/dsmorgan/patchbay/blob/main/docs/configuration.md">docs/configuration.md</a>.</p>
+  {% else %}
+  <p style="margin-top: 0.2rem">These sources are configured:
+    <strong>{{ onboarding.configured | join(", ") }}</strong>.
+  {% if onboarding.polled %}The last poll returned no devices — check the
+  per-source results on the <a href="/ops">ops page</a> for failures.{%
+  else %}No poll has run yet. Run one from the <a href="/ops">ops page</a>, or
+  wait for the poller's next cycle.{% endif %}</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="statgrid">
+  {% for key, label in [("ports", "ports"), ("endpoints", "endpoints"),
+                        ("subnets", "subnets"), ("vlans", "vlans")] %}
+  <div class="stat" title="{{ detail[key] }}">
+    <div class="n">{{ counts[key] }}</div>
+    <div class="l">{{ label }}</div>
+    {% if sub.get(key) %}<div class="s">{{ sub[key] }}</div>{% endif %}
+  </div>
+  {% endfor %}
+  {% for g in gateways %}
+  <div class="stat" title="{{ g.name }} via {{ g.address }} — loss {{ g.loss }}, delay {{ g.delay }}">
+    <div class="n"><span class="dot {{ 'up' if g.status == 'Online' else 'down' }}"></span>{{ g.status }}</div>
+    <div class="l">{{ g.name }}</div>
+    <div class="s">{{ g.address }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if fabric %}
+<h2>Fabric</h2>
+<div class="cards">
+  {% for d in fabric %}
+  <div class="card {{ d.role }}">
+    {{ ui.ricon(d.role) }}
+    <div class="name"><span class="dot {{ d.status }}"></span><a href="/device/{{ d.name | urlencode }}">{{ d.name }}</a></div>
+    <div class="sub">{{ d | hw or d.role }} · {{ d.mgmt_ip or '?' }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endif %}
+
+{% if aps %}
+<h2>Access points</h2>
+<div class="cards">
+  {% for d in aps %}
+  <div class="card ap">
+    {{ ui.ricon("ap") }}
+    <div class="name"><span class="dot {{ d.status }}"></span><a href="/device/{{ d.name | urlencode }}">{{ d.name }}</a></div>
+    <div class="sub">{{ d | hw or 'AP' }} · {{ d.mgmt_ip or '?' }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endif %}
+
+{% if hypervisors or vms %}
+<h2>Hypervisors &amp; VMs</h2>
+<div class="cards">
+  {% for d in hypervisors %}
+  <div class="card hypervisor">
+    {{ ui.ricon("hypervisor") }}
+    <div class="name"><span class="dot {{ d.status }}"></span><a href="/device/{{ d.name | urlencode }}">{{ d.name }}</a></div>
+    <div class="sub">{{ d | hw or d.role }} · {{ d.mgmt_ip or '?' }}</div>
+    <div class="sub">
+      {% set up = vms | selectattr('parent', 'equalto', d.name) | selectattr('status', 'equalto', 'up') | list %}
+      {% set all = vms | selectattr('parent', 'equalto', d.name) | list %}
+      {{ up | length }}/{{ all | length }} VMs running
+    </div>
+  </div>
+  {% endfor %}
+</div>
+<div class="scroll">
+<table>
+  <tr><th>VM</th><th>Host</th><th>IP</th><th>Guest OS</th><th>State</th></tr>
+  {% for v in vms %}
+  <tr>
+    <td><span class="dot {{ v.status }}"></span>{{ v.name }}</td>
+    <td class="muted">{{ v.parent or '-' }}</td>
+    <td class="mono">{{ v.mgmt_ip or '-' }}</td>
+    <td class="muted">{{ v.os or '-' }}</td>
+    <td>{{ v.status }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+
+{% endif %}
+
+{% if links %}
+<h2>Links</h2>
+<div class="scroll">
+<table>
+  <tr><th>A</th><th>Port</th><th>B</th><th>Port</th><th>Source</th></tr>
+  {% for l in links %}
+  <tr>
+    <td><a href="/device/{{ l.a_device | urlencode }}">{{ l.a_device }}</a></td>
+    <td class="mono">{{ l.a_interface }}</td>
+    <td><a href="/device/{{ l.b_device | urlencode }}">{{ l.b_device }}</a></td>
+    <td class="mono">{{ l.b_interface }}</td>
+    <td class="muted">{{ l.source }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+
+{% endif %}
+
+{% endblock %}

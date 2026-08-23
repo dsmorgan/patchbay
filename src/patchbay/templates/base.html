@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% block refresh %}<meta http-equiv="refresh" content="60">{% endblock %}
+<title>{% block title %}patchbay{% endblock %}</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
+{% include "_style.html" %}
+</head>
+<body>
+<header>
+  <h1><a href="/">{% include "_mark.html" %}patchbay</a><span class="ver" title="running build">{{ BUILD }}</span></h1>
+  <nav><a href="/topology">topology</a> · <a href="/vlans">vlans</a> ·
+       <a href="/configs">configs</a> · <a href="/drift">drift</a> ·
+       <a href="/patchpanel">patch panels</a> · <a href="/ops">ops</a>{%
+       if request.state.auth and request.state.auth != "-"
+       %} · <a href="/logout" class="muted" title="signed in as {{ request.state.auth }}">logout</a>{% endif %}</nav>
+  {% block crumb %}{% endblock %}
+  {# one honest number: how stale the freshest full picture is. The oldest
+     source sets it, so a stuck collector shows up instead of hiding behind
+     a healthy one; per-source detail is in the tooltip and on /ops. #}
+  <span class="ages">{%- if ages %}{% set oldest = ages.values() | max %}
+    <span class="{{ 'stale' if oldest > 15 }}"
+          title="time since each source last returned data — {% for s, m in ages.items() %}{{ s }} {{ m | round | int }}m{{ ' · ' if not loop.last }}{% endfor %}"
+      >last polled {{ oldest | round | int }} min ago</span>
+    {%- endif %}</span>
+</header>
+<main>{% block main %}{% endblock %}</main>
+</body>
+</html>

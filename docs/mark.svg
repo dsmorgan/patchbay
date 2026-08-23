@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 36" width="40" height="36" role="img" aria-label="patchbay">
+  <!-- Standalone copy of templates/_mark.html for the README, where CSS
+       variables aren't available and GitHub renders both a light and a dark
+       page. Colors are the app's own palette, literal, on the app's own
+       ground, so the tile reads the same in either GitHub theme. Keep it in
+       sync with _mark.html and the favicon in base.html. -->
+  <rect width="40" height="36" rx="6" fill="#12191b"/>
+  <g transform="translate(4 4)">
+    <g fill="#2b383c">
+      <rect x="1" y="1" width="30" height="8" rx="2.2"/>
+      <rect x="1" y="19" width="30" height="8" rx="2.2"/>
+    </g>
+    <g fill="#12191b">
+      <rect x="3" y="2.5" width="4" height="5" rx="1.1"/>
+      <rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/>
+      <rect x="14" y="2.5" width="4" height="5" rx="1.1"/>
+      <rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/>
+      <rect x="25" y="2.5" width="4" height="5" rx="1.1"/>
+      <rect x="3" y="20.5" width="4" height="5" rx="1.1"/>
+      <rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/>
+      <rect x="14" y="20.5" width="4" height="5" rx="1.1"/>
+      <rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/>
+      <rect x="25" y="20.5" width="4" height="5" rx="1.1"/>
+    </g>
+    <g fill="none" stroke-width="2.1" stroke-linecap="round">
+      <path stroke="#4db8c2" d="M5 7.5C5 14 27 14 27 20.5"/>
+      <path stroke="#12191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/>
+      <path stroke="#c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/>
+    </g>
+    <g fill="#4db8c2">
+      <rect x="3" y="2.5" width="4" height="5" rx="1.1"/>
+      <rect x="25" y="20.5" width="4" height="5" rx="1.1"/>
+    </g>
+    <g fill="#c792ea">
+      <rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/>
+      <rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/>
+    </g>
+  </g>
+</svg>

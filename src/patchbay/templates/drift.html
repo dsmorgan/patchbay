@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}drift — patchbay{% endblock %}
+{% block crumb %}<span class="muted">/ drift</span>{% endblock %}
+{% block main %}
+
+<h2>IPAM vs. observed reality</h2>
+{% if not have_ipam %}
+<p class="muted">No IPAM address records collected yet — run <span class="mono">patchbay poll</span> first.</p>
+{% else %}
+<div class="statgrid" style="margin-bottom: 1rem">
+  <div class="stat"><div class="n">{{ in_sync }}</div><div class="l">in sync</div></div>
+  <div class="stat"><div class="n" {% if undocumented %}style="color: var(--warn)"{% endif %}>{{ undocumented | length }}</div><div class="l">live, undocumented</div></div>
+  <div class="stat"><div class="n" {% if conflicts %}style="color: var(--crit)"{% endif %}>{{ conflicts | length }}</div><div class="l">conflicts</div></div>
+  <div class="stat"><div class="n">{{ unseen | length }}</div><div class="l">documented, quiet</div></div>
+</div>
+
+{% if conflicts %}
+<h2>Conflicts — same IP, different story</h2>
+<div class="scroll"><table>
+  <tr><th>ip</th><th>field</th><th>IPAM says</th><th>network says</th></tr>
+  {% for c in conflicts %}
+  <tr>
+    <td class="mono">{% if c.link %}<a href="{{ c.link }}" target="_blank" title="open in IPAM">{{ c.ip }}</a>{% else %}{{ c.ip }}{% endif %}</td>
+    <td>{{ c.kind }}</td>
+    <td class="mono">{{ c.ipam }}</td>
+    <td class="mono">{{ c.live }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+
+<h2>Live on the network, missing from IPAM</h2>
+{% if undocumented %}
+<div class="scroll"><table>
+  <tr><th>ip</th><th>hostname</th><th>mac</th><th>seen at</th><th>subnet</th></tr>
+  {% for e in undocumented %}
+  <tr>
+    <td class="mono">{{ e.ip }}</td>
+    <td>{{ e.hostname or "" }}</td>
+    <td class="mono muted">{{ e.mac or "" }}</td>
+    <td class="muted">{{ e.seen_at or "" }}</td>
+    <td class="mono muted">{{ e.subnet }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% else %}
+<p class="muted">Every live IP inside a documented subnet is documented. Nice.</p>
+{% endif %}
+
+{% if external %}
+<details style="margin-top: 1rem">
+  <summary class="muted" style="cursor: pointer">
+    {{ external | length }} external addresses seen (outside every documented subnet —
+    WAN-side neighbors, typically the carrier's dynamic addressing; informational only)</summary>
+  <div class="scroll"><table>
+    <tr><th>ip</th><th>hostname</th><th>mac</th><th>seen at</th></tr>
+    {% for e in external %}
+    <tr>
+      <td class="mono">{{ e.ip }}</td>
+      <td>{{ e.hostname or "" }}</td>
+      <td class="mono muted">{{ e.mac or "" }}</td>
+      <td class="muted">{{ e.seen_at or "" }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</details>
+{% endif %}
+
+<details style="margin-top: 1rem" {% if unseen and unseen | length <= 30 %}open{% endif %}>
+  <summary class="muted" style="cursor: pointer">
+    {{ unseen | length }} documented fixed addresses not currently observed
+    ({{ n_dhcp_quiet }} quiet DHCP-pool rows hidden — pool churn isn't drift)</summary>
+  <p class="muted" style="font-size: 0.8rem">the decommission check: an address IPAM
+    calls a fixed asset that never shows up on the network may be gear that's gone —
+    or just powered off; absence alone isn't proof</p>
+  {% if unseen %}
+  <div class="scroll"><table>
+    <tr><th>ip</th><th>hostname</th><th>state</th><th>mac</th><th>subnet</th><th>description</th></tr>
+    {% for a in unseen %}
+    <tr>
+      <td class="mono">{% if a.link %}<a href="{{ a.link }}" target="_blank" title="open in IPAM">{{ a.ip }}</a>{% else %}{{ a.ip }}{% endif %}</td>
+      <td>{{ a.hostname or "" }}</td>
+      <td class="muted">{{ a.state or "" }}</td>
+      <td class="mono muted">{{ a.mac or "" }}</td>
+      <td class="mono muted">{{ a.subnet_cidr or "" }}</td>
+      <td class="muted">{{ a.description or "" }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}
+  <p class="muted">Every documented fixed address has been seen live.</p>
+  {% endif %}
+</details>
+{% endif %}
+
+{% endblock %}

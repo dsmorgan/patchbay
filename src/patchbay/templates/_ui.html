@@ -1,0 +1,4 @@
+{# shared UI fragments #}
+{% macro ricon(role) -%}
+{% if ICONS.get(role) %}<svg class="cicon" viewBox="0 0 18 18"><path d="{{ ICONS[role] }}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endif %}
+{%- endmacro %}

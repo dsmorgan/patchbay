@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}configs — patchbay{% endblock %}
+{% block crumb %}<span class="muted">/ configs</span>{% endblock %}
+{% block main %}
+
+<h2>Device configuration history <span class="muted" style="text-transform: none; letter-spacing: 0">(Oxidized)</span></h2>
+
+{% if error == "unconfigured" %}
+<p class="muted">Set <span class="mono">OXIDIZED_URL</span> (e.g.
+<span class="mono">http://oxidized:8888</span>) in the site .env to enable this page.
+The Oxidized container must also publish its REST API: bind
+<span class="mono">rest: 0.0.0.0:8888</span> in its config and map the port in
+docker-compose.</p>
+{% elif error %}
+<p><span class="dot down"></span>Oxidized unreachable at
+<span class="mono">{{ oxidized_url }}</span>: <span class="muted">{{ error }}</span></p>
+{% else %}
+<div class="scroll"><table>
+  <tr><th></th><th>device</th><th>ip</th><th>model</th><th>last backup</th></tr>
+  {% for n in nodes %}
+  <tr>
+    <td><span class="dot {{ 'up' if n.status == 'success' else 'down' if n.status in ('no_connection', 'fail') else 'unknown' }}"></span></td>
+    <td><a href="/configs/{{ n.name | urlencode }}">{{ n.name }}</a></td>
+    <td class="mono muted">{{ n.ip or "" }}</td>
+    <td class="muted">{{ n.model or "" }}</td>
+    <td class="muted">{{ n.time or "never" }} <span class="mono">({{ n.status }})</span></td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}vlans — patchbay{% endblock %}
+{% block crumb %}<span class="muted">/ vlans</span>{% endblock %}
+{% block main %}
+
+<h2>VLANs</h2>
+<p class="muted" style="font-size: 0.8rem">
+  carried by = reports the VLAN (Q-BRIDGE); <em>name*</em> = assumed reachable
+  over a trunk (trunks pass everything unless PATCHBAY_VLAN_FILTER says otherwise) ·
+  live = distinct IPs observed in the subnet (ARP/DHCP/clients) ·
+  documented = IPAM address records ·
+  the <a href="/topology">topology</a> view can highlight any one VLAN
+</p>
+<div class="scroll"><table>
+  <tr><th>vlan</th><th>name</th><th>subnet</th><th>description</th>
+      <th>routed</th><th>live</th><th>documented</th><th>carried by</th></tr>
+  {% for v in vlans %}
+    {% if v.subnets %}
+      {% for s in v.subnets %}
+      <tr>
+        <td class="mono">{{ v.vid if loop.first else "" }}</td>
+        <td>{{ v.name or "" if loop.first else "" }}</td>
+        <td class="mono">{{ s.cidr }}</td>
+        <td class="muted">{{ s.descr or "" }}</td>
+        <td class="mono">{% if s.routed %}{{ s.routed }}{% else %}<span class="muted">isolated</span>{% endif %}</td>
+        <td class="mono">{{ s.live }}</td>
+        <td class="mono">{{ s.ipam }}</td>
+        <td class="muted">{% if loop.first %}{% for d in v.devices %}<a href="/device/{{ d.name | urlencode }}">{{ d.name }}</a>{% if d.assumed %}*{% endif %}{{ ", " if not loop.last }}{% endfor %}{% endif %}</td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr>
+        <td class="mono">{{ v.vid }}</td>
+        <td>{{ v.name or "" }}</td>
+        <td class="muted" colspan="5">no subnet documented in IPAM</td>
+        <td class="muted">{% for d in v.devices %}<a href="/device/{{ d.name | urlencode }}">{{ d.name }}</a>{% if d.assumed %}*{% endif %}{{ ", " if not loop.last }}{% endfor %}</td>
+      </tr>
+    {% endif %}
+  {% endfor %}
+</table></div>
+
+{% if orphans %}
+<h2>Subnets without a VLAN mapping</h2>
+<div class="scroll"><table>
+  <tr><th>subnet</th><th>description</th><th>routed</th><th>live</th><th>documented</th></tr>
+  {% for s in orphans %}
+  <tr>
+    <td class="mono">{{ s.cidr }}</td>
+    <td class="muted">{{ s.descr or "" }}</td>
+    <td class="mono">{% if s.routed %}{{ s.routed }}{% else %}<span class="muted">isolated</span>{% endif %}</td>
+    <td class="mono">{{ s.live }}</td>
+    <td class="mono">{{ s.ipam }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+
+{% if aggregates %}
+<p class="muted" style="font-size: 0.8rem; max-width: 70ch">aggregates —
+no VLAN of their own by design, they contain mapped subnets:
+{% for a in aggregates %}<span class="mono">{{ a.cidr }}</span> ({{ a.n }} mapped){{ " · " if not loop.last }}{% endfor %}</p>
+{% endif %}
+
+{% endblock %}

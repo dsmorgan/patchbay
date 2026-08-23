@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block refresh %}{% endblock %}{# soft refresh below — a hard meta refresh closes open graphs #}
+{% block title %}{{ d.name }} — patchbay{% endblock %}
+{% block crumb %}<span class="muted">/ {{ d.name }}</span>{% endblock %}
+{% block main %}
+
+<div class="card {{ d.role }}" style="max-width: 560px">
+  {{ ui.ricon(d.role) }}
+  <div class="name"><span class="dot {{ d.status }}"></span>{{ d.name }}</div>
+  <div class="sub">{{ d.role or '?' }} · {{ d | hw or '?' }}</div>
+  <div class="sub">{{ d.os or '' }}{% if d.serial %} · s/n {{ d.serial }}{% endif %}</div>
+  <div class="sub mono">{{ d.mgmt_ip or '' }}{% if d.parent %} · on {{ d.parent }}{% endif %}</div>
+</div>
+
+<h2><a href="#" id="htoggle" title="toggle CPU / memory / storage / temperature graphs"
+       style="text-transform: inherit; letter-spacing: inherit; color: inherit">Utilization ▸</a></h2>
+<div id="health" style="display: none; max-width: 740px">
+  <p id="hbar" style="margin: 0.2rem 0 0.3rem"></p>
+  <img data-g="device_processor" style="width: 100%; border-radius: 6px; margin-bottom: 0.5rem" alt="">
+  <img data-g="device_mempool" style="width: 100%; border-radius: 6px; margin-bottom: 0.5rem" alt="">
+  <img data-g="device_storage" style="width: 100%; border-radius: 6px; margin-bottom: 0.5rem" alt="">
+  <img data-g="device_temperature" style="width: 100%; border-radius: 6px" alt="">
+</div>
+<script>
+// collapsed by default, like the port graphs: nothing is fetched until the
+// heading is clicked. Graphs a device doesn't have quietly drop out; if none
+// survive, say so instead of showing an empty section.
+(() => {
+  const box = document.getElementById("health");
+  const toggle = document.getElementById("htoggle");
+  const imgs = [...box.querySelectorAll("img")];
+  const src = (g, h) => `/graph?device={{ d.name | urlencode }}&gtype=${g}&hours=${h}`;
+  const bar = document.getElementById("hbar");
+  let loaded = false;
+  [["24h", 24], ["7d", 168], ["30d", 720], ["1y", 8760]].forEach(([label, h], i) => {
+    const b = document.createElement("a");
+    b.href = "#"; b.textContent = label;
+    b.style.cssText = "margin-right: .8rem; font-size: .75rem; font-weight: " + (i ? "400" : "700");
+    b.addEventListener("click", ev => {
+      ev.preventDefault();
+      window._hold = 1;  // user picked a period — don't auto-reload it away
+      imgs.forEach(im => { if (!im.dataset.dead) im.src = src(im.dataset.g, h); });
+      [...bar.children].forEach(c => c.style.fontWeight = "400");
+      b.style.fontWeight = "700";
+    });
+    bar.appendChild(b);
+  });
+  toggle.addEventListener("click", e => {
+    e.preventDefault();
+    const open = box.style.display === "";
+    box.style.display = open ? "none" : "";
+    toggle.textContent = open ? "Utilization ▸" : "Utilization ▾";
+    if (open) window._hold = 0;  // collapsed — let the soft refresh resume
+    if (open || loaded) return;
+    loaded = true;
+    let alive = imgs.length;
+    imgs.forEach(im => {
+      im.onerror = () => {
+        im.dataset.dead = "1"; im.remove();
+        if (--alive === 0) {
+          bar.textContent = "no utilization data in LibreNMS for this device";
+          bar.className = "muted";
+        }
+      };
+      im.src = src(im.dataset.g, 24);
+    });
+  });
+})();
+</script>
+
+{% if ports or hidden %}
+<h2>Ports ({{ ports | length }}{% if hidden %} shown{% endif %})
+  <span style="text-transform: none; letter-spacing: 0; font-weight: 400">— click a port for its traffic graph</span></h2>
+{% if hidden %}
+<p class="muted" style="font-size: 0.8rem; margin: 0 0 0.5rem">
+  hidden (idle logical):
+  {% for kind, n in hidden.items() %}{{ n }} {{ kind }}{{ ", " if not loop.last }}{% endfor %}
+  — <a href="?all=1">show all</a>
+</p>
+{% elif show_all %}
+<p class="muted" style="font-size: 0.8rem; margin: 0 0 0.5rem"><a href="?">hide idle logical ports</a></p>
+{% endif %}
+<div class="scroll">
+<table>
+  <tr><th>Port</th><th>Oper</th><th>Admin</th><th>Speed</th><th>802.1Q</th><th>MAC</th><th>Description</th></tr>
+  {% for p in ports %}
+  {% set vp = port_vlans.get(p.name.removeprefix("ethernet")) or port_vlans.get(p.name) %}
+  {% set pr = port_roles.get(p.name.removeprefix("ethernet")) or port_roles.get(p.name) %}
+  <tr>
+    <td class="mono"><a href="#" class="pg" data-if="{{ p.name }}" title="toggle 24h traffic graph">{{ p.name }}</a></td>
+    <td><span class="dot {{ 'up' if p.oper_status == 'up' else 'down' }}"></span>{{ p.oper_status or '?' }}</td>
+    <td class="muted">{{ p.admin_status or '-' }}</td>
+    <td class="mono">{{ p.speed_bps | speed }}{% if caps.get(p.name) %} <span class="muted">({{ caps[p.name] | speed }})</span>{% endif %}</td>
+    <td class="mono">{% if pr and pr[0] == 'monitor-dst' %}<span
+        style="color: var(--r-firewall)" title="{{ pr[1] }} — a mirror destination transmits copies of other ports' traffic, so its own MAC table and neighbor reports describe nothing">port mirror</span>{%
+      elif vp %}<span title="{{ vp.why }}">{% if vp.mode == 'trunk' %}<span style="color: var(--accent)">trunk</span>{% else %}<span class="muted">access</span>{% endif %} {{ vp.text }}</span>{%
+      else %}<span class="muted" title="no VLAN configuration parsed for this port, and its address doesn't fall in a known subnet">-</span>{% endif %}</td>
+    <td class="mono muted">{{ p.mac or '-' }}</td>
+    <td class="muted">{{ p.description or '' }}{% if pr and pr[0] == 'monitor-src' %}
+      <span style="color: var(--r-firewall)" title="{{ pr[1] }}">· mirrored</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if links %}
+<h2>Links</h2>
+<div class="scroll">
+<table>
+  <tr><th>A</th><th>Port</th><th>B</th><th>Port</th><th>Source</th></tr>
+  {% for l in links %}
+  <tr>
+    <td><a href="/device/{{ l.a_device | urlencode }}">{{ l.a_device }}</a></td>
+    <td class="mono">{{ l.a_interface }}</td>
+    <td><a href="/device/{{ l.b_device | urlencode }}">{{ l.b_device }}</a></td>
+    <td class="mono">{{ l.b_interface }}</td>
+    <td class="muted">{{ l.source }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if children %}
+<h2>Guests ({{ children | length }})</h2>
+<div class="scroll">
+<table>
+  <tr><th>VM</th><th>IP</th><th>Guest OS</th><th>State</th></tr>
+  {% for v in children %}
+  <tr>
+    <td><span class="dot {{ v.status }}"></span>{{ v.name }}</td>
+    <td class="mono">{{ v.mgmt_ip or '-' }}</td>
+    <td class="muted">{{ v.os or '-' }}</td>
+    <td>{{ v.status }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+
+{% if endpoints %}
+<h2>Endpoints seen here ({{ endpoints | length }})</h2>
+<div class="scroll">
+<table>
+  <tr><th>Hostname</th><th>IP</th><th>MAC</th><th>Port / SSID</th><th>VLAN</th></tr>
+  {% for e in endpoints %}
+  <tr>
+    <td>{{ e.hostname or '-' }}</td>
+    <td class="mono">{{ e.ip or '-' }}</td>
+    <td class="mono muted">{{ e.mac }}</td>
+    <td class="mono">{{ e.interface or '-' }}</td>
+    <td class="mono">{{ e.vlan or '-' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+
+<script>
+// port name click -> toggle a row with the LibreNMS graphs (traffic wide,
+// errors narrow beside it), proxied by /graph. Long windows come from
+// LibreNMS's own years of history — patchbay only keeps 7 days raw.
+document.querySelectorAll("a.pg").forEach(a => a.addEventListener("click", e => {
+  e.preventDefault();
+  const tr = a.closest("tr");
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("graphrow")) { next.remove(); return; }
+  const row = document.createElement("tr");
+  row.className = "graphrow";
+  const td = document.createElement("td");
+  td.colSpan = tr.children.length;
+  const src = (g, h, w) => `/graph?device={{ d.name | urlencode }}` +
+      `&iface=${encodeURIComponent(a.dataset.if)}&gtype=${g}&hours=${h}&w=${w}`;
+  const flex = document.createElement("div");
+  flex.style.cssText = "display: flex; gap: .6rem; align-items: flex-start; flex-wrap: wrap";
+  const traffic = document.createElement("img");
+  traffic.style.cssText = "max-width: 680px; min-width: 0; flex: 3 1 420px; border-radius: 6px";
+  const errors = document.createElement("img");
+  errors.style.cssText = "max-width: 400px; min-width: 0; flex: 1 1 260px; border-radius: 6px";
+  errors.title = "errors";
+  const load = h => {
+    traffic.src = src("port_bits", h, 620);
+    if (!errors.dataset.dead) errors.src = src("port_errors", h, 340);
+  };
+  const bar = document.createElement("div");
+  bar.style.cssText = "margin: .2rem 0 .3rem";
+  [["24h", 24], ["7d", 168], ["30d", 720], ["1y", 8760]].forEach(([label, h], i) => {
+    const b = document.createElement("a");
+    b.href = "#"; b.textContent = label;
+    b.style.cssText = "margin-right: .8rem; font-size: .75rem; font-weight: " + (i ? "400" : "700");
+    b.addEventListener("click", ev => {
+      ev.preventDefault();
+      load(h);
+      [...bar.children].forEach(c => c.style.fontWeight = "400");
+      b.style.fontWeight = "700";
+    });
+    bar.appendChild(b);
+  });
+  traffic.onerror = () => { td.textContent = "no graph in LibreNMS for this port"; td.className = "muted"; };
+  errors.onerror = () => { errors.dataset.dead = "1"; errors.remove(); };
+  load(24);
+  flex.appendChild(traffic); flex.appendChild(errors);
+  td.appendChild(bar); td.appendChild(flex); row.appendChild(td); tr.after(row);
+}));
+
+// soft auto-refresh: keep the page current like every other page, but never
+// while a graph is open or the tab is hidden — a reload would close it
+setInterval(() => {
+  const healthOpen = document.getElementById("health")?.style.display === "";
+  if (!document.querySelector(".graphrow") && !healthOpen && !document.hidden && !window._hold) {
+    location.reload();
+  }
+}, 60000);
+</script>
+
+{% endblock %}

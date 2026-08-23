@@ -1,0 +1,32 @@
+# --- secrets & site-specific data: never committed, no exceptions ---
+.env
+*.env
+!*.env.example
+secrets*
+config/local*
+inventory.yml
+inventory.yaml
+
+# collected/generated network data
+data/
+snapshots/
+configs/
+*.rrd
+*.pcap
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# --- os / editor ---
+.DS_Store
+.idea/
+.vscode/
+*.db

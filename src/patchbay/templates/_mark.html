@@ -1,0 +1,51 @@
+{# The patchbay mark: two five-port panels, cross-patched. The teal cord runs
+   the full width, from the top panel's port 1 to the bottom panel's port 5;
+   the purple one crosses it on a run half as long, from the top's port 4 to
+   the bottom's port 2. Each cord carries its own color, and its plugs match,
+   so you can follow either one end to end.
+
+   The port pairs are deliberately NOT mirror images (1->5 mirrors to 5->1,
+   which is not what the second cord does), so the mark doesn't fold in half
+   down the middle. The differing cord lengths are the point; four plugs on
+   non-adjacent ports keep them spread across both panels.
+
+   The second cord is drawn twice: once in the page background color and
+   wider (.mk-case), then in its own color. That opens a gap where it passes
+   over the first cord — without it the two cords merge into one knot at the
+   crossing.
+
+   Colors come from the theme via CSS (see _style.html). Two other copies
+   carry literal colors because they inherit no CSS: the favicon in base.html,
+   and docs/mark.svg, which the README shows. Change the drawing here and
+   change all three.
+
+   Keep every `/>` intact. The HTML parser only treats a tag as self-closing
+   in SVG when the slash and the bracket are adjacent, so breaking the line
+   between them leaves the element open and swallows the rest of the mark. #}
+<svg class="mark" viewBox="0 0 32 28" aria-hidden="true" focusable="false">
+  <rect class="mk-panel" x="1" y="1" width="30" height="8" rx="2.2"/>
+  <rect class="mk-panel" x="1" y="19" width="30" height="8" rx="2.2"/>
+  <g class="mk-port">
+    <rect x="3" y="2.5" width="4" height="5" rx="1.1"/>
+    <rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/>
+    <rect x="14" y="2.5" width="4" height="5" rx="1.1"/>
+    <rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/>
+    <rect x="25" y="2.5" width="4" height="5" rx="1.1"/>
+    <rect x="3" y="20.5" width="4" height="5" rx="1.1"/>
+    <rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/>
+    <rect x="14" y="20.5" width="4" height="5" rx="1.1"/>
+    <rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/>
+    <rect x="25" y="20.5" width="4" height="5" rx="1.1"/>
+  </g>
+  <path class="mk-cord-a" d="M5 7.5C5 14 27 14 27 20.5"/>
+  <path class="mk-case" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/>
+  <path class="mk-cord-b" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/>
+  <g class="mk-plug-a">
+    <rect x="3" y="2.5" width="4" height="5" rx="1.1"/>
+    <rect x="25" y="20.5" width="4" height="5" rx="1.1"/>
+  </g>
+  <g class="mk-plug-b">
+    <rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/>
+    <rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/>
+  </g>
+</svg>

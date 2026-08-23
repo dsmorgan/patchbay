@@ -1,0 +1,80 @@
+<style>
+  :root {
+    --bg: #12191b; --card: #1a2326; --ink: #dde6e8; --muted: #8fa0a5;
+    --line: #2b383c; --accent: #4db8c2; --accent2: #c792ea;
+    --ok: #55b380; --warn: #cfa049; --crit: #d4715c;
+    /* role palette — hues deliberately distinct from the status colors */
+    --r-switch: #4db8c2; --r-firewall: #c792ea; --r-hyp: #82aaff; --r-ap: #d16ba5;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { display: flex; align-items: baseline; gap: 1rem; padding: 0.9rem 1.4rem;
+           border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1.1rem; margin: 0; letter-spacing: 0.02em;
+              display: flex; align-items: center; white-space: nowrap; }
+  header h1 a { display: inline-flex; align-items: center; color: var(--ink); }
+  header h1 a:hover { text-decoration: none; }
+  /* both cords keep their own color on hover — recoloring would throw away
+     the one thing the mark says, which is that these are two cables */
+  header h1 a:hover .mark { filter: brightness(1.18); }
+  header h1 .ver { color: var(--muted); font-size: 0.68rem; font-weight: 400;
+                   margin-left: 0.4rem; font-family: ui-monospace, Menlo, monospace; }
+  /* the mark: two five-port panels, cross-patched with two cords */
+  .mark { height: 30px; width: auto; flex: none; margin-right: 0.5rem;
+          transition: filter 0.15s; }
+  .mk-panel { fill: var(--line); }
+  .mk-port { fill: var(--bg); }
+  .mk-cord-a, .mk-cord-b, .mk-case { fill: none; stroke-width: 2.1;
+                                     stroke-linecap: round; }
+  .mk-cord-a { stroke: var(--accent); }
+  .mk-plug-a { fill: var(--accent); }
+  .mk-cord-b { stroke: var(--accent2); }
+  .mk-plug-b { fill: var(--accent2); }
+  /* background-colored casing under the crossing cord, so it reads as
+     passing over rather than merging into the one beneath it */
+  .mk-case { stroke: var(--bg); stroke-width: 4.3; }
+  header .ages { margin-left: auto; color: var(--muted); font-size: 0.75rem;
+                 font-family: ui-monospace, Menlo, monospace; }
+  header .ages .stale { color: var(--warn); }
+  main { padding: 1.2rem 1.4rem 3rem; max-width: 1200px; margin: 0 auto; }
+  h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.12em;
+       color: var(--muted); margin: 1.6rem 0 0.6rem; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 0.7rem; }
+  .card { background: var(--card); border: 1.4px solid var(--line); border-radius: 8px;
+          padding: 0.7rem 0.9rem; position: relative; }
+  .card .name { font-weight: 600; }
+  .card .sub { color: var(--muted); font-size: 0.8rem; }
+  /* role-framed cards echo the topology node boxes */
+  .card.switch { border-color: var(--r-switch); }
+  .card.firewall { border-color: var(--r-firewall); }
+  .card.hypervisor { border-color: var(--r-hyp); }
+  .card.ap { border-color: var(--r-ap); }
+  .card.unmanaged-switch { border-style: dashed; }
+  .card .cicon { position: absolute; top: 0.75rem; right: 0.9rem;
+                 width: 18px; height: 18px; }
+  .card.switch .cicon { color: var(--r-switch); }
+  .card.firewall .cicon { color: var(--r-firewall); }
+  .card.hypervisor .cicon { color: var(--r-hyp); }
+  .card.ap .cicon { color: var(--r-ap); }
+  .card .cicon { color: var(--muted); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+         margin-right: 0.45rem; vertical-align: baseline; }
+  .up { background: var(--ok); } .down { background: var(--crit); }
+  .unknown, .disabled, .notResponding { background: var(--warn); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 0.72rem;
+       text-transform: uppercase; letter-spacing: 0.08em; padding: 0.35rem 0.8rem 0.35rem 0;
+       border-bottom: 1px solid var(--line); }
+  td { padding: 0.35rem 0.8rem 0.35rem 0; border-bottom: 1px solid var(--line); }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; }
+  .muted { color: var(--muted); }
+  .statgrid { display: flex; gap: 1.6rem; flex-wrap: wrap; align-items: start; }
+  .stat { cursor: help; }
+  .stat .n { font-size: 1.5rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat .l { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; }
+  .stat .s { color: var(--muted); font-size: 0.72rem; opacity: 0.8; margin-top: 0.1rem; }
+  .scroll { overflow-x: auto; }
+</style>
