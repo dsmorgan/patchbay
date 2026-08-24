@@ -19,7 +19,7 @@ mkdir -p data && cp .env.example data/.env    # fill in the tools you already ru
 docker compose -f docker-compose.example.yml up -d
 ```
 
-Or run from a checkout:
+Or run from a checkout, which gives you the CLI and an editable install:
 
 ```sh
 uv venv && uv pip install -e '.[web]'
@@ -28,6 +28,16 @@ patchbay poll                                 # run every configured collector
 patchbay show devices|links|subnets|vlans|endpoints
 patchbay web                                  # dashboard on :8080
 ```
+
+Same code either way — the difference is what runs it. The container starts
+two services, the web UI and a poller that polls every five minutes and
+survives a reboot. A checkout runs only what you launch: `patchbay web`
+serves, and `patchbay poll` collects once, so **nothing repolls until you
+schedule it** with cron, systemd, or launchd. `PATCHBAY_SNAPSHOT_AT` is
+checked during a poll, so the nightly snapshot follows whatever schedules the
+polling; without one you still get snapshots on demand, from the CLI or the
+ops page. Use a checkout to evaluate patchbay or write a collector, and the
+container for anything you intend to keep running.
 
 Nothing in [.env.example](.env.example) is required. Each collector activates
 only when its variables are set, so start with the one or two tools you already
