@@ -6,6 +6,25 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [0.2.0] — 2026-08-23
+
+The repository is public as of this release, with a
+[live demo](https://dsmorgan.github.io/patchbay/) on GitHub Pages.
+
+### Added
+
+- **`patchbay demo`** writes a complete fictional network to `demo.db` — no
+  credentials, no real site: RFC 5737/3849 addresses, locally administered
+  MACs, invented names. The seed writes the raw evidence collectors would
+  and runs the real normalizer over it, so inference, endpoint placement,
+  declared links, and guest-VLAN resolution are exercised rather than
+  staged. Deterministic, so screenshots reproduce. Refuses to overwrite a
+  database it didn't create unless you pass `--force`.
+- A snapshot generated from a demo-seeded model carries a "safe to share"
+  banner instead of the treat-as-sensitive one, making it a publishable
+  zero-install demo. One such snapshot ships in the repo and serves as
+  [the live demo](https://dsmorgan.github.io/patchbay/demo-snapshot.html).
+
 ## [0.1.1] — 2026-08-23
 
 Three fixes, all found by deploying 0.1.0 fresh against a real network and
@@ -94,5 +113,6 @@ token server-side and recolors graphs in transit.
   work for topology, load, and status, but their per-port VLAN membership
   falls back to SNMP and declarations.
 
+[0.2.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.2.0
 [0.1.1]: https://github.com/dsmorgan/patchbay/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.1.0
