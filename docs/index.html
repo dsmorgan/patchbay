@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>patchbay demo</title>
+<style>
+  :root { --bg: #12191b; --card: #1a2326; --ink: #dde6e8; --muted: #8fa0a5;
+          --line: #2b383c; --accent: #4db8c2; --accent2: #c792ea; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.6 -apple-system, "Segoe UI", sans-serif;
+         display: grid; place-items: center; min-height: 100vh; }
+  main { max-width: 40rem; padding: 2rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .3rem; }
+  h1 a { color: var(--ink); text-decoration: none; }
+  p { color: var(--muted); }
+  a { color: var(--accent); }
+  .go { display: inline-block; margin: 1rem 0; padding: .7rem 1.2rem;
+        background: var(--accent); color: var(--bg); border-radius: 8px;
+        text-decoration: none; font-weight: 600; }
+  .go:hover { filter: brightness(1.1); }
+  code { background: var(--card); border: 1px solid var(--line);
+         border-radius: 5px; padding: .1rem .4rem; font-size: .88em; }
+</style>
+</head>
+<body>
+<main>
+  <h1><a href="https://github.com/dsmorgan/patchbay">patchbay</a></h1>
+  <p>One console for a small network or homelab: physical topology, live
+  health, an IPAM overlay, config history, patch panels, and self-contained
+  HTML snapshots you can open with the network down.</p>
+  <a class="go" href="demo-snapshot.html">Open the live demo &rarr;</a>
+  <p>The demo is a break-glass snapshot of a <em>fictional</em> network —
+  every name, address, and MAC is invented. It works entirely offline; a real
+  deployment's nightly snapshot looks exactly like this, built from your own
+  network. Generate your own with <code>patchbay demo</code> — see the
+  <a href="https://github.com/dsmorgan/patchbay#try-it-without-a-network">README</a>.</p>
+</main>
+</body>
+</html>
