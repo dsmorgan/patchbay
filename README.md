@@ -39,6 +39,15 @@ polling; without one you still get snapshots on demand, from the CLI or the
 ops page. Use a checkout to evaluate patchbay or write a collector, and the
 container for anything you intend to keep running.
 
+**No network handy?** `patchbay demo` writes a fictional network — two
+switches, a firewall, hypervisors and guests, APs, an inferred unmanaged
+switch, drift findings, a day of traffic — into `demo.db`, with nothing real
+in it and no credentials needed:
+
+```sh
+patchbay demo && PATCHBAY_DB=demo.db patchbay web
+```
+
 Nothing in [.env.example](.env.example) is required. Each collector activates
 only when its variables are set, so start with the one or two tools you already
 run — LibreNMS alone gets you most of the topology — and add the rest later.

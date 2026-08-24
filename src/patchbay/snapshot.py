@@ -75,6 +75,9 @@ def generate(settings: Settings) -> str:
     conn = web._conn()
     try:
         db.init(conn)
+        # a demo-seeded model gets a shareable banner instead of the
+        # treat-as-sensitive one — nothing in it is real
+        is_demo = db.get_state(conn, "demo_seed") == "1"
         graph_json, peak_ready = web.build_topology_graph(conn, settings)
         ages = web._age(conn)
         devices = [dict(r) for r in conn.execute(
@@ -149,7 +152,7 @@ def generate(settings: Settings) -> str:
         generated=time.strftime("%Y-%m-%d %H:%M %Z"), ages=ages,
         devices=devices, links=links, vlans=vlans, subnets=subnets,
         endpoints=endpoints, gateways=gateways, configs=configs,
-        n_ipam=n_ipam)
+        n_ipam=n_ipam, is_demo=is_demo)
 
 
 class DeliveryError(Exception):

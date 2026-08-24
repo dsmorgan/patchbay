@@ -169,6 +169,34 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo(args: argparse.Namespace) -> int:
+    import os
+
+    from . import demo
+
+    path = args.db
+    if os.path.exists(path):
+        import sqlite3
+
+        try:
+            with db.connect(path) as conn:
+                is_demo = db.get_state(conn, demo.MARKER) == "1"
+        except sqlite3.Error:
+            is_demo = False   # not even a patchbay database — definitely guard
+        # never silently overwrite a database that a real poll built
+        if not (is_demo or args.force):
+            print(f"{path} exists and is not a demo database — use --force to "
+                  f"overwrite, or --db for another path", file=sys.stderr)
+            return 2
+        os.remove(path)
+    with db.connect(path) as conn:
+        summary = demo.seed(conn)
+    print(f"demo network written to {path} ({summary})")
+    print(f"view it:      PATCHBAY_DB={path} patchbay web")
+    print(f"snapshot it:  PATCHBAY_DB={path} patchbay snapshot")
+    return 0
+
+
 def cmd_hash_password(args: argparse.Namespace) -> int:
     import getpass
 
@@ -224,6 +252,14 @@ def main(argv: list[str] | None = None) -> int:
     p_snap.add_argument("--out", help="explicit output path "
                         "(default: timestamped file in PATCHBAY_SNAPSHOT_DIR)")
     p_snap.set_defaults(func=cmd_snapshot)
+
+    p_demo = sub.add_parser("demo", help="write a fictional demo network "
+                            "(no credentials or real site needed)")
+    p_demo.add_argument("--db", default="demo.db", help="where to write it "
+                        "(default ./demo.db)")
+    p_demo.add_argument("--force", action="store_true",
+                        help="overwrite a non-demo database at --db")
+    p_demo.set_defaults(func=cmd_demo)
 
     p_hash = sub.add_parser("hash-password",
                             help="hash a UI password for PATCHBAY_PASSWORD_HASH")

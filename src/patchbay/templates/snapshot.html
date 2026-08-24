@@ -27,10 +27,13 @@
   <span class="ages">data age at generation: {% for s, m in ages.items() %}{{ s }} {{ m }}m{{ " · " if not loop.last }}{% endfor %}</span>
 </header>
 <main>
-<p class="muted" style="max-width: 76ch">Break-glass snapshot: fully
-self-contained, needs no network. Everything below is as of generation time.
-Device configs are redacted, but treat the file itself as sensitive — it
-describes a real network.</p>
+<p class="muted" style="max-width: 76ch">{% if is_demo %}Demo snapshot of a
+fictional network — every name, address, and MAC is invented, so this file is
+safe to share. A real deployment's snapshot looks exactly like this, built
+from your own network.{% else %}Break-glass snapshot: fully self-contained,
+needs no network. Everything below is as of generation time. Device configs
+are redacted, but treat the file itself as sensitive — it describes a real
+network.{% endif %}</p>
 
 {% set snapshot = true %}
 {% include "_topomap.html" %}
