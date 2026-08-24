@@ -52,12 +52,11 @@ PATCHBAY_DB=demo.db patchbay web              # dashboard on :8080
 PATCHBAY_DB=demo.db patchbay snapshot         # one self-contained HTML file
 ```
 
-For zero installation at all, download
-[docs/demo-snapshot.html](docs/demo-snapshot.html) (raw file, ~340 KB) and
-open it in a browser — it's a break-glass snapshot of the demo network:
-the interactive topology map, every device and port, VLANs, and endpoints,
-working entirely offline. A real deployment's nightly snapshot looks exactly
-like this, built from your own network.
+For zero installation at all, **[open the live demo](https://dsmorgan.github.io/patchbay/demo-snapshot.html)** —
+it's a break-glass snapshot of the demo network: the interactive topology
+map, every device and port, VLANs, and endpoints, in one self-contained HTML
+file that works entirely offline. A real deployment's nightly snapshot looks
+exactly like this, built from your own network.
 
 Nothing in [.env.example](.env.example) is required. Each collector activates
 only when its variables are set, so start with the one or two tools you already
