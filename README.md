@@ -39,14 +39,25 @@ polling; without one you still get snapshots on demand, from the CLI or the
 ops page. Use a checkout to evaluate patchbay or write a collector, and the
 container for anything you intend to keep running.
 
-**No network handy?** `patchbay demo` writes a fictional network — two
-switches, a firewall, hypervisors and guests, APs, an inferred unmanaged
-switch, drift findings, a day of traffic — into `demo.db`, with nothing real
-in it and no credentials needed:
+### Try it without a network
+
+`patchbay demo` writes a fictional network — two switches, a firewall,
+hypervisors and guests, APs, an inferred unmanaged switch, drift findings, a
+day of traffic — into `demo.db`. Nothing in it is real and no credentials are
+needed:
 
 ```sh
-patchbay demo && PATCHBAY_DB=demo.db patchbay web
+patchbay demo                                 # writes ./demo.db
+PATCHBAY_DB=demo.db patchbay web              # dashboard on :8080
+PATCHBAY_DB=demo.db patchbay snapshot         # one self-contained HTML file
 ```
+
+For zero installation at all, download
+[docs/demo-snapshot.html](docs/demo-snapshot.html) (raw file, ~340 KB) and
+open it in a browser — it's a break-glass snapshot of the demo network:
+the interactive topology map, every device and port, VLANs, and endpoints,
+working entirely offline. A real deployment's nightly snapshot looks exactly
+like this, built from your own network.
 
 Nothing in [.env.example](.env.example) is required. Each collector activates
 only when its variables are set, so start with the one or two tools you already
