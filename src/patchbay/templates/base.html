@@ -16,7 +16,6 @@
 <body class="{{ 'bare' if bare else 'shell' }}">
 <header>
   <h1><a href="/">{% include "_mark.html" %}patchbay</a><span class="ver" title="running build">{{ BUILD }}</span></h1>
-  {% block crumb %}{% endblock %}
   {# one honest number: how stale the freshest full picture is. The oldest
      source sets it, so a stuck collector shows up instead of hiding behind
      a healthy one; per-source detail is in the tooltip and on /ops. #}
