@@ -314,3 +314,101 @@ def test_every_connection_enforces_foreign_keys(clean_env, tmp_path):
     c.execute("DELETE FROM devices WHERE name = 'gone'")
     assert c.execute("SELECT COUNT(*) FROM interfaces").fetchone()[0] == 0
     c.close()
+
+
+# --- configs-timeline ---
+
+def _ox_mock(monkeypatch, handler):
+    """Point web._ox_client at an httpx.MockTransport for the life of a test —
+    no real Oxidized, no new dependency."""
+    import httpx
+    import patchbay.web as web
+
+    monkeypatch.setattr(web, "_ox_client", lambda settings: httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="http://ox.invalid"))
+
+
+def test_configs_timeline_lists_newest_first(clean_env, monkeypatch, client):
+    import httpx
+
+    clean_env.setenv("OXIDIZED_URL", "http://ox.invalid")
+    nodes_json = [{"name": "core1"}, {"name": "edge1"}]
+    versions = {
+        # newest-first per node, like oxidized's own /node/version.json
+        "core1": [
+            {"oid": "c2", "date": "2026-08-20 10:00:00 +0000",
+             "message": "core1 change 2", "author": "alice"},
+            {"oid": "c1", "date": "2026-08-18 10:00:00 +0000",
+             "message": "core1 change 1", "author": "alice"},
+        ],
+        "edge1": [
+            {"oid": "e2", "date": "2026-08-21 10:00:00 +0000",
+             "message": "edge1 change 2", "author": "bob"},
+            {"oid": "e1", "date": "2026-08-15 10:00:00 +0000",
+             "message": "edge1 change 1", "author": "bob"},
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/nodes.json":
+            return httpx.Response(200, json=nodes_json)
+        if request.url.path == "/node/version.json":
+            return httpx.Response(200, json=versions[request.url.params["node_full"]])
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    _ox_mock(monkeypatch, handler)
+    r = client.get("/configs")
+    assert r.status_code == 200
+    body = r.text
+
+    # interleaved across nodes, newest first: edge1(21st), core1(20th),
+    # core1(18th), edge1(15th) — each row's diff/view link carries oid+prev
+    pos_e2 = body.index("/configs/edge1?v=e2&amp;prev=e1")
+    pos_c2 = body.index("/configs/core1?v=c2&amp;prev=c1")
+    pos_c1 = body.index("/configs/core1?v=c1")
+    pos_e1 = body.index("/configs/edge1?v=e1")
+    assert pos_e2 < pos_c2 < pos_c1 < pos_e1
+    assert "&amp;prev=" not in body[pos_c1:pos_c1 + 40]   # oldest version: no prev
+    assert "&amp;prev=" not in body[pos_e1:pos_e1 + 40]
+
+
+def test_configs_timeline_survives_one_bad_node(clean_env, monkeypatch, client):
+    import httpx
+
+    clean_env.setenv("OXIDIZED_URL", "http://ox.invalid")
+    nodes_json = [{"name": "core1"}, {"name": "edge1"}]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/nodes.json":
+            return httpx.Response(200, json=nodes_json)
+        if request.url.path == "/node/version.json":
+            node = request.url.params["node_full"]
+            if node == "edge1":
+                return httpx.Response(500, text="boom")
+            return httpx.Response(200, json=[
+                {"oid": "c1", "date": "2026-08-20 10:00:00 +0000",
+                 "message": "core1 change", "author": "alice"},
+            ])
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    _ox_mock(monkeypatch, handler)
+    r = client.get("/configs")
+    assert r.status_code == 200
+    body = r.text
+    assert "core1 change" in body
+    assert "/configs/core1?v=c1" in body
+    assert "Could not read history for: edge1" in body
+
+
+def test_configs_timeline_unreachable_is_a_state_not_a_crash(clean_env, monkeypatch, client):
+    import httpx
+
+    clean_env.setenv("OXIDIZED_URL", "http://ox.invalid")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    _ox_mock(monkeypatch, handler)
+    r = client.get("/configs")
+    assert r.status_code == 200
+    assert "unreachable" in r.text.lower()

@@ -12,7 +12,30 @@ docker-compose.</p>
 <p><span class="dot down"></span>Oxidized unreachable at
 <span class="mono">{{ oxidized_url }}</span>: <span class="muted">{{ error }}</span></p>
 {% else %}
-<h2>Nodes and their last backup</h2>
+<h2>What changed</h2>
+{% if entries %}
+<div class="scroll"><table>
+  <tr><th>when</th><th>device</th><th>message</th><th></th></tr>
+  {% for e in entries %}
+  <tr>
+    <td class="muted">{{ e.date or "" }}</td>
+    <td><a href="/configs/{{ e.node | urlencode }}">{{ e.node }}</a></td>
+    <td class="muted">{{ e.message }}</td>
+    <td><a href="{{ e.href }}">{{ "diff" if e.prev else "view" }}</a></td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% if truncated %}
+<p class="muted">showing the first {{ entries | length }} — more history is on each device</p>
+{% endif %}
+{% else %}
+<p class="muted">No versions recorded yet.</p>
+{% endif %}
+{% if problems %}
+<p class="muted">Could not read history for: {{ problems | join(", ") }}</p>
+{% endif %}
+
+<h2>Devices and their last backup</h2>
 <div class="scroll"><table>
   <tr><th></th><th>device</th><th>ip</th><th>model</th><th>last backup</th></tr>
   {% for n in nodes %}

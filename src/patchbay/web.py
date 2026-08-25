@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import ipaddress
 import sqlite3
+import time
+from datetime import datetime
 from importlib import resources
 from pathlib import Path
 
@@ -1447,6 +1449,72 @@ def _ox_nodes(client: httpx.Client) -> list[dict]:
     return r.json()
 
 
+# cross-device "what changed" timeline: entries across every node, per node,
+# and a wall-clock budget so one slow oxidized instance can't hang the page
+OX_TIMELINE_LIMIT, OX_TIMELINE_PER_NODE, OX_TIMELINE_BUDGET = 50, 20, 8.0
+
+
+def _ox_ts(date: str | None) -> float | None:
+    """Parse an Oxidized version's `date` field into a sortable epoch time.
+    Normally "%Y-%m-%d %H:%M:%S %z"; some setups/versions emit ISO 8601.
+    None (missing or unparseable) so callers can push it to the end."""
+    if not date:
+        return None
+    try:
+        return datetime.strptime(date, "%Y-%m-%d %H:%M:%S %z").timestamp()
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(date).timestamp()
+    except ValueError:
+        return None
+
+
+def _ox_timeline(client: httpx.Client, nodes: list[dict]) -> tuple[list[dict], list[str]]:
+    """One GET /node/version.json?node_full=<node> per node — the same call
+    config_node() makes — merged newest first across every node. A node whose
+    fetch fails is named in the returned `problems` list and simply
+    contributes no rows: one bad or slow node must not blank the rest.
+    Stops picking up further nodes once OX_TIMELINE_BUDGET seconds have
+    elapsed; each node contributes at most OX_TIMELINE_PER_NODE entries."""
+    from urllib.parse import quote
+
+    entries: list[dict] = []
+    problems: list[str] = []
+    start = time.monotonic()
+    for n in nodes:
+        name = n.get("name")
+        if not name:
+            continue
+        if time.monotonic() - start > OX_TIMELINE_BUDGET:
+            break
+        try:
+            r = client.get("/node/version.json", params={"node_full": name})
+            r.raise_for_status()
+            raw = r.json() or []
+        except Exception:
+            problems.append(name)
+            continue
+        for i, v in enumerate(raw[:OX_TIMELINE_PER_NODE]):
+            author = v.get("author")
+            if isinstance(author, dict):
+                author = author.get("name") or author.get("email")
+            oid = v.get("oid", "")
+            prev = raw[i + 1].get("oid", "") if i + 1 < len(raw) else None
+            date = v.get("date") or v.get("time")
+            href = f"/configs/{quote(name, safe='')}?v={quote(oid, safe='')}"
+            if prev:
+                href += f"&prev={quote(prev, safe='')}"
+            entries.append({
+                "node": name, "oid": oid, "prev": prev, "date": date,
+                "ts": _ox_ts(date),
+                "message": (v.get("message") or v.get("subject") or "").strip(),
+                "author": author, "href": href,
+            })
+    entries.sort(key=lambda e: e["ts"] or 0, reverse=True)
+    return entries, problems
+
+
 def _ox_version_text(client: httpx.Client, node: str, v: dict, num: int) -> str:
     """Config text at a given version. oxidized-web's view endpoint has varied
     a little across releases, so accept any of the shapes it's known to emit."""
@@ -1471,12 +1539,14 @@ def _ox_version_text(client: httpx.Client, node: str, v: dict, num: int) -> str:
 def configs(request: Request):
     settings = load_settings()
     nodes, error = [], None
+    entries, problems, truncated = [], [], False
     if not settings.oxidized_url:
         error = "unconfigured"
     else:
         try:
             with _ox_client(settings) as client:
-                for n in _ox_nodes(client):
+                raw_nodes = _ox_nodes(client)
+                for n in raw_nodes:
                     last = n.get("last") or {}
                     nodes.append({
                         "name": n.get("name"), "ip": n.get("ip"),
@@ -1484,10 +1554,15 @@ def configs(request: Request):
                         "status": last.get("status") or n.get("status") or "never",
                         "time": last.get("end") or n.get("time") or n.get("mtime"),
                     })
+                entries, problems = _ox_timeline(client, raw_nodes)
+                if len(entries) > OX_TIMELINE_LIMIT:
+                    truncated = True
+                    entries = entries[:OX_TIMELINE_LIMIT]
         except Exception as exc:  # unreachable oxidized is a state, not a crash
             error = str(exc)
     return templates.TemplateResponse(request, "configs.html", {
         "nodes": nodes, "error": error, "oxidized_url": settings.oxidized_url,
+        "entries": entries, "problems": problems, "truncated": truncated,
     })
 
 
