@@ -20,9 +20,12 @@ mkdir -p data && cp .env.example data/.env    # fill in the tools you already ru
 docker compose -f docker-compose.example.yml up -d
 ```
 
-The UI is on http://localhost:8013. `patchbay.db` is created in `./data` on first run.
-To build from source instead, comment the `image:` lines in the compose file and uncomment
-the `build:` blocks, then run with a checkout present.
+The UI is on http://localhost:8013 — the compose file maps host port 8013
+onto the app's own 8080, so it won't collide with whatever else already
+claimed 8080; edit the `ports:` line to taste. `patchbay.db` is created in
+`./data` on first run. To build from source instead, comment the `image:`
+lines in the compose file and uncomment the `build:` blocks, then run with a
+checkout present.
 
 Or run from a checkout, which gives you the CLI and an editable install:
 
@@ -31,7 +34,7 @@ uv venv && uv pip install -e '.[web]'
 cp .env.example .env                          # fill in the tools you already run
 patchbay poll                                 # run every configured collector
 patchbay show devices|links|subnets|vlans|endpoints
-patchbay web                                  # dashboard on :8080
+patchbay web                                  # dashboard on :8080 (the app default)
 ```
 
 Same code either way — the difference is what runs it. The container starts
