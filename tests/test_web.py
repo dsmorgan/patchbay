@@ -276,14 +276,17 @@ def test_build_stamp_always_names_the_release(clean_env):
 
 def test_empty_sections_are_hidden(clean_env, tmp_path, client):
     # An empty "Access points" heading is noise for every site without APs,
-    # not only on a first run
+    # not only on a first run. The Links table is gone outright (the map
+    # answers it now), so no heading text for it exists to check.
     body = client.get("/").text
-    for heading in ("Fabric", "Access points", "Links"):
+    for heading in ("Fabric — switches and firewalls", "Access points"):
         assert f"<h2>{heading}</h2>" not in body
+    assert "<h2>Links</h2>" not in body
     seed(str(tmp_path / "test.db"))
     body = client.get("/").text
-    assert "<h2>Fabric</h2>" in body and "<h2>Links</h2>" in body
+    assert "<h2>Fabric — switches and firewalls</h2>" in body
     assert "<h2>Access points</h2>" not in body   # the seed has no APs
+    assert "<h2>Links</h2>" not in body
 
 
 def test_every_connection_enforces_foreign_keys(clean_env, tmp_path):
@@ -314,3 +317,55 @@ def test_every_connection_enforces_foreign_keys(clean_env, tmp_path):
     c.execute("DELETE FROM devices WHERE name = 'gone'")
     assert c.execute("SELECT COUNT(*) FROM interfaces").fetchone()[0] == 0
     c.close()
+
+
+# --- overview-exceptions ---
+
+def test_overview_shows_exceptions_when_something_is_wrong(clean_env, tmp_path, client):
+    # a device down and a slow link: two cards, each pointing where the
+    # detail actually lives (the device page, the map centred on it).
+    # links store their two ends direction-normalized (sorted), so the
+    # sw1<->hyp1 link's "a" end is hyp1 — shrink both interfaces so the
+    # slow tier holds regardless of which end speed_of resolves to.
+    dbp = str(tmp_path / "test.db")
+    seed(dbp)
+    c = sqlite3.connect(dbp)
+    c.execute("UPDATE devices SET status = 'down' WHERE name = 'fw1'")
+    c.execute("UPDATE interfaces SET speed_bps = 10000000 WHERE name IN ('1/0/1', 'vmnic0')")
+    c.commit(); c.close()
+
+    body = client.get("/").text
+    assert body.count('class="excard') == 2  # no all-clear card alongside real ones
+    assert "All clear" not in body
+    assert '<a href="/device/fw1">' in body
+    assert '<a href="/topology?focus=hyp1">' in body
+    assert "hyp1 vmnic0 ↔ sw1 1/0/1" in body
+
+
+def test_overview_says_all_clear_when_nothing_is(clean_env, tmp_path, client):
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/").text
+    assert '<div class="excard clear">All clear — every device up, no slow links</div>' in body
+
+
+def test_overview_hides_the_strip_when_nothing_could_be_checked(client):
+    # first-run empty DB: no devices, no links, no IPAM, no polls yet — the
+    # strip has nothing honest to say, so it says nothing
+    body = client.get("/").text
+    assert '<section class="exceptions">' not in body
+
+
+def test_overview_folds_vms_into_hypervisors(clean_env, tmp_path, client):
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/").text
+    assert "<details>" in body
+    assert '<summary class="sub">1/1 VMs running</summary>' in body
+    assert "vm-a" in body
+    assert "<th>Host</th>" not in body
+
+
+def test_overview_drops_the_links_table(clean_env, tmp_path, client):
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/").text
+    assert "<h2>Links</h2>" not in body
+    assert "<tr><th>A</th><th>Port</th><th>B</th><th>Port</th><th>Source</th></tr>" not in body
