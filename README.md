@@ -196,3 +196,6 @@ absolute: **if it describes a real network, it doesn't get committed here.**
 ## License
 
 [MIT](LICENSE)
+
+Bundled third-party components — the IBM Plex Sans typeface and D3 — keep
+their own licenses; see [NOTICE](NOTICE).

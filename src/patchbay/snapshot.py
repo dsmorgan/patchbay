@@ -147,12 +147,16 @@ def generate(settings: Settings) -> str:
         d["graphs"] = graphs_by_dev.get(d["name"], [])
 
     d3_js = (Path(__file__).parent / "static" / "d3.v7.min.js").read_text(encoding="utf-8")
+    # the UI typeface rides along as a data URI, so the snapshot is set in
+    # the same face as the live pages with the network down
+    font = (Path(__file__).parent / "static" / "fonts" / "ibm-plex-sans-latin-var.woff2").read_bytes()
+    font_url = "data:font/woff2;base64," + base64.b64encode(font).decode()
     return web.templates.env.get_template("snapshot.html").render(
         graph_json=graph_json, peak_ready=peak_ready, d3_js=d3_js,
         generated=time.strftime("%Y-%m-%d %H:%M %Z"), ages=ages,
         devices=devices, links=links, vlans=vlans, subnets=subnets,
         endpoints=endpoints, gateways=gateways, configs=configs,
-        n_ipam=n_ipam, is_demo=is_demo)
+        n_ipam=n_ipam, is_demo=is_demo, font_url=font_url)
 
 
 class DeliveryError(Exception):
