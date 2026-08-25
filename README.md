@@ -11,13 +11,18 @@ what's planned, see the [roadmap](docs/architecture.md#phased-roadmap).
 
 ## Quick start
 
-Run the web UI and a background poller from one container image:
+Run the web UI and a background poller from the pre-built image — no clone needed:
 
 ```sh
-git clone https://github.com/dsmorgan/patchbay.git && cd patchbay
+curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/docker-compose.example.yml
+curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/.env.example
 mkdir -p data && cp .env.example data/.env    # fill in the tools you already run
 docker compose -f docker-compose.example.yml up -d
 ```
+
+The UI is on http://localhost:8484. `patchbay.db` is created in `./data` on first run.
+To build from source instead, comment the `image:` lines in the compose file and uncomment
+the `build:` blocks, then run with a checkout present.
 
 Or run from a checkout, which gives you the CLI and an editable install:
 
