@@ -463,3 +463,59 @@ def test_ops_no_longer_offers_snapshot_buttons(client):
     i_decl = body.index("Declarations — what only you can tell patchbay")
     i_conf = body.index("What patchbay is running on")
     assert i_decl < i_conf
+# --- map-url-modes ---
+
+
+def test_topology_page_renders_mode_control(clean_env, tmp_path, client):
+    # ADR-0001 Decision 1: the map's state lives in the URL and `view` is a
+    # mode picked from a segmented control, not a checkbox — same route,
+    # same graph JSON, the client just paints differently.
+    import re
+
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/topology").text
+
+    for mode in ("wiring", "load", "vlan", "evidence"):
+        assert f'id="view-{mode}" value="{mode}"' in body, mode
+        assert f'<label for="view-{mode}">' in body, mode
+
+    # every legend .item is tagged with the modes it applies to, and at
+    # least one item claims each of the four modes
+    items = re.findall(r'<span class="item"[^>]*>', body)
+    assert items, "no legend items found"
+    assert all('data-modes="' in item for item in items), "every .item must carry data-modes"
+    for mode in ("wiring", "load", "vlan", "evidence"):
+        assert any(
+            (m := re.search(r'data-modes="([^"]*)"', item)) and mode in m.group(1).split()
+            for item in items
+        ), f"no legend item claims mode {mode}"
+
+    # the old load-view-checkbox-driven show/hide is gone
+    assert "lnksrc" not in body
+
+    # toolbar ids the ADR/brief pin down as stable stay stable
+    for control_id in ("hideoff", "coreonly", "hosts", "unmhosts", "loadmode",
+                        "vlansel", "legend", "leg-heat", "leg-peak", "leg-vlan", "topo"):
+        assert f'id="{control_id}"' in body, control_id
+
+
+def test_topology_view_load_vlan_and_focus_params_do_not_change_the_graph(clean_env, tmp_path, client):
+    # Decision 1's whole point: no route change. The graph JSON is identical
+    # no matter what the client will do with `view`/`vlan`/`focus` — those
+    # are client-side paint, not server-side filters.
+    seed(str(tmp_path / "test.db"))
+    base = _graph(client, tmp_path)
+    for qs in ("?view=load&load=peak", "?view=vlan&vlan=24", "?view=evidence",
+               "?focus=sw1", "?view=bogus", "?vlan=99999"):
+        assert _graph_at(client, qs) == base, qs
+
+
+def _graph_at(client, qs):
+    import json
+    import re
+
+    r = client.get(f"/topology{qs}")
+    assert r.status_code == 200
+    m = re.search(r"const graph = (\{.*?\});", r.text, re.S)
+    assert m
+    return json.loads(m.group(1))
