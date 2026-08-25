@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block refresh %}{% endblock %}{# a diff being read must not vanish — and ?v=current refetches live config on every reload #}
 {% block title %}{{ node }} configs — patchbay{% endblock %}
-{% block crumb %}<span class="muted">/ <a href="/configs">configs</a> / {{ node }}</span>{% endblock %}
+{% block page_title %}{{ node }}{% endblock %}
+{% block breadcrumb %}<nav class="breadcrumb"><a href="/configs">Configs</a> / {{ node }}</nav>{% endblock %}
+{% block purpose %}configuration versions from Oxidized{% endblock %}
+{% block controls %}<a href="/configs/{{ node }}?v=current">view running config</a>{% endblock %}
 {% block main %}
 
 <style>
@@ -11,8 +14,7 @@
   .dl-hunk { color: var(--accent); } .dl-ctx { color: var(--muted); }
 </style>
 
-<h2>Versions — {{ node }}
-  <a class="mono" style="text-transform: none; letter-spacing: 0" href="/configs/{{ node }}?v=current">view running config</a></h2>
+<h2>Versions</h2>
 {% if error %}
 <p><span class="dot down"></span><span class="muted">{{ error }}</span></p>
 {% endif %}
