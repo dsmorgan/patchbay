@@ -6,6 +6,7 @@
 {% block breadcrumb %}<nav class="breadcrumb"><a href="/">Overview</a> / {{ d.name }}</nav>{% endblock %}
 {% block purpose %}{{ d.role or '?' }} · {{ d | hw or '?' }}{% endblock %}
 {% block controls %}
+<a href="/topology?focus={{ d.name | urlencode }}">show on map</a>
 {% if hidden %}<a href="?all=1">show all</a>
 {% elif show_all %}<a href="?">hide idle logical ports</a>{% endif %}
 {% endblock %}
@@ -86,10 +87,11 @@
 {% endif %}
 <div class="scroll">
 <table>
-  <tr><th>Port</th><th>Oper</th><th>Admin</th><th>Speed</th><th>802.1Q</th><th>MAC</th><th>Description</th></tr>
+  <tr><th>Port</th><th>Oper</th><th>Admin</th><th>Speed</th><th>802.1Q</th><th>MAC</th><th>Description</th><th>Endpoints</th></tr>
   {% for p in ports %}
   {% set vp = port_vlans.get(p.name.removeprefix("ethernet")) or port_vlans.get(p.name) %}
   {% set pr = port_roles.get(p.name.removeprefix("ethernet")) or port_roles.get(p.name) %}
+  {% set eps = endpoints_by_port.get(p.name) %}
   <tr>
     <td class="mono"><a href="#" class="pg" data-if="{{ p.name }}" title="toggle 24h traffic graph">{{ p.name }}</a></td>
     <td><span class="dot {{ 'up' if p.oper_status == 'up' else 'down' }}"></span>{{ p.oper_status or '?' }}</td>
@@ -102,10 +104,35 @@
     <td class="mono muted">{{ p.mac or '-' }}</td>
     <td class="muted">{{ p.description or '' }}{% if pr and pr[0] == 'monitor-src' %}
       <span style="color: var(--r-firewall)" title="{{ pr[1] }}">· mirrored</span>{% endif %}</td>
+    <td class="mono">{% if eps %}<a href="#" class="ep" data-if="{{ p.name }}" title="toggle endpoints seen on this port">{{ eps | length }}</a>{% else %}<span class="muted">·</span>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>
 </div>
+{% if endpoints_by_port %}
+{# hidden fragments for the Endpoints toggle: cloned into a .eprow beneath a
+   port on click, same open/close mechanism as .graphrow below — nothing to
+   fetch, so no need to build it from JS the way the graphs are #}
+<template id="eptemplates">
+  {% for p in ports %}{% set eps = endpoints_by_port.get(p.name) %}{% if eps %}
+  <tr class="eprow" data-if="{{ p.name }}">
+    <td>
+      <table>
+        <tr><th>Hostname</th><th>IP</th><th>MAC</th><th>VLAN</th></tr>
+        {% for e in eps %}
+        <tr>
+          <td>{{ e.hostname or '-' }}</td>
+          <td class="mono">{{ e.ip or '-' }}</td>
+          <td class="mono muted">{{ e.mac }}</td>
+          <td class="mono">{{ e.vlan or '-' }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </td>
+  </tr>
+  {% endif %}{% endfor %}
+</template>
+{% endif %}
 {% endif %}
 
 {% if links %}
@@ -143,12 +170,12 @@
 </div>
 {% endif %}
 
-{% if endpoints %}
-<h2>Endpoints seen here ({{ endpoints | length }})</h2>
+{% if endpoints_other %}
+<h2>Endpoints not tied to a port ({{ endpoints_other | length }})</h2>
 <div class="scroll">
 <table>
   <tr><th>Hostname</th><th>IP</th><th>MAC</th><th>Port / SSID</th><th>VLAN</th></tr>
-  {% for e in endpoints %}
+  {% for e in endpoints_other %}
   <tr>
     <td>{{ e.hostname or '-' }}</td>
     <td class="mono">{{ e.ip or '-' }}</td>
@@ -170,6 +197,7 @@ document.querySelectorAll("a.pg").forEach(a => a.addEventListener("click", e => 
   const tr = a.closest("tr");
   const next = tr.nextElementSibling;
   if (next && next.classList.contains("graphrow")) { next.remove(); return; }
+  if (next && next.classList.contains("eprow")) next.remove();  // opening one closes the other
   const row = document.createElement("tr");
   row.className = "graphrow";
   const td = document.createElement("td");
@@ -208,11 +236,29 @@ document.querySelectorAll("a.pg").forEach(a => a.addEventListener("click", e => 
   td.appendChild(bar); td.appendChild(flex); row.appendChild(td); tr.after(row);
 }));
 
+// endpoints-column click -> toggle a row of what's been seen on this port,
+// cloned from the hidden <template> above (the data is already on the page,
+// so nothing to fetch). Same open/close mechanism as the graph toggle, and
+// opening one closes the other so the two never stack under one port.
+document.querySelectorAll("a.ep").forEach(a => a.addEventListener("click", e => {
+  e.preventDefault();
+  const tr = a.closest("tr");
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("eprow")) { next.remove(); return; }
+  if (next && next.classList.contains("graphrow")) next.remove();  // opening one closes the other
+  const tpl = document.getElementById("eptemplates")?.content
+    .querySelector(`tr[data-if="${CSS.escape(a.dataset.if)}"]`);
+  if (!tpl) return;
+  const row = tpl.cloneNode(true);
+  row.querySelector("td").colSpan = tr.children.length;
+  tr.after(row);
+}));
+
 // soft auto-refresh: keep the page current like every other page, but never
 // while a graph is open or the tab is hidden — a reload would close it
 setInterval(() => {
   const healthOpen = document.getElementById("health")?.style.display === "";
-  if (!document.querySelector(".graphrow") && !healthOpen && !document.hidden && !window._hold) {
+  if (!document.querySelector(".graphrow, .eprow") && !healthOpen && !document.hidden && !window._hold) {
     location.reload();
   }
 }, 60000);

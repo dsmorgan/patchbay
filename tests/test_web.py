@@ -314,3 +314,65 @@ def test_every_connection_enforces_foreign_keys(clean_env, tmp_path):
     c.execute("DELETE FROM devices WHERE name = 'gone'")
     assert c.execute("SELECT COUNT(*) FROM interfaces").fetchone()[0] == 0
     c.close()
+
+
+# --- deep-links-and-device-endpoints ---
+
+def test_device_page_folds_endpoints_into_ports(clean_env, tmp_path, client):
+    # ADR-0001 Decision 7: endpoints fold into the ports table (exact port
+    # name first, then the same "ethernet"-prefix strip port_vlans/port_roles
+    # use); AP clients (interface = SSID) and MAC-only rows land in the
+    # not-tied-to-a-port section instead.
+    import re
+
+    dbp = str(tmp_path / "test.db")
+    seed(dbp)
+    c = sqlite3.connect(dbp)
+    c.row_factory = sqlite3.Row
+    pdb.init(c)
+    sid = pdb.upsert_device(c, name="sw1", source="librenms")
+    pdb.upsert_interface(c, device_id=sid, name="ethernet1/0/5", oper_status="up")
+    pdb.upsert_endpoint(c, mac="02:00:00:00:00:01", source="fdb", device="sw1",
+                        interface="1/0/1", hostname="laptop1", ip="192.0.2.50", vlan=24)
+    pdb.upsert_endpoint(c, mac="02:00:00:00:00:02", source="fdb", device="sw1",
+                        interface="1/0/5", hostname="laptop2", ip="192.0.2.51", vlan=24)
+    pdb.upsert_endpoint(c, mac="02:00:00:00:00:03", source="unifi", device="sw1",
+                        interface="Guest-WiFi", hostname="phone1")
+    pdb.upsert_endpoint(c, mac="02:00:00:00:00:04", source="fdb", device="sw1")
+    c.commit(); c.close()
+
+    body = client.get("/device/sw1").text
+    assert "Endpoints seen here" not in body
+
+    # exact port-name match: the count link shows "1" and its eprow carries
+    # the endpoint's hostname
+    assert re.search(r'class="ep" data-if="1/0/1"[^>]*>1<', body)
+    m = re.search(r'<tr class="eprow" data-if="1/0/1">(.*?)'
+                  r'(?=<tr class="eprow"|</template>)', body, re.S)
+    assert m and "laptop1" in m.group(1)
+
+    # the "ethernet" prefix fallback: keyed by the port's own name, not the
+    # bare interface number the endpoint carries
+    m = re.search(r'<tr class="eprow" data-if="ethernet1/0/5">(.*?)'
+                  r'(?=<tr class="eprow"|</template>)', body, re.S)
+    assert m and "laptop2" in m.group(1)
+
+    # not tied to a port: the AP client (by SSID) and the MAC-only row
+    assert "Endpoints not tied to a port (2)" in body
+    assert "phone1" in body and "Guest-WiFi" in body
+
+
+def test_vlans_row_links_to_the_map(clean_env, tmp_path, client):
+    # ADR-0001 Decisions 1 & 6: only non-default URL params are serialized
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/vlans").text
+    assert "/topology?view=vlan&vlan=24" in body
+    assert "hideoff=" not in body
+
+
+def test_patchpanel_rows_are_anchored(clean_env, tmp_path, client):
+    # seed()'s sw1 port carries description "uplink [3]" -> populated
+    # position 3; /patchpanel?panel=<name>#p3 must have somewhere to land
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/patchpanel").text
+    assert 'id="p3"' in body

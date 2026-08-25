@@ -1634,6 +1634,23 @@ def device(request: Request, name: str):
             "SELECT * FROM endpoints WHERE device = ? ORDER BY interface, hostname",
             (name,),
         ).fetchall()
+        # fold endpoints onto the port they were learned on: exact port name
+        # first, then the same "ethernet"-prefix strip used above for
+        # port_vlans/port_roles, so all three line up on one port identity.
+        # AP clients (interface = SSID) and MAC-only rows land in "other".
+        port_by_ifname: dict[str, str] = {}
+        for p in ports:
+            port_by_ifname.setdefault(p["name"], p["name"])
+        for p in ports:
+            port_by_ifname.setdefault(p["name"].removeprefix("ethernet"), p["name"])
+        endpoints_by_port: dict[str, list] = {}
+        endpoints_other: list = []
+        for e in endpoints:
+            port_name = port_by_ifname.get(e["interface"]) if e["interface"] else None
+            if port_name:
+                endpoints_by_port.setdefault(port_name, []).append(e)
+            else:
+                endpoints_other.append(e)
         links = conn.execute(
             "SELECT * FROM links WHERE a_device = ? OR b_device = ? "
             "ORDER BY a_device, a_interface", (name, name),
@@ -1645,7 +1662,8 @@ def device(request: Request, name: str):
         return templates.TemplateResponse(request, "device.html", {
             "d": dev, "ports": ports, "hidden": hidden, "show_all": show_all,
             "port_vlans": port_vlans, "caps": caps, "port_roles": port_roles,
-            "endpoints": endpoints, "links": links, "children": children,
+            "endpoints_by_port": endpoints_by_port, "endpoints_other": endpoints_other,
+            "links": links, "children": children,
         })
     finally:
         conn.close()
