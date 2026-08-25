@@ -14,7 +14,11 @@ site-specific leaked into code, tests, or docs.
 ## Dev workflow
 
 - Editable install in `.venv`; use `uv pip install -e '.[web]' --python .venv/bin/python`
-  (uv, not pip — the venv may not have pip bootstrapped).
+  (uv, not pip — the venv may not have pip bootstrapped). On the Windows box the
+  interpreter is `.venv/Scripts/python.exe`, and a running `patchbay web` holds
+  `patchbay.exe` open, so a reinstall fails halfway (pip has already dropped the
+  old `.pth` by then) — stop the server first, or work with `PYTHONPATH=src` and
+  `python -m uvicorn patchbay.web:app --port 8091 --reload` on the side.
 - Run the live instance:
   `PATCHBAY_ENV=../patchbay-site/.env PATCHBAY_DB=../patchbay-site/data/patchbay.db .venv/bin/patchbay web --host 127.0.0.1 --port 8080`
 - Templates hot-reload; **Python changes need a server restart**. dotenv only fills
@@ -25,7 +29,7 @@ site-specific leaked into code, tests, or docs.
   `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.patchbay.poll.plist`,
   and unload with `launchctl bootout gui/$UID/com.patchbay.poll`.
 - Quick verification without the server: FastAPI `TestClient` against the real site DB.
-- `pytest` (install `.[dev]`): 90 tests, no network, hermetic env via the
+- `pytest` (install `.[dev]`): 98 tests, no network, hermetic env via the
   `clean_env` fixture. Every normalizer bug family has a regression test —
   add one when fixing anything there.
 - Commits go straight to `main` (homelab repo, no PR flow). Small, single-topic commits.
@@ -91,7 +95,18 @@ site-specific leaked into code, tests, or docs.
 - **Snapshots** (`snapshot.py`): reuse the live UI's `build_topology_graph()`
   and `fetch_graph_image()` — never reimplement a view for the snapshot, or
   the two drift. The map lives in `templates/_topomap.html`, shared by both;
-  set `snapshot = true` before including it.
+  set `snapshot = true` before including it. `font_url` is the one style knob
+  the snapshot overrides (the bundled typeface as a data URI, like d3).
+- **Navigation is data**: `NAV` and `NAV_ICONS` in `web.py`; the rail in
+  `base.html` renders from them. Groups are named for the question a page
+  answers (Network: what's out there and how it's wired; Records: what the
+  documentation says and whether the network agrees), never for the mechanism
+  — a page that fits neither is the case for a third heading, not a longer
+  list. Ops and sign-out are utilities and live in the rail's foot. The lit
+  entry comes from the path prefix, so drill-downs keep their section; a page
+  that sets `bare = true` (login) gets no rail and no shell grid. The style
+  guide the rail borrows from is EQDeeps' `docs/architecture/adr-015` and
+  `adr-017` (D:\git\EQDeeps) — palette stays patchbay's own.
 
 ## Gotchas
 
@@ -113,4 +128,9 @@ site-specific leaked into code, tests, or docs.
 - Verify UI changes by screenshotting the running server, not by reading markup:
   `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless
   --disable-gpu --force-device-scale-factor=2 --screenshot=x.png
-  --window-size=1200,800 http://127.0.0.1:8080/<page>`
+  --window-size=1200,800 http://127.0.0.1:8080/<page>` (on Windows:
+  `"/c/Program Files/Google/Chrome/Application/chrome.exe" --headless=new
+  --hide-scrollbars ...`; a 600px-wide window exercises the collapsed rail).
+- Python changes break a running dev server's *templates* before its code:
+  templates hot-reload and immediately reference whatever new global `web.py`
+  registers, so the old process 500s on every page until restarted.

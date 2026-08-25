@@ -1,0 +1,18 @@
+patchbay
+
+patchbay's own code is under the MIT License (see LICENSE). Two things
+bundled with it keep the licenses they arrived under — MIT does not
+relicense them:
+
+- IBM Plex Sans (https://github.com/IBM/plex) — SIL Open Font License 1.1,
+  Copyright 2017 IBM Corp. Designed by Mike Abbink with Bold Monday. The
+  bundled file, src/patchbay/static/fonts/ibm-plex-sans-latin-var.woff2, is
+  IBM's variable-weight Latin build, redistributed unmodified; generated
+  snapshots inline it as a data URI. The license text travels with it as
+  src/patchbay/static/fonts/LICENSE-OFL.txt. The OFL permits redistribution
+  as part of a larger work; the font is not sold on its own and its name is
+  unchanged, which the Reserved Font Name term requires.
+
+- D3 (https://d3js.org) — ISC License, Copyright 2010-2023 Mike Bostock.
+  src/patchbay/static/d3.v7.min.js is the v7.9.0 build, unmodified; generated
+  snapshots inline it so the topology map works offline.
