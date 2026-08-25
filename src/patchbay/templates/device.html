@@ -2,7 +2,13 @@
 {% import "_ui.html" as ui %}
 {% block refresh %}{% endblock %}{# soft refresh below — a hard meta refresh closes open graphs #}
 {% block title %}{{ d.name }} — patchbay{% endblock %}
-{% block crumb %}<span class="muted">/ {{ d.name }}</span>{% endblock %}
+{% block page_title %}{{ d.name }}{% endblock %}
+{% block breadcrumb %}<nav class="breadcrumb"><a href="/">Overview</a> / {{ d.name }}</nav>{% endblock %}
+{% block purpose %}{{ d.role or '?' }} · {{ d | hw or '?' }}{% endblock %}
+{% block controls %}
+{% if hidden %}<a href="?all=1">show all</a>
+{% elif show_all %}<a href="?">hide idle logical ports</a>{% endif %}
+{% endblock %}
 {% block main %}
 
 <div class="card {{ d.role }}" style="max-width: 560px">
@@ -70,16 +76,13 @@
 </script>
 
 {% if ports or hidden %}
-<h2>Ports ({{ ports | length }}{% if hidden %} shown{% endif %})
-  <span style="text-transform: none; letter-spacing: 0; font-weight: 400">— click a port for its traffic graph</span></h2>
+<h2>Ports — {{ ports | length }}{% if hidden %} shown{% endif %}
+  <span style="text-transform: none; letter-spacing: 0; font-weight: 400">; click one for its traffic graph</span></h2>
 {% if hidden %}
 <p class="muted" style="font-size: 0.8rem; margin: 0 0 0.5rem">
   hidden (idle logical):
   {% for kind, n in hidden.items() %}{{ n }} {{ kind }}{{ ", " if not loop.last }}{% endfor %}
-  — <a href="?all=1">show all</a>
 </p>
-{% elif show_all %}
-<p class="muted" style="font-size: 0.8rem; margin: 0 0 0.5rem"><a href="?">hide idle logical ports</a></p>
 {% endif %}
 <div class="scroll">
 <table>
@@ -106,7 +109,7 @@
 {% endif %}
 
 {% if links %}
-<h2>Links</h2>
+<h2>Cabled to</h2>
 <div class="scroll">
 <table>
   <tr><th>A</th><th>Port</th><th>B</th><th>Port</th><th>Source</th></tr>
@@ -124,7 +127,7 @@
 {% endif %}
 
 {% if children %}
-<h2>Guests ({{ children | length }})</h2>
+<h2>Guests on this host ({{ children | length }})</h2>
 <div class="scroll">
 <table>
   <tr><th>VM</th><th>IP</th><th>Guest OS</th><th>State</th></tr>

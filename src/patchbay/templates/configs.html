@@ -1,9 +1,6 @@
 {% extends "base.html" %}
 {% block title %}configs — patchbay{% endblock %}
-{% block crumb %}<span class="muted">/ configs</span>{% endblock %}
 {% block main %}
-
-<h2>Device configuration history <span class="muted" style="text-transform: none; letter-spacing: 0">(Oxidized)</span></h2>
 
 {% if error == "unconfigured" %}
 <p class="muted">Set <span class="mono">OXIDIZED_URL</span> (e.g.
@@ -15,6 +12,7 @@ docker-compose.</p>
 <p><span class="dot down"></span>Oxidized unreachable at
 <span class="mono">{{ oxidized_url }}</span>: <span class="muted">{{ error }}</span></p>
 {% else %}
+<h2>Nodes and their last backup</h2>
 <div class="scroll"><table>
   <tr><th></th><th>device</th><th>ip</th><th>model</th><th>last backup</th></tr>
   {% for n in nodes %}

@@ -1,9 +1,7 @@
 {% extends "base.html" %}
 {% block title %}drift — patchbay{% endblock %}
-{% block crumb %}<span class="muted">/ drift</span>{% endblock %}
 {% block main %}
 
-<h2>IPAM vs. observed reality</h2>
 {% if not have_ipam %}
 <p class="muted">No IPAM address records collected yet — run <span class="mono">patchbay poll</span> first.</p>
 {% else %}

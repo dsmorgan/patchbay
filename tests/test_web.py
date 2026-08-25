@@ -57,6 +57,29 @@ def test_all_pages_render_on_seeded_db(clean_env, tmp_path, client):
     assert "vm-a" in client.get("/device/hyp1").text  # guests listed
 
 
+def test_pages_carry_a_header(clean_env, tmp_path, client):
+    # every shell page uses the page-header slot: a <header class="page">
+    # with an <h1> matching the rail's name for that page (NAV, or the
+    # device name for a drill-down) — and none of the old top-bar crumbs
+    seed(str(tmp_path / "test.db"))
+    expect_h1 = {
+        "/": "Overview",
+        "/topology": "Topology",
+        "/vlans": "VLANs",
+        "/drift": "Drift",
+        "/patchpanel": "Patch panels",
+        "/ops": "Ops",
+        "/device/sw1": "sw1",
+    }
+    old_crumbs = ["/ vlans", "/ drift", "/ ops", "/ patch panels", "/ configs"]
+    for p in PAGES + ["/device/sw1"]:
+        body = client.get(p).text
+        assert '<header class="page">' in body, p
+        assert f"<h1>{expect_h1[p]}</h1>" in body, p
+        for crumb in old_crumbs:
+            assert crumb not in body, (p, crumb)
+
+
 def test_configs_page_degrades_without_oxidized(client):
     # OXIDIZED_URL unset: the page must render a "not configured" state
     r = client.get("/configs")
