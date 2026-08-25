@@ -9,7 +9,7 @@ reading the PNGs — instead of inferred from markup: an inline SVG that lost it
 `/>` still returns 200 and renders nothing.
 
     python scripts/screenshots.py --out artifacts/shots/my-change
-    python scripts/screenshots.py --pages /,/topology?view=load --widths 1400
+    python scripts/screenshots.py --pages /,topology?view=load --widths 1400   # leading / optional
     python scripts/screenshots.py --db demo.db --snapshot
 
 Exit status is 1 if any page did not return 200 or a screenshot failed, so the
@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -98,6 +99,17 @@ def wait_for(url: str, seconds: float) -> bool:
     return False
 
 
+def page_path(raw: str) -> str:
+    """A page as a path. Git Bash rewrites a leading-slash argument into a
+    Windows path (`/configs` -> `C:/Program Files/Git/configs`) unless
+    MSYS_NO_PATHCONV=1, so a drive-letter prefix is stripped back off, and a
+    bare `configs` is accepted so nobody has to fight the shell at all."""
+    p = raw.strip()
+    if re.match(r"^[A-Za-z]:/", p):
+        p = p.split("/", 3)[-1]
+    return "/" + p.lstrip("/")
+
+
 def slug(page: str) -> str:
     s = page.strip("/") or "home"
     for ch in "/?&=":
@@ -133,7 +145,7 @@ def main() -> int:
     chrome = find_chrome(args.chrome)
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
-    pages = [p.strip() for p in args.pages.split(",") if p.strip()]
+    pages = [page_path(p) for p in args.pages.split(",") if p.strip()]
     widths = [int(w) for w in args.widths.split(",") if w.strip()]
 
     tmp = Path(tempfile.mkdtemp(prefix="patchbay-shots-"))
