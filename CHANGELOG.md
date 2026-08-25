@@ -6,6 +6,17 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Changed
+
+- **A tagged release identifies itself by its tag alone.** The header build
+  stamp on a release image reads `0.3.1`, not `0.3.1+<sha>` — the tag
+  already names one exact commit, so the sha added nothing. Untagged builds
+  keep the full stamp (`0.3.1+abc1234`), and a checkout with uncommitted
+  changes appends `-dirty`, so the only builds carrying extra marks are the
+  ones where the version alone is ambiguous.
+
 ## [0.3.0] — 2026-08-25
 
 The first release with outside contributions: the nav rail and typeface are

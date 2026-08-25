@@ -32,11 +32,13 @@ def _build_version() -> str:
     """What's actually running, shown in the page header so 'which version is
     the NAS on?' has an answer.
 
-    Always leads with the release number and appends the build that produced
-    it: `0.1.0+01e851e`. The release number alone can't distinguish two builds
-    between tags, and the commit alone doesn't say which release you're near,
-    so the stamp carries both. The commit comes from PATCHBAY_BUILD when the
-    Dockerfile baked one in, otherwise from the checkout's own git.
+    A tagged release is just its version: `0.3.0`. Anything else leads with
+    the release number and appends the build that produced it —
+    `0.3.0+01e851e`, plus `-dirty` when a checkout has uncommitted changes —
+    because between tags the version alone can't distinguish two builds, and
+    the commit alone doesn't say which release you're near. CI stamps release
+    images with the bare version and branch images with the short SHA (via
+    PATCHBAY_BUILD); a checkout asks its own git.
     """
     import os
 
@@ -49,16 +51,29 @@ def _build_version() -> str:
     if not build or build == "dev":
         try:
             import subprocess
-            build = subprocess.run(
-                ["git", "-C", str(Path(__file__).parent), "rev-parse",
-                 "--short", "HEAD"],
-                capture_output=True, text=True, timeout=3).stdout.strip()
+
+            def _git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", "-C", str(Path(__file__).parent), *args],
+                    capture_output=True, text=True, timeout=3).stdout.strip()
+
+            build = _git("rev-parse", "--short", "HEAD")
+            if build:
+                dirty = bool(_git("status", "--porcelain"))
+                # a clean checkout sitting exactly on its own release tag IS
+                # the release — same rule as a CI release image
+                if not dirty and _git("describe", "--tags",
+                                      "--exact-match") == f"v{__version__}":
+                    return __version__
+                if dirty:
+                    build += "-dirty"
         except Exception:
             build = ""
     if not build:
         return __version__
     # A build stamp that already names the version replaces it rather than
-    # doubling it, so an explicit PATCHBAY_BUILD=0.1.0+abc123 renders as given.
+    # doubling it: CI's release stamp PATCHBAY_BUILD=0.3.0 renders bare, and
+    # an explicit 0.3.0+abc123 renders as given.
     return build if build.startswith(__version__) else f"{__version__}+{build}"
 
 
