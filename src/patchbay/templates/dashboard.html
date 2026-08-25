@@ -26,6 +26,25 @@
 </div>
 {% endif %}
 
+{% if checked %}
+<section class="exceptions">
+  {% if exceptions %}
+  {% for ex in exceptions %}
+  <div class="excard {{ ex.severity }}">
+    <div class="extitle">{% if ex.href %}<a href="{{ ex.href }}">{{ ex.title }}</a>{% else %}{{ ex.title }}{% endif %}</div>
+    <ul class="exitems">
+      {% for item in ex['items'] %}
+      <li>{% if item.href %}<a href="{{ item.href }}">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}<span class="muted"> — {{ item.detail }}</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="excard clear">All clear — {{ checked | join(", ") }}</div>
+  {% endif %}
+</section>
+{% endif %}
+
 <div class="statgrid">
   {% for key, label in [("ports", "ports"), ("endpoints", "endpoints"),
                         ("subnets", "subnets"), ("vlans", "vlans")] %}
@@ -45,7 +64,7 @@
 </div>
 
 {% if fabric %}
-<h2>Fabric</h2>
+<h2>Fabric — switches and firewalls</h2>
 <div class="cards">
   {% for d in fabric %}
   <div class="card {{ d.role }}">
@@ -72,26 +91,46 @@
 
 {% endif %}
 
-{% if hypervisors or vms %}
-<h2>Hypervisors &amp; VMs</h2>
+{% if hypervisors %}
+<h2>Hypervisors and their guests</h2>
 <div class="cards">
   {% for d in hypervisors %}
+  {% set guests = vms_by_host.get(d.name, []) %}
+  {% set up = guests | selectattr('status', 'equalto', 'up') | list %}
   <div class="card hypervisor">
     {{ ui.ricon("hypervisor") }}
     <div class="name"><span class="dot {{ d.status }}"></span><a href="/device/{{ d.name | urlencode }}">{{ d.name }}</a></div>
     <div class="sub">{{ d | hw or d.role }} · {{ d.mgmt_ip or '?' }}</div>
-    <div class="sub">
-      {% set up = vms | selectattr('parent', 'equalto', d.name) | selectattr('status', 'equalto', 'up') | list %}
-      {% set all = vms | selectattr('parent', 'equalto', d.name) | list %}
-      {{ up | length }}/{{ all | length }} VMs running
-    </div>
+    <details>
+      <summary class="sub">{{ up | length }}/{{ guests | length }} VMs running</summary>
+      {% if guests %}
+      <div class="scroll">
+      <table>
+        <tr><th>VM</th><th>IP</th><th>Guest OS</th><th>State</th></tr>
+        {% for v in guests %}
+        <tr>
+          <td><span class="dot {{ v.status }}"></span>{{ v.name }}</td>
+          <td class="mono">{{ v.mgmt_ip or '-' }}</td>
+          <td class="muted">{{ v.os or '-' }}</td>
+          <td>{{ v.status }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      </div>
+      {% endif %}
+    </details>
   </div>
   {% endfor %}
 </div>
+
+{% endif %}
+
+{% if orphan_vms %}
+<h2>Guests without a host on this page</h2>
 <div class="scroll">
 <table>
   <tr><th>VM</th><th>Host</th><th>IP</th><th>Guest OS</th><th>State</th></tr>
-  {% for v in vms %}
+  {% for v in orphan_vms %}
   <tr>
     <td><span class="dot {{ v.status }}"></span>{{ v.name }}</td>
     <td class="muted">{{ v.parent or '-' }}</td>
@@ -105,23 +144,18 @@
 
 {% endif %}
 
-{% if links %}
-<h2>Links</h2>
-<div class="scroll">
-<table>
-  <tr><th>A</th><th>Port</th><th>B</th><th>Port</th><th>Source</th></tr>
-  {% for l in links %}
-  <tr>
-    <td><a href="/device/{{ l.a_device | urlencode }}">{{ l.a_device }}</a></td>
-    <td class="mono">{{ l.a_interface }}</td>
-    <td><a href="/device/{{ l.b_device | urlencode }}">{{ l.b_device }}</a></td>
-    <td class="mono">{{ l.b_interface }}</td>
-    <td class="muted">{{ l.source }}</td>
-  </tr>
-  {% endfor %}
-</table>
-</div>
-
-{% endif %}
+<style>
+  .exceptions { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-bottom: 1.4rem; }
+  .excard { background: var(--card); border: 1.4px solid var(--line); border-left: 4px solid var(--muted);
+            border-radius: 8px; padding: 0.7rem 1rem; flex: 1 1 260px; }
+  .excard.crit { border-left-color: var(--crit); }
+  .excard.warn { border-left-color: var(--warn); }
+  .excard.info { border-left-color: var(--muted); }
+  .excard.clear { border-left-color: var(--ok); flex-basis: 100%; }
+  .excard .extitle { font-weight: 600; }
+  .excard .extitle a { color: var(--ink); }
+  .excard .exitems { list-style: none; margin: 0.4rem 0 0; padding: 0;
+                      display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85rem; }
+</style>
 
 {% endblock %}
