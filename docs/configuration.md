@@ -92,7 +92,7 @@ bundle path) in any OIDC deployment.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PATCHBAY_SNAPSHOT_DIR` | `snapshots/` beside the DB | Where `patchbay snapshot` and the /ops button write the self-contained HTML files (timestamped + a stable `patchbay-latest.html`) |
+| `PATCHBAY_SNAPSHOT_DIR` | `snapshots/` beside the DB | Where `patchbay snapshot` and the `/snapshots` page write the self-contained HTML files (timestamped + a stable `patchbay-latest.html`) |
 | `PATCHBAY_SNAPSHOT_KEEP` | `30` | Timestamped snapshots to retain (`0` = keep everything) |
 | `PATCHBAY_SNAPSHOT_AT` | — | `HH:MM` local time to write one snapshot a day (the poller does it). Unset = on-demand only |
 | `PATCHBAY_SNAPSHOT_DELIVER_DIR` | — | Second destination each finished snapshot is copied to (a mounted off-site share). Kept separate from the local directory so a delivery failure never costs you the snapshot; copies land under a temporary name and are renamed, so a sync client never picks up a half-written file |
