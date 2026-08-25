@@ -20,7 +20,7 @@
      source sets it, so a stuck collector shows up instead of hiding behind
      a healthy one; per-source detail is in the tooltip and on /ops. #}
   <span class="ages">{%- if ages %}{% set oldest = ages.values() | max %}
-    <span class="{{ 'stale' if oldest > 15 }}"
+    <span class="{{ 'stale' if oldest > STALE_MIN }}"
           title="time since each source last returned data — {% for s, m in ages.items() %}{{ s }} {{ m | round | int }}m{{ ' · ' if not loop.last }}{% endfor %}"
       >last polled {{ oldest | round | int }} min ago</span>
     {%- endif %}</span>

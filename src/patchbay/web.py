@@ -188,6 +188,7 @@ def _conn() -> sqlite3.Connection:
 
 
 STALE_MIN = 15  # same rule the top bar uses (base.html hardcodes this today)
+templates.env.globals["STALE_MIN"] = STALE_MIN   # the top bar uses the same threshold
 
 
 def _age(conn: sqlite3.Connection) -> dict[str, float]:
