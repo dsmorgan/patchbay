@@ -146,7 +146,7 @@ def generate(settings: Settings) -> str:
         d["ports"] = ports_by_dev.get(d["name"], [])
         d["graphs"] = graphs_by_dev.get(d["name"], [])
 
-    d3_js = (Path(__file__).parent / "static" / "d3.v7.min.js").read_text()
+    d3_js = (Path(__file__).parent / "static" / "d3.v7.min.js").read_text(encoding="utf-8")
     return web.templates.env.get_template("snapshot.html").render(
         graph_json=graph_json, peak_ready=peak_ready, d3_js=d3_js,
         generated=time.strftime("%Y-%m-%d %H:%M %Z"), ages=ages,
@@ -171,13 +171,13 @@ def write_snapshot(settings: Settings, out: str | None = None) -> Path:
     if out:
         path = Path(out)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(html)
+        path.write_text(html, encoding="utf-8", newline="\n")
         return path
     d = Path(settings.snapshot_dir)
     d.mkdir(parents=True, exist_ok=True)
     path = d / time.strftime("patchbay-%Y%m%d-%H%M%S.html")
-    path.write_text(html)
-    (d / "patchbay-latest.html").write_text(html)
+    path.write_text(html, encoding="utf-8", newline="\n")
+    (d / "patchbay-latest.html").write_text(html, encoding="utf-8", newline="\n")
     if settings.snapshot_keep > 0:
         for old in sorted(d.glob("patchbay-2*.html"))[:-settings.snapshot_keep]:
             old.unlink()
