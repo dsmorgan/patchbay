@@ -8,6 +8,45 @@ put.
 
 ## [Unreleased]
 
+### Added
+
+- **Every page opens with what it answers.** A page header inside the content
+  column carries the title and a one-line purpose — the same sentence the
+  rail shows on hover, from `NAV` — with the page's controls at the right
+  and a breadcrumb on drill-downs. Section headings say what the section
+  answers ("Cabled to", "Guests on this host") rather than naming a noun.
+- **The Overview leads with exceptions.** Devices not up, links below their
+  speed tier, IPAM conflicts, and stale sources come first — or one
+  "All clear" line naming what was checked. Guests fold into their
+  hypervisor's card; the Links table is gone (the map and each device page
+  answer it).
+- **The map's state lives in the URL, and `view` is a mode.** Wiring (the new
+  default: grey cables, dashed where inferred) · Load · VLAN · Evidence (the
+  old reporter colours), plus `vlan=`, `focus=`, `load=now|peak` and the
+  visibility toggles — only non-defaults serialised, so a view is a link.
+  The map draws its four tiers as labelled bands (Internet / Edge / Fabric /
+  Access & compute), owns each node's Y so nodes slide along their lane,
+  fits its content to the frame on load and after every change, and centres
+  a focused node. Pins are X-only now; previously pinned nodes jump into
+  their lane once. All of it works in the offline snapshot.
+- **Snapshots page** under Records: what is kept (newest first, per-file
+  download), where it is delivered, the schedule, and "snapshot now". The
+  `/ops` snapshot buttons are gone; `/ops` is reordered collect-now →
+  declarations → what patchbay is running on.
+- **Configs opens with "What changed"** — the latest versions across every
+  Oxidized node, newest first, each row linking to its diff — above the
+  per-device table. Degrades to a reduced page when Oxidized is absent or
+  one node's history cannot be read.
+- **Deep links.** A VLAN row opens the map in VLAN mode with that VLAN lit; a
+  device page has "show on map"; patch-panel rows are anchorable
+  (`/patchpanel#p3`). The device page's ports table carries an Endpoints
+  column that expands to the MACs learned on that port.
+- Process: `docs/process/multi-agent-playbook.md`, agent definitions under
+  `.claude/agents/`, briefs and a manual test guide under `docs/process/`,
+  ADR-0001 under `docs/adr/`, and `scripts/screenshots.py` — a harness that
+  seeds the demo network, serves it, and photographs every page so a UI
+  change is looked at rather than inferred.
+
 ### Changed
 
 - **Navigation is a rail, not a row of links.** Pages sit in a left rail
