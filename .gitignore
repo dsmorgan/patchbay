@@ -30,3 +30,6 @@ build/
 .idea/
 .vscode/
 *.db
+
+# per-brief worktrees (docs/process/multi-agent-playbook.md §8)
+.worktrees/
