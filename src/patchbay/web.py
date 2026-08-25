@@ -125,6 +125,8 @@ NAV = [
          "IPAM against what the network actually shows"),
         ("/configs", "Configs", "configs",
          "Device configuration history and diffs, from Oxidized"),
+        ("/snapshots", "Snapshots", "snapshots",
+         "Break-glass copies of the whole picture: what is kept, and where it is delivered"),
     ]),
 ]
 templates.env.globals["NAV"] = NAV
@@ -144,6 +146,7 @@ NAV_ICONS = {
                   "M4.5 8v2 M7.5 8v2 M10.5 8v2 M13.5 8v2",
     "drift": "M3 5.5h12 M12 2.5l3 3-3 3 M15 12.5H3 M6 9.5l-3 3 3 3",
     "configs": "M4 1.5h7l4 4v11H4z M11 1.5v4h4 M6.5 9h5 M6.5 12h5",
+    "snapshots": "M2 4.5h14v3H2z M3.5 7.5h11V15h-11z M7 10.5h4",
     "ops": "M2.5 4.5h13 M2.5 9h13 M2.5 13.5h13 M6 2.5v4 M12 7v4 M8 11.5v4",
     "signout": "M7 2.5H3.5v13H7 M11 12.5 14.5 9 11 5.5 M6.5 9H14",
     "collapse": "M2 3h14v12H2z M7 3v12 M13 7l-2 2 2 2",
