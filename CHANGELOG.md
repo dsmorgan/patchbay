@@ -6,7 +6,23 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.3.0] — 2026-08-25
+
+The first release with outside contributions: the nav rail and typeface are
+from [@Moonchopper](https://github.com/Moonchopper)
+([#1](https://github.com/dsmorgan/patchbay/pull/1)), the container pipeline
+from [@slmingol](https://github.com/slmingol)
+([#2](https://github.com/dsmorgan/patchbay/pull/2)).
+
+### Added
+
+- **Pre-built images on GHCR.** Every push to `main` and every `v*` tag
+  builds and publishes `ghcr.io/dsmorgan/patchbay`; releases carry
+  `latest`, `X.Y.Z`, `X.Y`, and short-SHA tags, and the SHA is stamped
+  into the UI header as the build. The example compose file now defaults
+  to the pre-built image (`build:` kept as a commented alternative), so
+  the quick start needs no clone — fetch two files and `docker compose up`.
+  The example maps the UI to host port 8013.
 
 ### Changed
 
@@ -144,6 +160,7 @@ token server-side and recolors graphs in transit.
   work for topology, load, and status, but their per-port VLAN membership
   falls back to SNMP and declarations.
 
+[0.3.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.2.0
 [0.1.1]: https://github.com/dsmorgan/patchbay/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.1.0

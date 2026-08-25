@@ -2,10 +2,10 @@ name: Build and push container
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
     tags: ["v*"]
   pull_request:
-    branches: [main, dev]
+    branches: [main]
 
 env:
   REGISTRY: ghcr.io
@@ -20,6 +20,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # the UI header shows version+build; a 40-char sha there is noise
+      - name: Short SHA
+        id: sha
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
@@ -51,6 +56,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            GIT_SHA=${{ github.sha }}
+            GIT_SHA=${{ steps.sha.outputs.short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

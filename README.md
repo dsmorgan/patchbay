@@ -20,7 +20,7 @@ mkdir -p data && cp .env.example data/.env    # fill in the tools you already ru
 docker compose -f docker-compose.example.yml up -d
 ```
 
-The UI is on http://localhost:8484. `patchbay.db` is created in `./data` on first run.
+The UI is on http://localhost:8013. `patchbay.db` is created in `./data` on first run.
 To build from source instead, comment the `image:` lines in the compose file and uncomment
 the `build:` blocks, then run with a checkout present.
 
