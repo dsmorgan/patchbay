@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from patchbay import db as pdb
 
-PAGES = ["/", "/topology", "/vlans", "/drift", "/patchpanel", "/ops"]
+PAGES = ["/", "/topology", "/vlans", "/drift", "/patchpanel", "/ops", "/snapshots"]
 
 
 @pytest.fixture()
@@ -69,6 +69,7 @@ def test_pages_carry_a_header(clean_env, tmp_path, client):
         "/drift": "Drift",
         "/patchpanel": "Patch panels",
         "/ops": "Ops",
+        "/snapshots": "Snapshots",
         "/device/sw1": "sw1",
     }
     old_crumbs = ["/ vlans", "/ drift", "/ ops", "/ patch panels", "/ configs"]
@@ -412,3 +413,53 @@ def test_configs_timeline_unreachable_is_a_state_not_a_crash(clean_env, monkeypa
     r = client.get("/configs")
     assert r.status_code == 200
     assert "unreachable" in r.text.lower()
+# --- snapshots-page ---
+
+def test_snapshots_page_lists_newest_first(clean_env, tmp_path, client):
+    d = tmp_path / "snaps"
+    d.mkdir()
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(d))
+    (d / "patchbay-20250101-000000.html").write_text("old")
+    (d / "patchbay-20250201-000000.html").write_text("new")
+    (d / "patchbay-latest.html").write_text("latest")
+    body = client.get("/snapshots").text
+    i_new = body.index("patchbay-20250201-000000.html")
+    i_old = body.index("patchbay-20250101-000000.html")
+    assert i_new < i_old  # newest first
+    assert '/snapshots/patchbay-20250201-000000.html' in body
+    assert '/snapshots/patchbay-latest.html' in body  # "download the latest" link
+
+
+def test_snapshot_download_serves_only_the_pattern(clean_env, tmp_path, client):
+    d = tmp_path / "snaps"
+    d.mkdir()
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(d))
+    (d / "patchbay-20250101-000000.html").write_text("hello")
+    (d / "other.html").write_text("nope")
+
+    r = client.get("/snapshots/patchbay-20250101-000000.html")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("attachment")
+    assert r.text == "hello"
+
+    assert client.get("/snapshots/..%2F..%2Fpatchbay.db").status_code == 404
+    assert client.get("/snapshots/other.html").status_code == 404
+    assert client.get("/snapshots/patchbay-latest.html").status_code == 404  # not written yet
+
+
+def test_snapshots_page_empty_state(client):
+    r = client.get("/snapshots")
+    assert r.status_code == 200
+    assert "No snapshot yet" in r.text
+    assert "PATCHBAY_SNAPSHOT_AT" in r.text
+
+
+def test_ops_no_longer_offers_snapshot_buttons(client):
+    body = client.get("/ops").text
+    assert "snapshot now" not in body
+    assert "download the latest snapshot" not in body
+    assert 'data-url="/ops/snapshot"' not in body
+    # Declarations now comes before the effective-configuration table
+    i_decl = body.index("Declarations — what only you can tell patchbay")
+    i_conf = body.index("What patchbay is running on")
+    assert i_decl < i_conf
