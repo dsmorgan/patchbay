@@ -1,0 +1,32 @@
+{# Shared by /ops and /snapshots: the act-button click handler and its output
+   pane. Both pages render one or more <button class="act" data-url="...">
+   above this include; each POSTs to its data-url and streams the JSON
+   {"lines": [...]} response (or the error detail) into #out. #}
+<pre id="out" class="mono muted" style="display: none; background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px; padding: 0.8rem 1rem;
+  white-space: pre-wrap"></pre>
+
+<style>
+  button.act { background: var(--card); color: var(--ink); border: 1px solid var(--accent);
+               border-radius: 999px; padding: 0.35rem 0.9rem; font-size: 0.85rem;
+               cursor: pointer; }
+  button.act:hover { background: var(--line); }
+  button.act:disabled { opacity: 0.5; cursor: wait; }
+</style>
+<script>
+const out = document.getElementById("out");
+const buttons = [...document.querySelectorAll("button.act")];
+buttons.forEach(b => b.addEventListener("click", async () => {
+  buttons.forEach(x => x.disabled = true);
+  out.style.display = "";
+  out.textContent = `running ${b.textContent}…`;
+  try {
+    const r = await fetch(b.dataset.url, {method: "POST"});
+    const body = await r.json();
+    out.textContent = (body.lines || [body.detail || r.statusText]).join("\n");
+  } catch (e) {
+    out.textContent = `failed: ${e}`;
+  }
+  buttons.forEach(x => x.disabled = false);
+}));
+</script>

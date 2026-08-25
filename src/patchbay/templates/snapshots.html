@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block refresh %}{% endblock %}{# results on screen must not vanish mid-read #}
+{% block title %}snapshots — patchbay{% endblock %}
+{% block main %}
+
+<p style="display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center">
+  <button class="act" data-url="/ops/snapshot">snapshot now</button>
+  {% if latest.exists %}<a href="{{ latest.href }}"
+     style="align-self: center; font-size: 0.8rem">download the latest</a>{% endif %}
+</p>
+
+{% include "_actions.html" %}
+
+{% if is_demo %}
+<p class="muted" style="font-size: 0.82rem">This model is the demo network, so
+these snapshots are safe to share.</p>
+{% endif %}
+
+<h2>Kept here</h2>
+{% if snapshots %}
+<div class="scroll"><table>
+  <tr><th>when</th><th>file</th><th>size</th><th></th></tr>
+  {% for s in snapshots %}
+  <tr>
+    <td class="muted">{{ s.when }}</td>
+    <td class="mono">{{ s.name }}</td>
+    <td class="muted">{{ s.size_mb }} MB</td>
+    <td><a href="{{ s.href }}">download</a></td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% else %}
+<p class="muted">No snapshot yet — take one, or set
+<span class="mono">PATCHBAY_SNAPSHOT_AT</span> for one a day.</p>
+{% endif %}
+
+<h2>Where they go</h2>
+<div style="max-width: 700px">
+<p class="muted" style="font-size: 0.85rem">
+Written to <span class="mono">{{ settings_view.dir }}</span>{% if settings_view.deliver_dir
+%}, delivered to <span class="mono">{{ settings_view.deliver_dir }}</span>{% endif %}
+· {% if settings_view.at %}one written automatically at {{ settings_view.at }} daily
+{% else %}on-demand only — set <span class="mono">PATCHBAY_SNAPSHOT_AT</span> for a daily
+one{% endif %} · keeping {{ settings_view.keep if settings_view.keep > 0 else "every" }}
+timestamped file{{ "s" if settings_view.keep != 1 }}.</p>
+{% if not settings_view.deliver_dir %}
+<p class="muted" style="font-size: 0.82rem">This host is the only copy, and a
+snapshot is for when this host is down.</p>
+{% endif %}
+</div>
+
+{% endblock %}

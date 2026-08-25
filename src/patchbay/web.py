@@ -1111,7 +1111,6 @@ def ops(request: Request):
                                 if stored.get(v)),
             "last_poll": last_poll,
             "conflicts": _json_state(conn, "declaration_conflicts") or [],
-            "has_snapshot": (Path(settings.snapshot_dir) / "patchbay-latest.html").exists(),
         })
     finally:
         conn.close()
@@ -1158,6 +1157,72 @@ def ops_snapshot_latest():
         raise HTTPException(404, "no snapshot generated yet")
     return Response(p.read_bytes(), media_type="text/html", headers={
         "Content-Disposition": 'attachment; filename="patchbay-snapshot.html"'})
+
+
+@app.get("/snapshots", response_class=HTMLResponse)
+def snapshots(request: Request):
+    """Kept break-glass snapshots: what is on disk, and where they go. The
+    live UI's action button posts to /ops/snapshot (unchanged); this page
+    just lists and serves what that leaves behind."""
+    import re
+    import time as _time
+
+    from . import demo
+
+    settings = load_settings()
+    d = Path(settings.snapshot_dir)
+    found = []
+    if d.is_dir():
+        for p in d.glob("patchbay-2*.html"):  # excludes patchbay-latest.html
+            m = re.fullmatch(r"patchbay-(\d{8})-(\d{6})\.html", p.name)
+            if not m:
+                continue
+            try:
+                ts = _time.mktime(_time.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S"))
+            except ValueError:
+                continue
+            found.append({
+                "name": p.name,
+                "when": _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(ts)),
+                "ts": ts,
+                "size_mb": round(p.stat().st_size / 1e6, 1),
+                "href": f"/snapshots/{p.name}",
+            })
+    found.sort(key=lambda s: s["ts"], reverse=True)
+    conn = _conn()
+    try:
+        db.init(conn)
+        is_demo = db.get_state(conn, demo.MARKER) == "1"
+        ages = _age(conn)
+    finally:
+        conn.close()
+    return templates.TemplateResponse(request, "snapshots.html", {
+        "snapshots": found,
+        "latest": {"exists": (d / "patchbay-latest.html").exists(),
+                   "href": "/snapshots/patchbay-latest.html"},
+        "settings_view": {"dir": settings.snapshot_dir,
+                           "deliver_dir": settings.snapshot_deliver_dir,
+                           "at": settings.snapshot_at, "keep": settings.snapshot_keep},
+        "is_demo": is_demo,
+        "ages": ages,
+    })
+
+
+@app.get("/snapshots/{name}")
+def snapshot_file(name: str):
+    """Serve one kept snapshot as a download. The filename allowlist admits
+    no separators, so a %2F-smuggled '../' cannot match it; the resolved-
+    parent check is defense in depth against the same class of mistake."""
+    import re
+
+    settings = load_settings()
+    d = Path(settings.snapshot_dir)
+    p = d / name
+    if (not re.fullmatch(r"patchbay-(?:\d{8}-\d{6}|latest)\.html", name)
+            or p.resolve().parent != d.resolve() or not p.exists()):
+        raise HTTPException(404, "no such snapshot")
+    return Response(p.read_bytes(), media_type="text/html", headers={
+        "Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.post("/ops/config")
