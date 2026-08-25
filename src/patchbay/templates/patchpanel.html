@@ -13,6 +13,12 @@
 {% endblock %}
 {% block main %}
 
+<style>
+  /* :target — /patchpanel?panel=<n>#p<i> lands here; accent inset like the rail */
+  tr[id]:target { background: var(--selected); }
+  tr[id]:target td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+</style>
+
 <h2>Positions — {{ sel }}</h2>
 
 <div class="scroll">
@@ -20,7 +26,7 @@
   <tr><th>Position</th><th>Switch</th><th>Port</th><th>Status</th><th>Speed</th><th>Description</th></tr>
   {% for r in rows %}
   {% if r.dev %}
-  <tr>
+  <tr id="p{{ r.port }}">
     <td class="mono">{{ r.port }}</td>
     <td><a href="/device/{{ r.dev | urlencode }}">{{ r.dev }}</a></td>
     <td class="mono">{{ r.iface }}</td>
