@@ -11,14 +11,6 @@ site repo at `../patchbay-site` (never committed here). `.env.example` documents
 every knob; the real `.env` is in patchbay-site. Before committing, check nothing
 site-specific leaked into code, tests, or docs.
 
-## Working with agents
-
-The method is `docs/process/multi-agent-playbook.md` (Fable = PM, Opus = architect/firefighter,
-Sonnet = implementer; escalate one rung up when struggling). Agent definitions:
-`.claude/agents/{implementer,architect,debugger,qa-harness}.md`. Briefs: `docs/process/briefs/`
-(start from `TEMPLATE.md`). Decisions: `docs/adr/`. Gates: `pytest`, then
-`python scripts/screenshots.py --out artifacts/shots/<brief>` and *read the PNGs*.
-
 ## Dev workflow
 
 - Editable install in `.venv`; use `uv pip install -e '.[web]' --python .venv/bin/python`

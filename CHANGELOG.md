@@ -41,11 +41,11 @@ put.
   device page has "show on map"; patch-panel rows are anchorable
   (`/patchpanel#p3`). The device page's ports table carries an Endpoints
   column that expands to the MACs learned on that port.
-- Process: `docs/process/multi-agent-playbook.md`, agent definitions under
-  `.claude/agents/`, briefs and a manual test guide under `docs/process/`,
-  ADR-0001 under `docs/adr/`, and `scripts/screenshots.py` — a harness that
+- Process: ADR-0001 under `docs/adr/` records the decisions; the briefs and
+  the owner's test guide are under `docs/process/`; `scripts/screenshots.py`
   seeds the demo network, serves it, and photographs every page so a UI
-  change is looked at rather than inferred.
+  change is looked at rather than inferred. The working method itself (the
+  playbook and agent definitions) is proposed in its own PR.
 
 ### Changed
 
