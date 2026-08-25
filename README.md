@@ -11,13 +11,21 @@ what's planned, see the [roadmap](docs/architecture.md#phased-roadmap).
 
 ## Quick start
 
-Run the web UI and a background poller from one container image:
+Run the web UI and a background poller from the pre-built image — no clone needed:
 
 ```sh
-git clone https://github.com/dsmorgan/patchbay.git && cd patchbay
+curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/docker-compose.example.yml
+curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/.env.example
 mkdir -p data && cp .env.example data/.env    # fill in the tools you already run
 docker compose -f docker-compose.example.yml up -d
 ```
+
+The UI is on http://localhost:8013 — the compose file maps host port 8013
+onto the app's own 8080, so it won't collide with whatever else already
+claimed 8080; edit the `ports:` line to taste. `patchbay.db` is created in
+`./data` on first run. To build from source instead, comment the `image:`
+lines in the compose file and uncomment the `build:` blocks, then run with a
+checkout present.
 
 Or run from a checkout, which gives you the CLI and an editable install:
 
@@ -26,7 +34,7 @@ uv venv && uv pip install -e '.[web]'
 cp .env.example .env                          # fill in the tools you already run
 patchbay poll                                 # run every configured collector
 patchbay show devices|links|subnets|vlans|endpoints
-patchbay web                                  # dashboard on :8080
+patchbay web                                  # dashboard on :8080 (the app default)
 ```
 
 Same code either way — the difference is what runs it. The container starts
