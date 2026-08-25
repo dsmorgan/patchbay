@@ -69,7 +69,30 @@
   </div>
 </div></nav>
 {% endif %}
-<main>{% block main %}{% endblock %}</main>
+<main>
+{% if not bare %}
+{# The page header: what this page answers, in the same words as the rail's
+   tooltip (NAV), with the page's own controls on the right. Drill-downs
+   override `page_title` (a device, a config node) and set `breadcrumb`. #}
+{% set path = request.url.path %}
+{% set nav = namespace(title="", desc="") %}
+{% for label, entries in NAV %}{% for href, name, icon, desc in entries %}
+  {% set on = (path == "/" or path.startswith("/device/")) if href == "/"
+            else (path == href or path.startswith(href ~ "/")) %}
+  {% if on %}
+    {% set nav.title = name %}{% set nav.desc = desc %}
+  {% endif %}
+{% endfor %}{% endfor %}
+{% if path.startswith("/ops") %}{% set nav.title = "Ops" %}
+  {% set nav.desc = "Collect now, the effective configuration, and operator declarations" %}{% endif %}
+<header class="page">
+  {% block breadcrumb %}{% endblock %}
+  <h1>{% block page_title %}{{ nav.title }}{% endblock %}</h1>
+  <p class="purpose">{% block purpose %}{{ nav.desc }}{% endblock %}</p>
+  <div class="controls">{% block controls %}{% endblock %}</div>
+</header>
+{% endif %}
+{% block main %}{% endblock %}</main>
 {% if not bare %}
 <script>
 // the rail's one preference: wide (icons and names) or narrow (icons, names

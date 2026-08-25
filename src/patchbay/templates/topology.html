@@ -1,8 +1,7 @@
 {% extends "base.html" %}
 {% block refresh %}{% endblock %}{# no page auto-refresh — it would reset the layout #}
 {% block title %}topology — patchbay{% endblock %}
-{% block crumb %}<span class="muted">/ topology</span>
-  <a href="#" id="resetlayout" class="muted" style="font-size: 0.75rem">reset layout</a>{% endblock %}
+{% block controls %}<a href="#" id="resetlayout" class="muted" title="forget every pinned position">reset layout</a>{% endblock %}
 {% block main %}
 {% set snapshot = false %}
 {% include "_topomap.html" %}

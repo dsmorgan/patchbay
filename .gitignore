@@ -30,3 +30,9 @@ build/
 .idea/
 .vscode/
 *.db
+
+# screenshot harness output (evidence lives in worktrees / PR descriptions)
+artifacts/
+
+# per-brief worktrees (docs/process/multi-agent-playbook.md §8)
+.worktrees/

@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(python scripts/screenshots.py:*)",
+      "Bash(PYTHONPATH=src .venv/Scripts/python.exe:*)",
+      "Bash(PYTHONPATH=src .venv/bin/python:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git worktree list)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Read(./artifacts/**)"
+    ],
+    "deny": [
+      "Bash(git push origin main)",
+      "Bash(git push origin main:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force:*)",
+      "Bash(git checkout main)",
+      "Bash(git reset --hard:*)",
+      "Bash(rm -rf:*)"
+    ]
+  }
+}
