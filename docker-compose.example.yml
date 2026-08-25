@@ -3,7 +3,7 @@
 #   mkdir -p data && cp .env.example data/.env   # then fill in what you run
 #   docker compose -f docker-compose.example.yml up -d
 #
-# The UI is then on http://localhost:8080. With an empty data/.env everything
+# The UI is then on http://localhost:8013. With an empty data/.env everything
 # still starts and every page renders; the dashboard tells you what to
 # configure. patchbay.db is created in ./data on first run.
 #
@@ -22,14 +22,13 @@
 
 services:
   patchbay:
-    build:
-      context: .      # or image: <your registry>/patchbay
-      args:
-        # stamps the running build into the page header, so "is this the
-        # version I think it is?" has an answer
-        GIT_SHA: "${GIT_SHA:-dev}"
+    image: ghcr.io/dsmorgan/patchbay:latest   # latest release; or swap for build: below
+    # build:
+    #   context: .
+    #   args:
+    #     GIT_SHA: "${GIT_SHA:-dev}"
     ports:
-      - "8080:8080"
+      - "8013:8080"
     environment:
       # Not cosmetic: PATCHBAY_SNAPSHOT_AT is compared against the container's
       # local time, so without this a nightly "03:30" fires at 03:30 UTC.
@@ -39,10 +38,11 @@ services:
     restart: unless-stopped
 
   patchbay-poller:
-    build:
-      context: .
-      args:
-        GIT_SHA: "${GIT_SHA:-dev}"
+    image: ghcr.io/dsmorgan/patchbay:latest   # same image, different command
+    # build:
+    #   context: .
+    #   args:
+    #     GIT_SHA: "${GIT_SHA:-dev}"
     command: sh -c 'while true; do patchbay poll; sleep "${PATCHBAY_POLL_INTERVAL:-300}"; done'
     environment:
       - TZ=${TZ:-UTC}

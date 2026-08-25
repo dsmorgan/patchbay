@@ -30,6 +30,8 @@ build/
 .idea/
 .vscode/
 *.db
+docker-compose.yml
+docker-compose.yaml
 
 # per-brief worktrees (docs/process/multi-agent-playbook.md §8)
 .worktrees/

@@ -32,11 +32,13 @@ def _build_version() -> str:
     """What's actually running, shown in the page header so 'which version is
     the NAS on?' has an answer.
 
-    Always leads with the release number and appends the build that produced
-    it: `0.1.0+01e851e`. The release number alone can't distinguish two builds
-    between tags, and the commit alone doesn't say which release you're near,
-    so the stamp carries both. The commit comes from PATCHBAY_BUILD when the
-    Dockerfile baked one in, otherwise from the checkout's own git.
+    A tagged release is just its version: `0.3.0`. Anything else leads with
+    the release number and appends the build that produced it —
+    `0.3.0+01e851e`, plus `-dirty` when a checkout has uncommitted changes —
+    because between tags the version alone can't distinguish two builds, and
+    the commit alone doesn't say which release you're near. CI stamps release
+    images with the bare version and branch images with the short SHA (via
+    PATCHBAY_BUILD); a checkout asks its own git.
     """
     import os
 
@@ -49,16 +51,29 @@ def _build_version() -> str:
     if not build or build == "dev":
         try:
             import subprocess
-            build = subprocess.run(
-                ["git", "-C", str(Path(__file__).parent), "rev-parse",
-                 "--short", "HEAD"],
-                capture_output=True, text=True, timeout=3).stdout.strip()
+
+            def _git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", "-C", str(Path(__file__).parent), *args],
+                    capture_output=True, text=True, timeout=3).stdout.strip()
+
+            build = _git("rev-parse", "--short", "HEAD")
+            if build:
+                dirty = bool(_git("status", "--porcelain"))
+                # a clean checkout sitting exactly on its own release tag IS
+                # the release — same rule as a CI release image
+                if not dirty and _git("describe", "--tags",
+                                      "--exact-match") == f"v{__version__}":
+                    return __version__
+                if dirty:
+                    build += "-dirty"
         except Exception:
             build = ""
     if not build:
         return __version__
     # A build stamp that already names the version replaces it rather than
-    # doubling it, so an explicit PATCHBAY_BUILD=0.1.0+abc123 renders as given.
+    # doubling it: CI's release stamp PATCHBAY_BUILD=0.3.0 renders bare, and
+    # an explicit 0.3.0+abc123 renders as given.
     return build if build.startswith(__version__) else f"{__version__}+{build}"
 
 
@@ -99,6 +114,59 @@ ICONS = {
     "host": "M3 2h12v7h-2.5v3H10v2H8v-2H5.5V9H3z M6 2v3 M9 2v3 M12 2v3",
 }
 templates.env.globals["ICONS"] = ICONS
+
+# The nav rail (base.html renders it). Groups are named for the question a
+# page answers, not the mechanism behind it — a rule borrowed from EQDeeps'
+# ADR-017: "Network" is what's out there and how it's wired; "Records" is
+# what the documentation says and whether the network agrees. A new page
+# lands in the group whose question it answers; one that fits neither is the
+# signal for a third heading, not a longer list. Ops — how patchbay itself
+# is fed and configured — is a utility, and sits in the rail's foot beside
+# sign-out rather than among the views. Which entry is lit comes from the
+# request path, so drill-downs keep their section lit.
+NAV = [
+    ("Network", [
+        ("/", "Overview", "overview",
+         "Every device, live: the fabric, access points, hypervisors and their guests"),
+        ("/topology", "Topology", "topology",
+         "How it's wired: the physical map, with VLAN and load overlays"),
+        ("/vlans", "VLANs", "vlans",
+         "Every VLAN and subnet — who routes it, who carries it, what's live in it"),
+        ("/patchpanel", "Patch panels", "patchpanel",
+         "Panel positions and the switch ports behind them"),
+    ]),
+    ("Records", [
+        ("/drift", "Drift", "drift",
+         "IPAM against what the network actually shows"),
+        ("/configs", "Configs", "configs",
+         "Device configuration history and diffs, from Oxidized"),
+    ]),
+]
+templates.env.globals["NAV"] = NAV
+
+# rail glyphs on the same 18x18 stroke grid as the role icons, so the two
+# sets sit together; each is chosen for the question its page answers
+# (a wired graph for topology, a tag for VLANs, a panel of ports, two arrows
+# exchanged for drift, a file for configs, sliders for ops)
+NAV_ICONS = {
+    "overview": "M2 2h5.5v5.5H2z M10.5 2H16v5.5h-5.5z M2 10.5h5.5V16H2z M10.5 10.5H16V16h-5.5z",
+    "topology": "M7.2 3.5a1.8 1.8 0 103.6 0 1.8 1.8 0 10-3.6 0 "
+                "M1.7 14.5a1.8 1.8 0 103.6 0 1.8 1.8 0 10-3.6 0 "
+                "M12.7 14.5a1.8 1.8 0 103.6 0 1.8 1.8 0 10-3.6 0 "
+                "M8.2 5.1 4.3 12.9 M9.8 5.1l3.9 7.8 M5.3 14.5h7.4",
+    "vlans": "M2 2.5h6.5l7.5 7.5-6.5 6.5L2 9z M4.6 5.8a.7.7 0 101.4 0 .7.7 0 10-1.4 0",
+    "patchpanel": "M2.5 5.5h13a1 1 0 011 1v5a1 1 0 01-1 1h-13a1 1 0 01-1-1v-5a1 1 0 011-1z "
+                  "M4.5 8v2 M7.5 8v2 M10.5 8v2 M13.5 8v2",
+    "drift": "M3 5.5h12 M12 2.5l3 3-3 3 M15 12.5H3 M6 9.5l-3 3 3 3",
+    "configs": "M4 1.5h7l4 4v11H4z M11 1.5v4h4 M6.5 9h5 M6.5 12h5",
+    "ops": "M2.5 4.5h13 M2.5 9h13 M2.5 13.5h13 M6 2.5v4 M12 7v4 M8 11.5v4",
+    "signout": "M7 2.5H3.5v13H7 M11 12.5 14.5 9 11 5.5 M6.5 9H14",
+    "collapse": "M2 3h14v12H2z M7 3v12 M13 7l-2 2 2 2",
+    "expand": "M2 3h14v12H2z M7 3v12 M10.5 7l2 2-2 2",
+    "chevrons-left": "M10 4L5.5 9 10 14 M15 4l-4.5 5 4.5 5",
+    "chevrons-right": "M8 4l4.5 5L8 14 M3 4l4.5 5L3 14",
+}
+templates.env.globals["NAV_ICONS"] = NAV_ICONS
 
 from fastapi.staticfiles import StaticFiles
 

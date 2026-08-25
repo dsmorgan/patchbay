@@ -6,6 +6,64 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Changed
+
+- **A tagged release identifies itself by its tag alone.** The header build
+  stamp on a release image reads `0.3.1`, not `0.3.1+<sha>` — the tag
+  already names one exact commit, so the sha added nothing. Untagged builds
+  keep the full stamp (`0.3.1+abc1234`), and a checkout with uncommitted
+  changes appends `-dirty`, so the only builds carrying extra marks are the
+  ones where the version alone is ambiguous.
+
+## [0.3.0] — 2026-08-25
+
+The first release with outside contributions: the nav rail and typeface are
+from [@Moonchopper](https://github.com/Moonchopper)
+([#1](https://github.com/dsmorgan/patchbay/pull/1)), the container pipeline
+from [@slmingol](https://github.com/slmingol)
+([#2](https://github.com/dsmorgan/patchbay/pull/2)).
+
+### Added
+
+- **Pre-built images on GHCR.** Every push to `main` and every `v*` tag
+  builds and publishes `ghcr.io/dsmorgan/patchbay`; releases carry
+  `latest`, `X.Y.Z`, `X.Y`, and short-SHA tags, and the SHA is stamped
+  into the UI header as the build. The example compose file now defaults
+  to the pre-built image (`build:` kept as a commented alternative), so
+  the quick start needs no clone — fetch two files and `docker compose up`.
+  The example maps the UI to host port 8013.
+
+### Changed
+
+- **Navigation is a rail, not a row of links.** Pages sit in a left rail
+  grouped by the question they answer — *Network* (Overview, Topology,
+  VLANs, Patch panels) and *Records* (Drift, Configs) — with Ops and
+  sign-out in the rail's foot. The current page is lit by one accent edge,
+  and drill-downs keep their section lit (a device page under Overview, a
+  node's history under Configs). The rail collapses to icons from a toggle
+  at its top or foot; the choice is remembered per browser, applied before
+  first paint, and forced on viewports too narrow for labels. The groups
+  are data (`NAV` in `web.py`), so a new page is one line. The sign-in
+  page has no rail: nothing behind it is reachable yet.
+- **Typeface.** The UI is set in IBM Plex Sans (variable weight, bundled
+  under the SIL OFL — see NOTICE), replacing the system font, so hierarchy
+  can lean on weight rather than brightness, which a dark ground has little
+  of to spend. Snapshots inline the font as a data URI and read the same
+  offline.
+- Smaller borrowings from the same style guide, none of which touch the
+  palette: a fainter rule between table cells than under the header row, a
+  rim-light on cards in place of a shadow that never showed on a dark
+  ground, form controls inheriting the page face, and a visible focus ring
+  on everything focusable.
+
+### Fixed
+
+- Snapshots are written as UTF-8 with LF line endings regardless of the
+  host's locale. On Windows the `≤` in the topology legend made
+  `patchbay snapshot` fail outright with a `charmap` encode error.
+
 ## [0.2.0] — 2026-08-23
 
 The repository is public as of this release, with a
@@ -113,6 +171,7 @@ token server-side and recolors graphs in transit.
   work for topology, load, and status, but their per-port VLAN membership
   falls back to SNMP and declarations.
 
+[0.3.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.2.0
 [0.1.1]: https://github.com/dsmorgan/patchbay/releases/tag/v0.1.1
 [0.1.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.1.0

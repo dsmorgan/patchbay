@@ -2,3 +2,8 @@
 {% macro ricon(role) -%}
 {% if ICONS.get(role) %}<svg class="cicon" viewBox="0 0 18 18"><path d="{{ ICONS[role] }}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>{% endif %}
 {%- endmacro %}
+{# a rail glyph (web.py NAV_ICONS), same grid and stroke as the role icons.
+   `cls` marks the wide/narrow-only variants of a toggle's icon pair. #}
+{% macro nicon(key, cls="") -%}
+<svg class="rail-icon{{ ' ' ~ cls if cls }}" viewBox="0 0 18 18" aria-hidden="true" focusable="false"><path d="{{ NAV_ICONS[key] }}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{%- endmacro %}

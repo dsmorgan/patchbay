@@ -245,8 +245,13 @@ def test_build_stamp_always_names_the_release(clean_env):
     clean_env.setenv("PATCHBAY_BUILD", f"{__version__}+abc1234")
     assert importlib.reload(web)._build_version() == f"{__version__}+abc1234"
 
+    # a release image is stamped with the bare version and shows exactly
+    # that — a tagged release needs no sha beside it
+    clean_env.setenv("PATCHBAY_BUILD", __version__)
+    assert importlib.reload(web)._build_version() == __version__
+
     # every form starts with the release number
-    for stamp in ("dev", "abc1234", f"{__version__}+abc1234"):
+    for stamp in ("dev", "abc1234", __version__, f"{__version__}+abc1234"):
         clean_env.setenv("PATCHBAY_BUILD", stamp)
         assert importlib.reload(web)._build_version().startswith(__version__)
 

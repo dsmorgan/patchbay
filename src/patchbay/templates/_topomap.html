@@ -19,7 +19,7 @@
   .edge.wan { stroke-dasharray: 8 4; }
   .edge.oob { stroke-dasharray: 2 4; opacity: 0.6; }
   .edge.fdbhost { opacity: 0.45; }
-  .portlab, .speedlab { font: 10.5px ui-monospace, Menlo, monospace; fill: var(--muted);
+  .portlab, .speedlab { font: 10.5px var(--font-mono); fill: var(--muted);
              paint-order: stroke; stroke: var(--bg); stroke-width: 3.5px; }
   .portlab.trunk { fill: var(--accent); font-weight: 600; }
   /* a mirror destination carries copies, not conversation — mark the port and
@@ -37,8 +37,8 @@
   .node.ap rect { stroke: var(--r-ap); }
   .node:hover rect, .node:hover ellipse { stroke-width: 2.6; }
   .node.pinned rect { stroke-width: 2; }
-  .node text.nm { font: 600 12.5px -apple-system, system-ui, sans-serif; fill: var(--ink); }
-  .node text.sub { font: 10.5px -apple-system, system-ui, sans-serif; fill: var(--muted); }
+  .node text.nm { font: 600 12.5px var(--font-ui); fill: var(--ink); }
+  .node text.sub { font: 10.5px var(--font-ui); fill: var(--muted); }
   .node.unmanaged-switch rect { stroke-dasharray: 5 4; stroke: var(--muted); }
   .node { cursor: pointer; }
   .ricon { fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: 0.5;

@@ -1,3 +1,4 @@
+{% import "_ui.html" as ui -%}
 <!doctype html>
 <html lang="en">
 <head>
@@ -7,15 +8,14 @@
 <title>{% block title %}patchbay{% endblock %}</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
 {% include "_style.html" %}
+{# the rail's collapsed/expanded preference goes on <html> before first
+   paint, so a page never draws wide and then snaps narrow #}
+<script>try{if(localStorage.getItem("patchbay.rail")==="collapsed")document.documentElement.classList.add("rail-collapsed")}catch(e){}</script>
 </head>
-<body>
+{# `bare` (set by a page, e.g. login) drops the rail and the shell grid #}
+<body class="{{ 'bare' if bare else 'shell' }}">
 <header>
   <h1><a href="/">{% include "_mark.html" %}patchbay</a><span class="ver" title="running build">{{ BUILD }}</span></h1>
-  <nav><a href="/topology">topology</a> · <a href="/vlans">vlans</a> ·
-       <a href="/configs">configs</a> · <a href="/drift">drift</a> ·
-       <a href="/patchpanel">patch panels</a> · <a href="/ops">ops</a>{%
-       if request.state.auth and request.state.auth != "-"
-       %} · <a href="/logout" class="muted" title="signed in as {{ request.state.auth }}">logout</a>{% endif %}</nav>
   {% block crumb %}{% endblock %}
   {# one honest number: how stale the freshest full picture is. The oldest
      source sets it, so a stuck collector shows up instead of hiding behind
@@ -26,6 +26,75 @@
       >last polled {{ oldest | round | int }} min ago</span>
     {%- endif %}</span>
 </header>
+{% if not bare %}
+{# The rail. Groups and entries are data (web.py NAV); which one is lit
+   comes from the path, so a drill-down keeps its section lit: a device page
+   under Overview, a node's config history under Configs. #}
+{% set path = request.url.path %}
+{% set signed_in = request.state.auth and request.state.auth != "-" %}
+<nav class="rail" aria-label="Pages"><div class="rail-stick">
+  <div class="rail-top">
+    <button type="button" class="rail-chevron rail-toggle" title="Collapse the rail to icons"
+            aria-label="Collapse the rail to icons" aria-expanded="true">
+      {{ ui.nicon("chevrons-left", "when-wide") }}{{ ui.nicon("chevrons-right", "when-narrow") }}</button>
+  </div>
+  {% for label, entries in NAV %}
+  <div class="rail-group">
+    <div class="rail-heading"><span class="rail-heading-text">{{ label }}</span></div>
+    {% for href, name, icon, desc in entries %}
+    {% set on = (path == "/" or path.startswith("/device/")) if href == "/"
+                else (path == href or path.startswith(href ~ "/")) %}
+    <a class="rail-tab{{ ' on' if on }}" href="{{ href }}" title="{{ desc }}"
+       data-name="{{ name }}" data-desc="{{ desc }}"{% if on %} aria-current="page"{% endif %}>
+      {{ ui.nicon(icon) }}<span class="rail-label">{{ name }}</span></a>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  {# the foot: how patchbay itself is fed and set, and the way out —
+     utilities, apart from where you are in the network #}
+  <div class="rail-foot">
+    <a class="rail-tab{{ ' on' if path.startswith('/ops') }}" href="/ops"
+       title="Collect now, the effective configuration, and operator declarations"
+       data-name="Ops" data-desc="Collect now, the effective configuration, and operator declarations"
+       {% if path.startswith('/ops') %}aria-current="page"{% endif %}>
+      {{ ui.nicon("ops") }}<span class="rail-label">Ops</span></a>
+    {% if signed_in %}
+    <a class="rail-tab" href="/logout" title="Signed in as {{ request.state.auth }} — sign out"
+       data-name="Sign out" data-desc="Signed in as {{ request.state.auth }} — sign out">
+      {{ ui.nicon("signout") }}<span class="rail-label">Sign out</span></a>
+    {% endif %}
+    <button type="button" class="rail-tab rail-toggle" title="Collapse the rail to icons"
+            aria-label="Collapse the rail to icons" aria-expanded="true">
+      {{ ui.nicon("collapse", "when-wide") }}{{ ui.nicon("expand", "when-narrow") }}<span class="rail-label">Collapse</span></button>
+  </div>
+</div></nav>
+{% endif %}
 <main>{% block main %}{% endblock %}</main>
+{% if not bare %}
+<script>
+// the rail's one preference: wide (icons and names) or narrow (icons, names
+// in the hover title). Stored per browser; applied before paint in <head>.
+(() => {
+  const root = document.documentElement;
+  const apply = () => {
+    const narrow = root.classList.contains("rail-collapsed");
+    document.querySelectorAll(".rail-tab[data-name]").forEach(a => {
+      a.title = narrow ? `${a.dataset.name} — ${a.dataset.desc}` : a.dataset.desc;
+    });
+    document.querySelectorAll(".rail-toggle").forEach(b => {
+      b.title = narrow ? "Expand the rail: icons and names" : "Collapse the rail to icons";
+      b.setAttribute("aria-label", b.title);
+      b.setAttribute("aria-expanded", String(!narrow));
+    });
+  };
+  document.querySelectorAll(".rail-toggle").forEach(b => b.addEventListener("click", () => {
+    const narrow = root.classList.toggle("rail-collapsed");
+    try { localStorage.setItem("patchbay.rail", narrow ? "collapsed" : "expanded"); } catch (e) {}
+    apply();
+  }));
+  apply();
+})();
+</script>
+{% endif %}
 </body>
 </html>
