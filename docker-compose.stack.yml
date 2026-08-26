@@ -1,0 +1,156 @@
+# The whole stack from nothing: the data layer patchbay reads (LibreNMS,
+# Oxidized, MariaDB, Redis) plus patchbay itself. Use this when you don't
+# already run those tools; if you do, the smaller docker-compose.example.yml
+# runs patchbay alone against your existing instances.
+#
+#   mkdir -p data oxidized
+#   cp .env.example data/.env        # patchbay's config — fill in as you go
+#   printf 'TZ=UTC\nMYSQL_PASSWORD=%s\n' "$(openssl rand -hex 16)" > .env
+#   docker compose -f docker-compose.stack.yml up -d
+#
+# Then walk through docs/deployment.md: create the LibreNMS admin, onboard
+# your devices, generate an API token, and point data/.env at the
+# containers. patchbay's UI is on http://localhost:8013, LibreNMS on :8000.
+#
+# Two env files, two audiences: ./.env (beside this file) is read by docker
+# compose itself and holds TZ and MYSQL_PASSWORD; ./data/.env is patchbay's
+# site configuration, read inside the container. They never share keys.
+
+services:
+  db:
+    image: mariadb:10.11
+    command:
+      - --innodb-file-per-table=1
+      - --lower-case-table-names=0
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      - MYSQL_DATABASE=librenms
+      - MYSQL_USER=librenms
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_RANDOM_ROOT_PASSWORD=yes
+      - TZ=${TZ:-UTC}
+    volumes:
+      - dbdata:/var/lib/mysql
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    environment:
+      - TZ=${TZ:-UTC}
+    restart: always
+
+  librenms:
+    image: librenms/librenms:latest
+    depends_on: [db, redis]
+    ports:
+      - "8000:8000"
+    environment:
+      - TZ=${TZ:-UTC}
+      - PUID=1000
+      - PGID=1000
+      - DB_HOST=db
+      - DB_NAME=librenms
+      - DB_USER=librenms
+      - DB_PASSWORD=${MYSQL_PASSWORD}
+      - DB_TIMEOUT=60
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    volumes:
+      - lnms_data:/data
+    restart: always
+
+  # LibreNMS's poller/discovery workers run in a sidecar sharing the same
+  # image and data volume
+  dispatcher:
+    image: librenms/librenms:latest
+    depends_on: [librenms, db, redis]
+    environment:
+      - TZ=${TZ:-UTC}
+      - PUID=1000
+      - PGID=1000
+      - DB_HOST=db
+      - DB_NAME=librenms
+      - DB_USER=librenms
+      - DB_PASSWORD=${MYSQL_PASSWORD}
+      - DB_TIMEOUT=60
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - SIDECAR_DISPATCHER=1
+      - DISPATCHER_NODE_ID=dispatcher-1
+    volumes:
+      - lnms_data:/data
+    restart: always
+
+  oxidized:
+    image: oxidized/oxidized:latest
+    environment:
+      - TZ=${TZ:-UTC}
+    ports:
+      # REST API for patchbay's /configs pages. oxidized-web has no auth, so
+      # keep this port LAN-only — it serves read-only config history, but
+      # config history is still your network's insides.
+      - "8888:8888"
+    volumes:
+      # holds config, router.db, and repo/ — the git history of every device
+      # config. Backed by a bind mount so it's visible and easy to back up;
+      # docs/deployment.md covers the two files you create in it.
+      - ./oxidized:/home/oxidized/.config/oxidized
+    restart: always
+
+  patchbay:
+    image: ghcr.io/dsmorgan/patchbay:latest   # or build: { context: . } from a checkout
+    ports:
+      - "8013:8080"
+    environment:
+      # Not cosmetic: PATCHBAY_SNAPSHOT_AT is compared against the
+      # container's local time, so without TZ a nightly "03:30" fires at
+      # 03:30 UTC.
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ./data:/data                          # .env + patchbay.db live here
+    restart: always
+
+  patchbay-poller:
+    image: ghcr.io/dsmorgan/patchbay:latest   # same image, different command
+    # Wait for LibreNMS before the FIRST poll, then give up and poll anyway.
+    # LibreNMS needs a few minutes of database work on a cold start before
+    # it listens, so without this the first cycle always logs
+    # "[fail] librenms: Connection refused" — harmless but noisy, and a
+    # failure that is always there is a failure nobody reads.
+    # Deliberately NOT depends_on: {condition: service_healthy}: that would
+    # block the poller until LibreNMS is healthy, so a genuinely broken
+    # LibreNMS would also stop every other source from being collected —
+    # one outage becoming a blackout. The bound is the point: wait for the
+    # common case, never depend on it.
+    command:
+      - sh
+      - -c
+      - |
+        python - <<'PY'
+        import socket, time
+        host, port, tries = "librenms", 8000, 60      # 60 x 5s = 5 min ceiling
+        for i in range(tries):
+            try:
+                socket.create_connection((host, port), 2).close()
+                if i:
+                    print(f"[wait]  {host}:{port} up after {i * 5}s", flush=True)
+                break
+            except OSError:
+                time.sleep(5)
+        else:
+            print(f"[wait]  {host}:{port} still down after {tries * 5}s — "
+                  f"polling without it", flush=True)
+        PY
+        while true; do patchbay poll; sleep "${PATCHBAY_POLL_INTERVAL:-300}"; done
+    environment:
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ./data:/data
+    restart: always
+
+volumes:
+  dbdata:
+  lnms_data:

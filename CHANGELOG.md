@@ -8,6 +8,16 @@ put.
 
 ## [Unreleased]
 
+### Added
+
+- **A from-nothing deployment path.** `docker-compose.stack.yml` runs the
+  whole stack — MariaDB, Redis, LibreNMS and its dispatcher, Oxidized, and
+  patchbay — and [docs/deployment.md](docs/deployment.md) walks the wiring:
+  Oxidized's two config files, LibreNMS setup and the API token, and the
+  container-name URLs (with the Connection-refused trap explained). The
+  existing quick start remains the path for networks that already run the
+  data layer.
+
 ### Changed
 
 - **A tagged release identifies itself by its tag alone.** The header build
