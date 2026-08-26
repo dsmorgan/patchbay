@@ -39,6 +39,23 @@ pytest                                   # unit + page-smoke tests, no network
 patchbay web                             # against your own site .env
 ```
 
+To see a branch running rather than read it — yours, a reviewer's, a remote
+PR branch — `scripts/try.py` builds it into a container with demo data and
+opens it:
+
+```sh
+./scripts/try.py                         # menu: worktrees, local and remote branches
+./scripts/try.py fork/ui/nav-rail        # or name one; a remote branch needs no checkout
+./scripts/try.py .worktrees/foo          # a worktree builds what's on disk, uncommitted edits included
+./scripts/try.py --list                  # what's up and on which port; --stop REF, --stop-all
+```
+
+Each ref gets its own image, container, and port, so two branches sit side by
+side for comparison. `--data DIR` mounts your own `.env` and database instead
+of demo data (a branch may migrate the schema forward, so point it at a copy).
+`scripts/demo.py` is the same launcher for the published image, and what the
+README's one-command demo runs. On Windows, `python scripts\try.py`.
+
 For background, read [docs/architecture.md](docs/architecture.md) for the spec
 and roadmap, [docs/pluggability.md](docs/pluggability.md) for the component
 model, and [CLAUDE.md](CLAUDE.md) for the invariants the code relies on — worth
