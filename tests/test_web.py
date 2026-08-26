@@ -637,3 +637,30 @@ def test_patchpanel_rows_are_anchored(clean_env, tmp_path, client):
     seed(str(tmp_path / "test.db"))
     body = client.get("/patchpanel").text
     assert 'id="p3"' in body
+# --- map-tiers-fit ---
+
+
+def test_topology_page_renders_tier_bands(clean_env, tmp_path, client):
+    # ADR-0001 Decision 2: RANK becomes four labelled swimlanes drawn behind
+    # the nodes; the map fits itself to the frame instead of "breathing" in
+    # two dimensions. The bands are drawn client-side (data-driven — a band
+    # only renders once a rank has a visible node), so what ships is the JS
+    # that draws them, not server-rendered markup.
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/topology").text
+
+    for name in ("Internet", "Edge", "Fabric", "Access & compute"):
+        assert f'"{name}"' in body, name
+
+    # a `fit` control exists in the toolbar, next to nothing else
+    assert 'id="fitbtn"' in body
+
+    # Y is owned by the tier: no separate force pulls nodes toward a rank,
+    # every node's fy is fixed to its band centre, and dragging only ever
+    # sets fx (X-only pins)
+    assert "forceY" not in body
+    assert "bandCenter(n.rank)" in body
+    assert "d.fx = e.x; })" in body  # the drag handler no longer touches fy
+
+    # the simulation can now shrink further to fit a large map to the frame
+    assert "scaleExtent([0.2, 3])" in body
