@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>patchbay snapshot — 2026-08-25 20:52 Eastern Daylight Time</title>
+<title>patchbay snapshot — 2026-08-25 21:01 Eastern Daylight Time</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
 <style>
   /* IBM Plex Sans, variable weight, Latin subset, self-hosted (SIL OFL 1.1 —
@@ -235,8 +235,8 @@
     <rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/>
   </g>
 </svg>patchbay snapshot</h1>
-  <nav class="muted">generated 2026-08-25 20:52 Eastern Daylight Time · build 0.3.0+fc65610-dirty</nav>
-  <span class="ages">data age at generation: librenms 21.9m · opnsense 21.9m · oxidized 21.9m · phpipam 21.9m · unifi 21.9m · vsphere 21.9m</span>
+  <nav class="muted">generated 2026-08-25 21:01 Eastern Daylight Time · build 0.3.0+57e5fc6-dirty</nav>
+  <span class="ages">data age at generation: librenms 30.9m · opnsense 30.9m · oxidized 30.9m · phpipam 30.9m · unifi 30.9m · vsphere 30.9m</span>
 </header>
 <main>
 <p class="muted" style="max-width: 76ch">Demo snapshot of a
@@ -310,6 +310,9 @@ from your own network.</p>
   .toolbar .grp { display: inline-flex; align-items: center; gap: 0.55rem;
                   padding: 0.25rem 0.6rem; border: 1px solid var(--line);
                   border-radius: 999px; background: var(--card); }
+  /* the mode-specific groups toggle the `hidden` attribute; an author
+     display rule outranks the browser default for [hidden], so say it here */
+  .toolbar .grp[hidden] { display: none; }
   /* segmented view control: radios are visually hidden but stay focusable,
      the adjacent label carries the pill styling and the checked/focus state */
   .toolbar .grp.modes { padding: 0.22rem; gap: 0; }
