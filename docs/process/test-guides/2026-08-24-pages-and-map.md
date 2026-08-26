@@ -1,6 +1,6 @@
 # Manual test guide — pages and map milestone (2026-08-24/25)
 
-For the owner's playtest of branch `ui/pages-and-map` (stacked on `ui/nav-rail`, PR #1). Automated
+For the owner's playtest of branch `ui/pages-and-map` (on top of 0.3.0, which merged PR #1). Automated
 gates (pytest, `scripts/screenshots.py`) have passed on every brief; this guide is for what they cannot
 see — whether it *feels* ordered. Decisions are in `docs/adr/0001-page-shell-and-map-modes.md`.
 
