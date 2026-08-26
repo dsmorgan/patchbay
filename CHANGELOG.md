@@ -6,6 +6,31 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+
+- **One command to see it running.** `scripts/demo.py` pulls the published
+  image, seeds the demo network inside the container, waits for the UI, and
+  opens it in your browser; Ctrl-C removes it, and nothing touches the host.
+  It also runs with no clone at all (`curl … | python3 -`), and `--build`
+  does the same for the checkout you're in.
+- **Any branch or worktree in a container.** `scripts/try.py` lists
+  worktrees, local branches, and remote branches (fetched first), each with
+  its tip commit's author so your own stand out, builds the one you pick — a branch straight from `git archive`, so a remote branch
+  needs no checkout; a worktree from its directory, uncommitted edits
+  included — and runs it on its own port with demo data (or `--data DIR`
+  for your own), so several branches sit side by side for comparison.
+  `--list`, `--stop REF`, and `--stop-all` manage what's up.
+
+### Changed
+
+- **A source edit rebuilds the image in seconds.** The Dockerfile installs
+  dependencies in their own layer before copying `src/`, so a rebuild after
+  a code change no longer re-downloads fastapi, uvicorn, and pyvmomi
+  (8 s → 2 s on a fast link; the whole build, on a slow one). The image
+  itself is unchanged.
+
 ## [0.4.0] — 2026-08-26
 
 ### Added
