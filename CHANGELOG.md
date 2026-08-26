@@ -6,7 +6,29 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.4.0] — 2026-08-26
+
+### Added
+
+- **A from-nothing deployment path.** `docker-compose.stack.yml` runs the
+  whole stack — MariaDB, Redis, LibreNMS and its dispatcher, Oxidized, and
+  patchbay — and [docs/deployment.md](docs/deployment.md) walks the wiring:
+  Oxidized's two config files, LibreNMS setup and the API token, and the
+  container-name URLs (with the Connection-refused trap explained). The
+  existing quick start remains the path for networks that already run the
+  data layer.
+
+### Fixed
+
+- **Images are now multi-arch (amd64 + arm64).** On an Apple Silicon Mac or
+  a Raspberry Pi, the quick start previously failed outright with "no
+  matching manifest for linux/arm64" — found by running the deployment
+  guide verbatim on an arm64 host.
+- **First poll no longer races the web app on a fresh database.** `compose
+  up` starts both containers at once and both ran the same schema
+  migrations; real filesystems serialize that on SQLite's lock, but Docker
+  Desktop's shared mounts could surface it as a spurious "disk I/O error"
+  on the very first poll. The poller now waits a beat and retries once.
 
 ### Added
 
@@ -210,6 +232,7 @@ token server-side and recolors graphs in transit.
   work for topology, load, and status, but their per-port VLAN membership
   falls back to SNMP and declarations.
 
+[0.4.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.4.0
 [0.3.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.3.0
 [0.2.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.2.0
 [0.1.1]: https://github.com/dsmorgan/patchbay/releases/tag/v0.1.1

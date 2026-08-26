@@ -11,7 +11,10 @@ what's planned, see the [roadmap](docs/architecture.md#phased-roadmap).
 
 ## Quick start
 
-Run the web UI and a background poller from the pre-built image — no clone needed:
+Run the web UI and a background poller from the pre-built image — no clone
+needed. This path assumes you already run the tools patchbay reads (LibreNMS,
+Oxidized, platform APIs); to stand up the whole stack from nothing, data
+layer included, follow [docs/deployment.md](docs/deployment.md) instead.
 
 ```sh
 curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/docker-compose.example.yml

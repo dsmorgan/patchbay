@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
+import time
 
 from . import __version__, db
 from .collectors import all_collectors, available
@@ -34,7 +36,17 @@ def cmd_poll(args: argparse.Namespace) -> int:
     for w in settings.parse_warnings:
         say(f"[warn] {w}", err=True)
     with db.connect(settings.db_path) as conn:
-        db.init(conn)
+        # `compose up` starts the web app and this poller together, and on a
+        # fresh database both run the same schema migrations at once. Real
+        # filesystems serialize that on SQLite's lock; Docker Desktop's
+        # shared mounts (macOS/Windows) can surface the collision as a
+        # spurious "disk I/O error" instead, so give the peer a moment and
+        # try once more before believing it.
+        try:
+            db.init(conn)
+        except sqlite3.OperationalError:
+            time.sleep(3)
+            db.init(conn)
         for name, collector in sorted(collectors.items()):
             try:
                 summary = collector.collect(settings, conn)
