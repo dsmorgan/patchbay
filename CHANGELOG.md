@@ -18,6 +18,18 @@ put.
   existing quick start remains the path for networks that already run the
   data layer.
 
+### Fixed
+
+- **Images are now multi-arch (amd64 + arm64).** On an Apple Silicon Mac or
+  a Raspberry Pi, the quick start previously failed outright with "no
+  matching manifest for linux/arm64" — found by running the deployment
+  guide verbatim on an arm64 host.
+- **First poll no longer races the web app on a fresh database.** `compose
+  up` starts both containers at once and both ran the same schema
+  migrations; real filesystems serialize that on SQLite's lock, but Docker
+  Desktop's shared mounts could surface it as a spurious "disk I/O error"
+  on the very first poll. The poller now waits a beat and retries once.
+
 ### Changed
 
 - **A tagged release identifies itself by its tag alone.** The header build

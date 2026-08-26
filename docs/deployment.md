@@ -56,23 +56,32 @@ source:
   default: csv
   csv:
     file: "/home/oxidized/.config/oxidized/router.db"
-    delimiter: !ruby/regexp /:/
+    delimiter: !!str ":"
     map:
       name: 0
-      model: 1
+      ip: 1
+      model: 2
 ```
 
-And a `router.db` of `name:model` lines, for example:
+And a `router.db` of `name:ip:model` lines listing your real devices:
 
 ```
-core-switch:powerconnect
-edge-switch:ios
+core-switch:192.168.1.2:powerconnect
+edge-switch:192.168.1.3:ios
 ```
 
-The `rest:` line matters to patchbay: without it there is no API and the
-/configs pages stay empty. Use read-only device accounts — the git repo in
-`oxidized/repo/` is your config history and the one thing in this stack that
-cannot be regenerated, so back it up.
+Two behaviors to know about, both verified against the current image:
+
+- **Oxidized exits if no line yields a usable device** (`source returns no
+  usable nodes`), and a name that doesn't resolve is skipped — so
+  placeholder entries copied verbatim crash-loop the container. List real
+  devices, and the `ip` column means the name doesn't need DNS.
+- It logs that `rest:` is deprecated in favor of `extensions.oxidized-web`.
+  Harmless — the API patchbay reads serves the same either way.
+
+Use read-only device accounts — the git repo in `oxidized/repo/` is your
+config history and the one thing in this stack that cannot be regenerated,
+so back it up.
 
 ## 3. Start the stack
 
@@ -100,7 +109,9 @@ port graphs and LLDP links populate on its schedule, not patchbay's.
 
 ## 5. Point patchbay at the containers
 
-In `data/.env`, set:
+In `data/.env`, find the three lines (they ship commented out), uncomment
+them, and set — edit in place rather than adding new lines, because on a
+duplicate key the *last* occurrence silently wins:
 
 ```
 LIBRENMS_URL=http://librenms:8000
@@ -162,6 +173,15 @@ declarations.
 | Device config history (git) | `./oxidized/repo/` | yes — and nothing can regenerate it; back it up |
 | patchbay model + snapshots | `./data/` | yes |
 | LibreNMS API token | inside `dbdata` | destroyed by `down -v` — regenerate and update `data/.env` after |
+
+## Tearing down
+
+`docker compose -f docker-compose.stack.yml down` stops everything and keeps
+all data — `up -d` resumes with history intact. Adding `-v` destroys the
+LibreNMS database and graph history, **including the API token** (regenerate
+it and update `data/.env` on the next install). `./data/` and `./oxidized/`
+are plain directories that no compose command touches; delete them yourself,
+remembering what the table above says about `oxidized/repo/`.
 
 One deployment principle worth stealing: run this stack on a host *outside*
 the failure domain it monitors. A map of the network matters most while the
