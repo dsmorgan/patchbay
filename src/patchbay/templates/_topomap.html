@@ -71,6 +71,9 @@
   .toolbar .grp { display: inline-flex; align-items: center; gap: 0.55rem;
                   padding: 0.25rem 0.6rem; border: 1px solid var(--line);
                   border-radius: 999px; background: var(--card); }
+  /* the mode-specific groups toggle the `hidden` attribute; an author
+     display rule outranks the browser default for [hidden], so say it here */
+  .toolbar .grp[hidden] { display: none; }
   /* segmented view control: radios are visually hidden but stay focusable,
      the adjacent label carries the pill styling and the checked/focus state */
   .toolbar .grp.modes { padding: 0.22rem; gap: 0; }
