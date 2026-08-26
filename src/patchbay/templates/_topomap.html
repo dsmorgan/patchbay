@@ -98,6 +98,18 @@
   .legend .item svg { flex: none; display: block; }
   .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
   .legend .hint { flex-basis: 100%; font-size: 0.72rem; opacity: 0.75; }
+  /* four labelled swimlanes drawn behind the graph, one per rank — alternating
+     faint fill reads quieter here than a grid rule would against the node
+     boxes and edge labels already filling the frame. Never intercepts a click
+     or drag meant for a node or the background pan. */
+  .bands { pointer-events: none; }
+  .band rect { fill: var(--card); }
+  .band:nth-of-type(odd) rect { opacity: 0.4; }
+  .band:nth-of-type(even) rect { opacity: 0; }
+  .band-label { font: 11px var(--font-ui); fill: var(--muted); opacity: 0.75; }
+  .toolbar .fitbtn { background: none; border: 0; color: var(--ink); font: inherit;
+                      cursor: pointer; padding: 0; }
+  .toolbar .fitbtn:hover { color: var(--accent); }
 </style>
 
 <div class="toolbar">
@@ -130,6 +142,9 @@
     <select id="vlansel"></select>
   </span>
   <span class="chips" id="chips"></span>
+  <span class="grp">
+    <button type="button" id="fitbtn" class="fitbtn" title="fit the whole graph to the frame">fit ⤢</button>
+  </span>
 </div>
 
 <svg id="topo"></svg>
@@ -174,8 +189,26 @@
 const SNAPSHOT = {{ "true" if snapshot else "false" }};
 const graph = {{ graph_json | safe }};
 const svg = d3.select("#topo");
-const { width, height } = svg.node().getBoundingClientRect();
-const rankY = { "-1": height * 0.06, 0: height * 0.22, 1: height * 0.52, 2: height * 0.86 };
+let W, H;
+({ width: W, height: H } = svg.node().getBoundingClientRect());
+// four labelled swimlanes, contiguous fractions of #topo's height — ADR-0001
+// Decision 2. bandCenter() always derives from the *current* height, so a
+// resize (see the ResizeObserver below) just recomputes it — no separate
+// rankY table to keep in sync.
+const BANDS = [
+  { rank: -1, name: "Internet", y0: 0.00, y1: 0.16,
+    tip: "what the site connects out through" },
+  { rank: 0, name: "Edge", y0: 0.16, y1: 0.38,
+    tip: "the firewall/router between inside and out" },
+  { rank: 1, name: "Fabric", y0: 0.38, y1: 0.66,
+    tip: "the switches that carry everything else" },
+  { rank: 2, name: "Access & compute", y0: 0.66, y1: 1.00,
+    tip: "what plugs in: hypervisors, APs, unmanaged switches, wired hosts" },
+];
+function bandCenter(rank) {
+  const b = BANDS.find(b => b.rank === rank);
+  return (b.y0 + b.y1) / 2 * H;
+}
 const CORE_ROLES = new Set(["cloud", "firewall", "switch", "hypervisor"]);
 const OFF_STATUS = new Set(["down", "notresponding", "disabled"]);
 
@@ -206,7 +239,10 @@ graph.links.forEach(l => {
 });
 
 const g = svg.append("g");
-svg.call(d3.zoom().scaleExtent([0.4, 3]).on("zoom", e => g.attr("transform", e.transform)));
+const gBands = g.append("g").attr("class", "bands");     // drawn first: behind gContent
+const gContent = g.append("g").attr("class", "content"); // links, labels, nodes — fit() measures this
+const zoom = d3.zoom().scaleExtent([0.2, 3]).on("zoom", e => g.attr("transform", e.transform));
+svg.call(zoom);
 
 // even slot targets per rank keep unpinned nodes spread instead of
 // center-crowded; recomputed whenever toggles change what's visible
@@ -215,17 +251,17 @@ function assignSlots(nodes) {
   nodes.forEach(n => (byRank[n.rank] = byRank[n.rank] || []).push(n));
   Object.values(byRank).forEach(members => {
     members.sort((a, b) => (a.fx ?? a.x ?? 0) - (b.fx ?? b.x ?? 0) || a.name.localeCompare(b.name));
-    members.forEach((n, i) => { n.sx = (i + 1) * width / (members.length + 1); });
+    members.forEach((n, i) => { n.sx = (i + 1) * W / (members.length + 1); });
   });
 }
 assignSlots(graph.nodes);
 graph.nodes.forEach(n => {
   n.x = n.px ?? n.sx;
-  n.y = n.py ?? rankY[n.rank];
-  if (n.px != null) { n.fx = n.px; n.fy = n.py; }
+  n.y = n.fy = bandCenter(n.rank);   // Y is owned by the tier, always — no exceptions
+  if (n.px != null) n.fx = n.px;     // pins are X-only; py is ignored on load
 });
 
-const link = g.append("g").selectAll("line").data(graph.links).join("line")
+const link = gContent.append("g").selectAll("line").data(graph.links).join("line")
     .attr("class", d => `edge ${d.cls}`)
     .attr("stroke-width", d => d.sw);
 link.append("title").text(d =>
@@ -233,11 +269,11 @@ link.append("title").text(d =>
     `${d.speed ? ` · ${d.speed}` : ""}${d.util != null ? ` · ${d.util}% used` : ""}` +
     `${d.vlans ? ` · vlans ${d.vlans.length > 8 ? d.vlans.length + " (all)" : d.vlans.join(",")}` : ""}` +
     `${d.note ? `\n${d.note}` : ""}`);
-const alab = g.append("g").selectAll("text").data(graph.links.filter(d => d.alab)).join("text")
+const alab = gContent.append("g").selectAll("text").data(graph.links.filter(d => d.alab)).join("text")
     .attr("class", d => "portlab" + (d.amode ? " " + d.amode : "")).text(d => d.alab);
-const blab = g.append("g").selectAll("text").data(graph.links.filter(d => d.blab)).join("text")
+const blab = gContent.append("g").selectAll("text").data(graph.links.filter(d => d.blab)).join("text")
     .attr("class", d => "portlab" + (d.bmode ? " " + d.bmode : "")).text(d => d.blab);
-const slab = g.append("g").selectAll("text").data(graph.links.filter(d => d.speed)).join("text")
+const slab = gContent.append("g").selectAll("text").data(graph.links.filter(d => d.speed)).join("text")
     .attr("class", d => "speedlab" + (d.cls.includes("vslow") ? " vslow"
                                       : d.cls.includes("slow") ? " slow" : ""))
     .attr("text-anchor", "middle").text(d => d.speed);
@@ -245,7 +281,7 @@ const slab = g.append("g").selectAll("text").data(graph.links.filter(d => d.spee
 // role icons come from the shared server-side dictionary (web.py ICONS)
 const ICONS = {{ ICONS | tojson }};
 
-const node = g.append("g").selectAll("g").data(graph.nodes).join("g")
+const node = gContent.append("g").selectAll("g").data(graph.nodes).join("g")
     .attr("class", d => `node ${d.role}` + (d.px != null ? " pinned" : ""));
 node.filter(d => d.role !== "cloud").append("rect")
     .attr("x", d => -d.w / 2).attr("y", -24).attr("width", d => d.w).attr("height", 48)
@@ -266,7 +302,7 @@ node.append("title").text(d => d.title ?? d.name);
 node.on("click", (e, d) => {
   if (e.defaultPrevented) return;      // this was the tail of a drag
   if (e.shiftKey && !SNAPSHOT) {       // shift-click unpins (plain click navigates)
-    d.fx = d.fy = null;
+    d.fx = null;                       // Y stays owned by the tier — only the X pin clears
     savePos(d.name, null, null);
     d3.select(node.nodes()[graph.nodes.indexOf(d)]).classed("pinned", false);
     sim.alpha(0.3).restart();
@@ -301,36 +337,108 @@ function placePortLabel(sel, d, from, dx, dy) {
      .attr("text-anchor", Math.abs(dx) < len * 0.35 ? "middle" : (dx < 0 ? "end" : "start"));
 }
 
+// --- bands, fit-to-view, and focus: Y owned by the tier (ADR-0001 Decision 2) ---
+// A band renders only for a rank with >=1 visible node; its width spans that
+// rank's visible nodes' X extent + 400px each side, recomputed at each settle.
+function updateBands() {
+  const byRank = {};
+  graph.nodes.forEach(n => { if (nodeVisible(n)) (byRank[n.rank] = byRank[n.rank] || []).push(n); });
+  // fit() only ever shows gContent's bbox (+28px pad) — a band whose rank
+  // spans the widest X extent still gets the full 400px bleed on its rect
+  // (so a pan never runs out of labelled band), but its *label* is clamped
+  // to that same bbox or the 400px bleed would carry it off the fitted frame
+  const cb = gContent.node().getBBox();
+  const data = BANDS.filter(b => (byRank[b.rank] || []).length > 0).map(b => {
+    const xs = byRank[b.rank].map(n => n.x);
+    const left = Math.min(...xs) - 400, right = Math.max(...xs) + 400;
+    return Object.assign({}, b, {
+      left, right, top: b.y0 * H, bottom: b.y1 * H,
+      labelX: (cb.width ? Math.max(left, cb.x) : left) + 10,
+    });
+  });
+  const bandG = gBands.selectAll("g.band").data(data, d => d.rank).join(enter => {
+    const eg = enter.append("g").attr("class", "band");
+    eg.append("rect");
+    eg.append("text").attr("class", "band-label");
+    eg.append("title");
+    return eg;
+  });
+  bandG.order();  // keep DOM order = rank order, so the alternating stripe reads top-down
+  bandG.select("rect")
+      .attr("x", d => d.left).attr("y", d => d.top)
+      .attr("width", d => d.right - d.left).attr("height", d => d.bottom - d.top);
+  bandG.select(".band-label")
+      .attr("x", d => d.labelX).attr("y", d => d.top + 16).text(d => d.name);
+  bandG.select("title").text(d => d.tip);
+}
+
+// pad 28, clamp k to scaleExtent, centre — measures gContent, never g, or the
+// bands' 400px margin would inflate the bbox and the graph would never fill the frame
+function fit(animate) {
+  const b = gContent.node().getBBox();
+  if (!b.width) return;
+  const k = Math.min(3, Math.max(0.2, Math.min((W - 56) / b.width, (H - 56) / b.height)));
+  const t = d3.zoomIdentity.translate((W - k * (2 * b.x + b.width)) / 2,
+                                       (H - k * (2 * b.y + b.height)) / 2).scale(k);
+  (animate ? svg.transition().duration(400) : svg).call(zoom.transform, t);
+}
+
+// centre a node at scale max(current k, 0.9) and keep its .focused halo (set
+// in applyFilters); never zooms out past the current fit just to reach it
+function focusNode(name) {
+  const d = byName[name];
+  if (!d || d.x == null) return;
+  const k = Math.max(d3.zoomTransform(svg.node()).k, 0.9);
+  const t = d3.zoomIdentity.translate(W / 2 - k * d.x, H / 2 - k * d.y).scale(k);
+  svg.transition().duration(400).call(zoom.transform, t);
+}
+
+// called after every settle (a fresh simulation end, a filter change, a
+// resize): redraw the bands, then either fit the whole graph or, if a node
+// is focused, centre on it instead
+function afterSettle(animate) {
+  updateBands();
+  if (state.focus) focusNode(state.focus); else fit(animate);
+}
+
+function ticked() {
+  link.each(function (d) {
+    const e = ends(d);
+    d3.select(this).attr("x1", e.ax).attr("y1", e.ay).attr("x2", e.bx).attr("y2", e.by);
+  });
+  alab.each(function (d) {
+    const e = ends(d);
+    placePortLabel(d3.select(this), d, { n: d.source, x: e.ax, y: e.ay },
+                   e.bx - e.ax, e.by - e.ay);
+  });
+  blab.each(function (d) {
+    const e = ends(d);
+    placePortLabel(d3.select(this), d, { n: d.target, x: e.bx, y: e.by },
+                   e.ax - e.bx, e.ay - e.by);
+  });
+  slab.each(function (d) {
+    const e = ends(d), dx = e.bx - e.ax, dy = e.by - e.ay,
+          len = Math.hypot(dx, dy) || 1;
+    d3.select(this)
+      .attr("x", (e.ax + e.bx) / 2 + dx / len * d.sstag)
+      .attr("y", (e.ay + e.by) / 2 + dy / len * d.sstag - 5);
+  });
+  node.attr("transform", d => `translate(${d.x},${d.y})`);
+}
+
 const sim = d3.forceSimulation(graph.nodes)
     .force("link", d3.forceLink(graph.links).id(d => d.name).distance(200).strength(0.3))
     .force("charge", d3.forceManyBody().strength(-900))
-    .force("y", d3.forceY(d => rankY[d.rank]).strength(0.9))
     .force("x", d3.forceX(d => d.sx).strength(0.08))
     .force("collide", d3.forceCollide(d => d.w / 2 + 26))
-    .on("tick", () => {
-      link.each(function (d) {
-        const e = ends(d);
-        d3.select(this).attr("x1", e.ax).attr("y1", e.ay).attr("x2", e.bx).attr("y2", e.by);
-      });
-      alab.each(function (d) {
-        const e = ends(d);
-        placePortLabel(d3.select(this), d, { n: d.source, x: e.ax, y: e.ay },
-                       e.bx - e.ax, e.by - e.ay);
-      });
-      blab.each(function (d) {
-        const e = ends(d);
-        placePortLabel(d3.select(this), d, { n: d.target, x: e.bx, y: e.by },
-                       e.ax - e.bx, e.ay - e.by);
-      });
-      slab.each(function (d) {
-        const e = ends(d), dx = e.bx - e.ax, dy = e.by - e.ay,
-              len = Math.hypot(dx, dy) || 1;
-        d3.select(this)
-          .attr("x", (e.ax + e.bx) / 2 + dx / len * d.sstag)
-          .attr("y", (e.ay + e.by) / 2 + dy / len * d.sstag - 5);
-      });
-      node.attr("transform", d => `translate(${d.x},${d.y})`);
-    });
+    .on("tick", ticked)
+    .on("end", () => afterSettle(true));
+// the simulation's first tick is async (next animation frame); paint the
+// synchronous initial positions (assignSlots + bandCenter) right now, or the
+// very first fit() — called synchronously below, from the initial render() —
+// would measure gContent before any node/link ever got a real DOM position
+// and zoom to a near-empty bbox
+ticked();
 
 // --- vlan <select> options: populated once, from the graph payload ---------
 const vlansel = document.getElementById("vlansel");
@@ -417,6 +525,17 @@ function nodeVisible(n) {
   return !!p && byName[p] != null && baseVisible(byName[p]) &&
          !(state.coreonly && !CORE_ROLES.has(n.role));
 }
+// the very first settle runs the simulation to convergence synchronously,
+// instead of handing off to the normal async tick loop, so the *first*
+// fit() (below, at the end of applyFilters — which runs on initial render
+// too) already measures the settled layout. Otherwise that first fit()
+// measures nodes still at their freshly-assigned slot positions; charge and
+// collision then spread them further out over the next couple hundred
+// (async, requestAnimationFrame-scheduled) ticks while the viewport stays
+// put, and anything that looks at the page before sim.on("end") fires next
+// — a screenshot with no wait, or just a fast page load — catches nodes
+// mid-drift past the frame fit() sized for their starting spread.
+let firstSettle = true;
 function applyFilters() {
   const vis = new Set(graph.nodes.filter(nodeVisible).map(n => n.name));
   const linkVisible = d =>
@@ -431,7 +550,15 @@ function applyFilters() {
   assignSlots(visNodes);
   sim.nodes(visNodes);
   sim.force("link").links(graph.links.filter(linkVisible));
-  sim.alpha(0.5).restart();
+  if (firstSettle) {
+    firstSettle = false;
+    sim.stop().alpha(1);
+    for (let i = 0; i < 300; ++i) sim.tick();
+    ticked();
+  } else {
+    sim.alpha(0.5).restart();
+  }
+  afterSettle(false);   // ADR-0001 Decision 2: fit runs at the end of applyFilters() too
 }
 
 // --- paint: how edges are colored/dashed, per mode --------------------------
@@ -541,7 +668,7 @@ function renderChips() {
   if (state.vlan != null && state.view !== "vlan")
     chips.append(chip(`vlan ${state.vlan}`, () => set({ vlan: null })));
   if (state.focus)
-    chips.append(chip(`focus ${state.focus}`, () => set({ focus: null })));
+    chips.append(chip(`focus ${state.focus}`, () => { set({ focus: null }); fit(true); }));
   if (state.load === "peak" && state.view !== "load")
     chips.append(chip("peak", () => set({ load: "now" })));
 }
@@ -576,6 +703,22 @@ vlansel.addEventListener("change", () =>
     set({ vlan: vlansel.value === "" ? null : Number(vlansel.value) }));
 window.addEventListener("popstate", () => { Object.assign(state, readState()); render(); });
 
+document.getElementById("fitbtn").addEventListener("click", () => fit(true));
+
+// a resize (not just a filter change) moves the map: recompute band centres
+// and every node's Y, then re-fit — debounced so a window drag-resize doesn't
+// thrash the simulation
+let resizeTimer = null;
+new ResizeObserver(() => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    ({ width: W, height: H } = svg.node().getBoundingClientRect());
+    graph.nodes.forEach(n => { n.fy = n.y = bandCenter(n.rank); });
+    ticked();
+    afterSettle(false);
+  }, 150);
+}).observe(document.getElementById("topo"));
+
 const state = readState();   // URL -> object (sanitized)
 writeState();                 // rewrite the URL to the sanitized form
 render();
@@ -587,8 +730,10 @@ function savePos(name, x, y) {
 }
 
 node.call(d3.drag()
-    .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.25).restart(); d.fx = d.x; d.fy = d.y; })
-    .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
+    // Y is owned by the tier (d.fy is always its band centre and is never
+    // touched here) — drag only ever sets d.fx, so a node slides along its lane
+    .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.25).restart(); d.fx = d.x; })
+    .on("drag", (e, d) => { d.fx = e.x; })
     .on("end", (e, d) => {
       if (!e.active) sim.alphaTarget(0);
       savePos(d.name, d.fx, d.fy);
