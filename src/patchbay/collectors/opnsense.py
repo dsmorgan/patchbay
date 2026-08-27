@@ -52,10 +52,12 @@ class OpnsenseCollector:
             # the firewall knows what it is — SNMP only sees "FreeBSD/amd64"
             fw = get("core/firmware/info") or {}
             version = fw.get("product_version")
+            mgmt_hostname = settings.opnsense_host.split("://")[-1].split(":")[0]
             dev_id = db.upsert_device(conn, name=short_name,
                                       source=NAME, role="firewall", status="up",
                                       vendor="OPNsense",
-                                      os=(f"opnsense {version}" if version else None))
+                                      os=(f"opnsense {version}" if version else None),
+                                      mgmt_ip=mgmt_hostname)
 
             ifaces = get("interfaces/overview/export")
             if ifaces is not None:

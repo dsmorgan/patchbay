@@ -104,6 +104,7 @@ class PfsenseCollector:
                 conn, name=dev_name, source=NAME, role="firewall", status="up",
                 vendor="pfSense",
                 os=(f"pfsense {version}" if version else None),
+                mgmt_ip=_hostname,
             )
 
             # Build live-status index keyed by BSD interface name.
@@ -115,7 +116,9 @@ class PfsenseCollector:
                             payload=iface_status_raw)
             iface_status: dict[str, dict] = {}
             for i in (iface_status_raw if isinstance(iface_status_raw, list) else []):
-                for key_field in ("if", "name", "id"):
+                # Status endpoint uses "hwif" for BSD name (igc4), "name" for logical
+                # name (wan). Index by both so config-side lookup by BSD name hits.
+                for key_field in ("hwif", "if", "name"):
                     key = i.get(key_field)
                     if key and key not in iface_status:
                         iface_status[key] = i
@@ -155,10 +158,11 @@ class PfsenseCollector:
                 # Speed from media string ("1000baseT <full-duplex>")
                 speed_bps = _parse_media_speed(live.get("media"))
 
-                # IP — resolve DHCP/PPPoE from live status
+                # IP — resolve DHCP/PPPoE from live status; grab IPv6 too
                 ip = iface.get("ipaddr") or None
                 if ip in ("dhcp", "pppoe", ""):
                     ip = live.get("ipaddr") or None
+                ip6 = live.get("ipaddrv6") or None
 
                 db.upsert_interface(
                     conn, device_id=dev_id, name=iface_id,
@@ -167,6 +171,7 @@ class PfsenseCollector:
                     mac=mac,
                     description=iface.get("descr") or None,
                     ip=ip,
+                    ip6=ip6,
                     speed_bps=speed_bps,
                 )
 
