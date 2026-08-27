@@ -48,6 +48,18 @@ put.
 Everything above is [@Moonchopper](https://github.com/Moonchopper)
 ([#4](https://github.com/dsmorgan/patchbay/pull/4)).
 
+### Fixed
+
+- **`OPNSENSE_HOST` accepts a scheme.** A full URL (`http://fw1.example.net`)
+  reaches an OPNsense that doesn't terminate TLS on its management
+  interface; a bare hostname still defaults to HTTPS. Previously the
+  collector hardcoded `https://` and a plain-HTTP firewall surfaced as a
+  misleading connect timeout. From [@slmingol](https://github.com/slmingol)
+  ([#8](https://github.com/dsmorgan/patchbay/pull/8)), along with the
+  OPNsense API-privilege table in
+  [docs/configuration.md](docs/configuration.md) and a host-networking
+  alternative in the example compose file.
+
 ## [0.4.0] — 2026-08-26
 
 ### Added

@@ -275,3 +275,15 @@ def test_phpipam_never_prunes_another_sources_subnets(conn, clean_env, monkeypat
     monkeypatch.setattr(httpx, "Client", ShrinkingClient)
     PhpIpamCollector().collect(load_settings(), conn)
     assert "203.0.113.0/24" in {r[0] for r in conn.execute("SELECT cidr FROM subnets")}
+
+
+def test_opnsense_host_accepts_scheme_and_bare_hostname():
+    """OPNSENSE_HOST is either a bare hostname (https assumed) or a full URL
+    with scheme (PR #8: plain-HTTP management interfaces); the short device
+    name must come out the same either way, with scheme and port stripped."""
+    from patchbay.collectors.opnsense import base_and_name
+
+    assert base_and_name("fw1.example.net") == ("https://fw1.example.net/api", "fw1")
+    assert base_and_name("http://fw1.example.net") == ("http://fw1.example.net/api", "fw1")
+    assert base_and_name("https://fw1.example.net:8443/") == ("https://fw1.example.net:8443/api", "fw1")
+    assert base_and_name("http://192.0.2.1") == ("http://192.0.2.1/api", "192")

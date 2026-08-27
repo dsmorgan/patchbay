@@ -146,9 +146,11 @@ to a named privilege in current OPNsense releases; if patchbay logs a 403 for
 it, add **Interfaces: Assign network ports** as a fallback — it is the
 broadest read-only interfaces privilege available.
 
-`OPNSENSE_HOST` accepts a bare hostname (`opnsense-rtr1.bub.lan`, defaults to
-HTTPS) or a full URL with scheme (`http://opnsense-rtr1.bub.lan`) for
-installations that do not terminate TLS on the management interface.
+`OPNSENSE_HOST` accepts a bare hostname (`fw1.example.net`, defaults to
+HTTPS) or a full URL with scheme (`http://fw1.example.net`) for
+installations that do not terminate TLS on the management interface. Over
+plain HTTP the API key and secret travel in cleartext on every poll, so
+use it only on a management network you trust end to end.
 
 ## Operator declarations
 
