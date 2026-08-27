@@ -747,6 +747,19 @@ def test_topology_page_renders_tier_bands(clean_env, tmp_path, client):
     assert "scaleExtent([0.2, 3])" in body
 
 
+def test_topology_remembers_view_options(clean_env, tmp_path, client):
+    # issue #16: a bare /topology restores the remembered state by rewriting
+    # the URL before TIERS or readState() look at it; explicit params always
+    # win (no merging); focus and foreign params never persist; the snapshot
+    # is exempt (SNAPSHOT guards both sides)
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/topology").text
+    assert 'localStorage.getItem("patchbay.topo")' in body
+    assert 'localStorage.setItem("patchbay.topo"' in body
+    assert '!SNAPSHOT && !location.search && !location.hash.includes("=")' in body
+    assert 'keep.delete("focus")' in body
+
+
 # --- poll-driven refresh (issue #6) ---
 
 def test_freshness_is_null_before_the_first_poll(client):

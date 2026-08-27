@@ -216,6 +216,19 @@ function bandCenter(rank) {
   const b = BANDS.find(b => b.rank === rank);
   return (b.y0 + b.y1) / 2 * H;
 }
+// Remembered view options (issue #16): a bare /topology — no query, no
+// state-carrying hash — restores the last-used state from localStorage by
+// rewriting the URL *before* anything reads it, so TIERS, readState() and a
+// reload/share all see the same honest URL. Any explicit params mean a deep
+// link, which uses its own params + defaults — no merging; predictable links
+// beat sticky preferences. The snapshot is exempt: the file IS the state.
+if (!SNAPSHOT && !location.search && !location.hash.includes("=")) {
+  try {
+    const qs = localStorage.getItem("patchbay.topo");
+    if (qs) history.replaceState(null, "", location.pathname + "?" + qs);
+  } catch (e) {}
+}
+
 // layout=free (default): ranks are a soft force and pins are full XY — the
 // operator's arrangement wins. layout=tiers: the bands own every node's Y.
 // Read early — node seeding below runs long before the state model.
@@ -533,6 +546,15 @@ function writeState() {
                           // on file:// in Chrome (opaque origin)
   const qs = buildParams().toString();
   history.replaceState(null, "", location.pathname + (qs ? "?" + qs : ""));
+  // remember the preference half of the state for the next bare visit:
+  // focus names a one-time destination and foreign (_extra) params belong
+  // to the link that carried them, so neither persists
+  try {
+    const keep = buildParams();
+    keep.delete("focus");
+    for (const k in (state._extra || {})) keep.delete(k);
+    localStorage.setItem("patchbay.topo", keep.toString());
+  } catch (e) {}
 }
 
 function set(patch) {

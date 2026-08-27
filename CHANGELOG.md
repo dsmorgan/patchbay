@@ -20,6 +20,16 @@ put.
   a Fabric card of its own, still folded in under its hypervisor. No
   collector emits the role yet — this makes the UI ready for one that does.
 
+- **The map remembers your view options**
+  ([#16](https://github.com/dsmorgan/patchbay/issues/16)). A bare
+  `/topology` — the rail's link — restores the last-used mode, load/VLAN
+  choice, visibility toggles, and layout from the browser's storage by
+  rewriting the URL on arrival, so reload and share keep working. An
+  explicit URL always wins outright: a deep link renders its own params
+  plus defaults, never a merge with remembered state. `focus` and foreign
+  query params are never remembered, and the snapshot keeps its
+  hash-state behavior untouched.
+
 - **Declarations explain themselves on /ops**
   ([#20](https://github.com/dsmorgan/patchbay/issues/20)). Every declaration
   field carries a "?" toggle with one sentence on what it does, the syntax,
