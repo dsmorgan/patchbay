@@ -6,29 +6,7 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [0.4.0] — 2026-08-26
-
-### Added
-
-- **A from-nothing deployment path.** `docker-compose.stack.yml` runs the
-  whole stack — MariaDB, Redis, LibreNMS and its dispatcher, Oxidized, and
-  patchbay — and [docs/deployment.md](docs/deployment.md) walks the wiring:
-  Oxidized's two config files, LibreNMS setup and the API token, and the
-  container-name URLs (with the Connection-refused trap explained). The
-  existing quick start remains the path for networks that already run the
-  data layer.
-
-### Fixed
-
-- **Images are now multi-arch (amd64 + arm64).** On an Apple Silicon Mac or
-  a Raspberry Pi, the quick start previously failed outright with "no
-  matching manifest for linux/arm64" — found by running the deployment
-  guide verbatim on an arm64 host.
-- **First poll no longer races the web app on a fresh database.** `compose
-  up` starts both containers at once and both ran the same schema
-  migrations; real filesystems serialize that on SQLite's lock, but Docker
-  Desktop's shared mounts could surface it as a spurious "disk I/O error"
-  on the very first poll. The poller now waits a beat and retries once.
+## [Unreleased]
 
 ### Added
 
@@ -63,11 +41,36 @@ put.
   device page has "show on map"; patch-panel rows are anchorable
   (`/patchpanel#p3`). The device page's ports table carries an Endpoints
   column that expands to the MACs learned on that port.
-- Process: ADR-0001 under `docs/adr/` records the decisions; the briefs and
-  the owner's test guide are under `docs/process/`; `scripts/screenshots.py`
-  seeds the demo network, serves it, and photographs every page so a UI
-  change is looked at rather than inferred. The working method itself (the
-  playbook and agent definitions) is proposed in its own PR.
+- `scripts/screenshots.py` seeds the demo network, serves it, and photographs
+  every page so a UI change is looked at rather than inferred; ADR-0001 under
+  `docs/adr/` records this milestone's decisions.
+
+Everything above is [@Moonchopper](https://github.com/Moonchopper)
+([#4](https://github.com/dsmorgan/patchbay/pull/4)).
+
+## [0.4.0] — 2026-08-26
+
+### Added
+
+- **A from-nothing deployment path.** `docker-compose.stack.yml` runs the
+  whole stack — MariaDB, Redis, LibreNMS and its dispatcher, Oxidized, and
+  patchbay — and [docs/deployment.md](docs/deployment.md) walks the wiring:
+  Oxidized's two config files, LibreNMS setup and the API token, and the
+  container-name URLs (with the Connection-refused trap explained). The
+  existing quick start remains the path for networks that already run the
+  data layer.
+
+### Fixed
+
+- **Images are now multi-arch (amd64 + arm64).** On an Apple Silicon Mac or
+  a Raspberry Pi, the quick start previously failed outright with "no
+  matching manifest for linux/arm64" — found by running the deployment
+  guide verbatim on an arm64 host.
+- **First poll no longer races the web app on a fresh database.** `compose
+  up` starts both containers at once and both ran the same schema
+  migrations; real filesystems serialize that on SQLite's lock, but Docker
+  Desktop's shared mounts could surface it as a spurious "disk I/O error"
+  on the very first poll. The poller now waits a beat and retries once.
 
 ### Changed
 
