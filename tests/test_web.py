@@ -655,12 +655,12 @@ def test_topology_page_renders_tier_bands(clean_env, tmp_path, client):
     # a `fit` control exists in the toolbar, next to nothing else
     assert 'id="fitbtn"' in body
 
-    # Y is owned by the tier: no separate force pulls nodes toward a rank,
-    # every node's fy is fixed to its band centre, and dragging only ever
-    # sets fx (X-only pins)
-    assert "forceY" not in body
-    assert "bandCenter(n.rank)" in body
-    assert "d.fx = e.x; })" in body  # the drag handler no longer touches fy
+    # layout is a URL mode (issue #11): free is the default (soft rank force,
+    # full XY pins), tiers is the opt-in where the band owns every Y
+    assert 'params.get("layout") === "tiers"' in body
+    assert 'id="tierbox"' in body
+    assert "d3.forceY(d => bandCenter(d.rank))" in body   # free mode's nudge
+    assert "n.y = n.fy = bandCenter(n.rank)" in body      # tiers still owns Y
 
     # the simulation can now shrink further to fit a large map to the frame
     assert "scaleExtent([0.2, 3])" in body
@@ -747,3 +747,13 @@ def test_version_text_never_doubles_newlines(clean_env, monkeypatch):
         assert "\r" not in text
         assert text.count("line three") == 1
         assert "line one\nline two\n" in text.replace("\n\n", "\n")
+
+
+def test_topology_layout_defaults_to_free(client, tmp_path):
+    """Issue #11: after real-world use the tier bands lost the default; the
+    map arranges freely unless layout=tiers is asked for."""
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/topology").text
+    assert 'layout: "free"' in body                      # the default in DEFAULTS
+    assert "if (!TIERS) { gBands.selectAll" in body      # no bands drawn in free
+    assert "if (!TIERS) d.fy = e.y" in body              # free pins both axes

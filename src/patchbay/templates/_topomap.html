@@ -131,6 +131,7 @@
     <label><input type="checkbox" id="coreonly"> core only</label>
     <label><input type="checkbox" id="hosts"> wired hosts</label>
     <label><input type="checkbox" id="unmhosts"> behind unmanaged</label>
+    <label title="lanes own each node's vertical position; off = arrange freely, pins keep both axes"><input type="checkbox" id="tierbox"> tier lanes</label>
   </span>
   <span class="grp" id="loadgrp" hidden>
     <select id="loadmode">
@@ -212,6 +213,16 @@ function bandCenter(rank) {
   const b = BANDS.find(b => b.rank === rank);
   return (b.y0 + b.y1) / 2 * H;
 }
+// layout=free (default): ranks are a soft force and pins are full XY — the
+// operator's arrangement wins. layout=tiers: the bands own every node's Y.
+// Read early — node seeding below runs long before the state model.
+const TIERS = (() => {
+  const p = new URLSearchParams(location.search);
+  if (location.hash.includes("=")) {
+    for (const [k, v] of new URLSearchParams(location.hash.slice(1))) p.set(k, v);
+  }
+  return p.get("layout") === "tiers";
+})();
 const CORE_ROLES = new Set(["cloud", "firewall", "switch", "hypervisor"]);
 const OFF_STATUS = new Set(["down", "notresponding", "disabled"]);
 
@@ -260,8 +271,16 @@ function assignSlots(nodes) {
 assignSlots(graph.nodes);
 graph.nodes.forEach(n => {
   n.x = n.px ?? n.sx;
-  n.y = n.fy = bandCenter(n.rank);   // Y is owned by the tier, always — no exceptions
-  if (n.px != null) n.fx = n.px;     // pins are X-only; py is ignored on load
+  if (TIERS) {
+    n.y = n.fy = bandCenter(n.rank);   // the tier owns Y; pins are X-only
+    if (n.px != null) n.fx = n.px;
+  } else {
+    n.y = n.py ?? bandCenter(n.rank);  // free: saved Y wins, rank only seeds
+    if (n.px != null) {
+      n.fx = n.px;
+      if (n.py != null) n.fy = n.py;   // a full XY pin restores exactly
+    }
+  }
 });
 
 const link = gContent.append("g").selectAll("line").data(graph.links).join("line")
@@ -305,7 +324,8 @@ node.append("title").text(d => d.title ?? d.name);
 node.on("click", (e, d) => {
   if (e.defaultPrevented) return;      // this was the tail of a drag
   if (e.shiftKey && !SNAPSHOT) {       // shift-click unpins (plain click navigates)
-    d.fx = null;                       // Y stays owned by the tier — only the X pin clears
+    d.fx = null;                       // in tiers the band keeps owning Y
+    if (!TIERS) d.fy = null;
     savePos(d.name, null, null);
     d3.select(node.nodes()[graph.nodes.indexOf(d)]).classed("pinned", false);
     sim.alpha(0.3).restart();
@@ -344,6 +364,7 @@ function placePortLabel(sel, d, from, dx, dy) {
 // A band renders only for a rank with >=1 visible node; its width spans that
 // rank's visible nodes' X extent + 400px each side, recomputed at each settle.
 function updateBands() {
+  if (!TIERS) { gBands.selectAll("g.band").remove(); return; }
   const byRank = {};
   graph.nodes.forEach(n => { if (nodeVisible(n)) (byRank[n.rank] = byRank[n.rank] || []).push(n); });
   // fit() only ever shows gContent's bbox (+28px pad) — a band whose rank
@@ -434,6 +455,7 @@ const sim = d3.forceSimulation(graph.nodes)
     .force("charge", d3.forceManyBody().strength(-900))
     .force("x", d3.forceX(d => d.sx).strength(0.08))
     .force("collide", d3.forceCollide(d => d.w / 2 + 26))
+    .force("y", TIERS ? null : d3.forceY(d => bandCenter(d.rank)).strength(0.08))
     .on("tick", ticked)
     .on("end", () => afterSettle(true));
 // the simulation's first tick is async (next animation frame); paint the
@@ -452,7 +474,7 @@ vlansel.append(new Option("all", ""));
 // --- state model -------------------------------------------------------
 // the map's whole state lives in the URL; `view` is a mode, not a checkbox.
 // See docs/adr/0001-page-shell-and-map-modes.md Decision 1 for the contract.
-const DEFAULTS = { view: "wiring", load: "now", vlan: null, focus: null,
+const DEFAULTS = { view: "wiring", load: "now", vlan: null, focus: null, layout: "free",
                     hideoff: true, coreonly: false, hosts: false, unmhosts: false };
 const VIEWS = ["wiring", "load", "vlan", "evidence"];
 const STATE_KEYS = Object.keys(DEFAULTS);
@@ -474,6 +496,7 @@ function readState() {
   s.vlan = (vnum != null && !Number.isNaN(vnum) &&
             (graph.vlans || []).some(v => v.vid === vnum)) ? vnum : null;
   s.focus = params.get("focus") || null;
+  s.layout = params.get("layout") === "tiers" ? "tiers" : "free";
   for (const k of ["hideoff", "coreonly", "hosts", "unmhosts"]) {
     const raw = params.get(k);
     s[k] = raw == null ? DEFAULTS[k] : raw === "1";
@@ -487,20 +510,25 @@ function readState() {
   return s;
 }
 
-function writeState() {
-  if (SNAPSHOT) return;  // the file IS the state; replaceState also throws
-                          // on file:// in Chrome (opaque origin)
+function buildParams() {
   const params = new URLSearchParams();
   if (state.view !== DEFAULTS.view) params.set("view", state.view);
   if (state.load !== DEFAULTS.load) params.set("load", state.load);
   if (state.vlan != null) params.set("vlan", state.vlan);
   if (state.focus) params.set("focus", state.focus);
+  if (state.layout !== DEFAULTS.layout) params.set("layout", state.layout);
   if (state.hideoff !== DEFAULTS.hideoff) params.set("hideoff", state.hideoff ? "1" : "0");
   if (state.coreonly !== DEFAULTS.coreonly) params.set("coreonly", state.coreonly ? "1" : "0");
   if (state.hosts !== DEFAULTS.hosts) params.set("hosts", state.hosts ? "1" : "0");
   if (state.unmhosts !== DEFAULTS.unmhosts) params.set("unmhosts", state.unmhosts ? "1" : "0");
   for (const k in (state._extra || {})) params.set(k, state._extra[k]);
-  const qs = params.toString();
+  return params;
+}
+
+function writeState() {
+  if (SNAPSHOT) return;  // the file IS the state; replaceState also throws
+                          // on file:// in Chrome (opaque origin)
+  const qs = buildParams().toString();
   history.replaceState(null, "", location.pathname + (qs ? "?" + qs : ""));
 }
 
@@ -680,6 +708,7 @@ function applyControls() {
   document.getElementById("coreonly").checked = state.coreonly;
   document.getElementById("hosts").checked = state.hosts;
   document.getElementById("unmhosts").checked = state.unmhosts;
+  document.getElementById("tierbox").checked = state.layout === "tiers";
   document.getElementById("view-" + state.view).checked = true;
   document.getElementById("loadmode").value = state.load;
   vlansel.value = state.vlan == null ? "" : String(state.vlan);
@@ -708,6 +737,19 @@ window.addEventListener("popstate", () => { Object.assign(state, readState()); r
 
 document.getElementById("fitbtn").addEventListener("click", () => fit(true));
 
+// switching layout re-seeds node positions, pins, and forces — a reload with
+// the state in the URL (or, in a snapshot, the hash) is the honest re-init
+document.getElementById("tierbox").addEventListener("change", e => {
+  state.layout = e.target.checked ? "tiers" : "free";
+  if (SNAPSHOT) {
+    location.hash = buildParams().toString();  // whole state survives the toggle
+    location.reload();
+    return;
+  }
+  writeState();
+  location.reload();
+});
+
 // a resize (not just a filter change) moves the map: recompute band centres
 // and every node's Y, then re-fit — debounced so a window drag-resize doesn't
 // thrash the simulation
@@ -716,7 +758,7 @@ new ResizeObserver(() => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     ({ width: W, height: H } = svg.node().getBoundingClientRect());
-    graph.nodes.forEach(n => { n.fy = n.y = bandCenter(n.rank); });
+    if (TIERS) graph.nodes.forEach(n => { n.fy = n.y = bandCenter(n.rank); });
     ticked();
     afterSettle(false);
   }, 150);
@@ -735,8 +777,9 @@ function savePos(name, x, y) {
 node.call(d3.drag()
     // Y is owned by the tier (d.fy is always its band centre and is never
     // touched here) — drag only ever sets d.fx, so a node slides along its lane
-    .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.25).restart(); d.fx = d.x; })
-    .on("drag", (e, d) => { d.fx = e.x; })
+    .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.25).restart();
+                             d.fx = d.x; if (!TIERS) d.fy = d.y; })
+    .on("drag", (e, d) => { d.fx = e.x; if (!TIERS) d.fy = e.y; })
     .on("end", (e, d) => {
       if (!e.active) sim.alphaTarget(0);
       savePos(d.name, d.fx, d.fy);
