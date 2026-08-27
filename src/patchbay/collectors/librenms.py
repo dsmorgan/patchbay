@@ -18,6 +18,18 @@ from . import register
 
 NAME = "librenms"
 
+
+def _colon_mac(mac: str | None) -> str | None:
+    """LibreNMS emits ifPhysAddress as bare hex ("288088734256"); every
+    other MAC in the model is colon-delimited, so format at ingestion.
+    Joins don't care (canon_mac strips separators) — readers do."""
+    if not mac:
+        return None
+    raw = mac.strip().lower()
+    if len(raw) == 12 and all(c in "0123456789abcdef" for c in raw):
+        return ":".join(raw[i:i + 2] for i in range(0, 12, 2))
+    return raw
+
 OS_ROLE = {"ironware": "switch", "netgear": "switch", "freebsd": "firewall"}
 
 # Netgear M4300 reports a factory string ("Unit: 1 Slot: 0 Port: 5 10G - Level")
@@ -108,7 +120,7 @@ class LibreNmsCollector:
                         admin_status=p.get("ifAdminStatus"),
                         oper_status=p.get("ifOperStatus"),
                         speed_bps=_speed(p.get("ifSpeed")),
-                        mac=(p.get("ifPhysAddress") or None),
+                        mac=_colon_mac(p.get("ifPhysAddress")),
                         description=_descr(p.get("ifAlias")),
                         # librenms rates are octets/sec from the 5-min poller
                         in_bps=(int(p["ifInOctets_rate"] * 8)

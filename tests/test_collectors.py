@@ -422,3 +422,14 @@ def test_pfsense_accepts_the_first_round_env_name(clean_env):
     clean_env.setenv("PFSENSE_API_SECRET", "legacy")
     s = load_settings()
     assert PfsenseCollector().configured(s) and s.pfsense_api_key == "legacy"
+
+
+def test_librenms_interface_macs_are_colon_delimited():
+    """Issue #14: LibreNMS emits ifPhysAddress as bare hex; everything else
+    in the model is colon-delimited, so format at ingestion."""
+    from patchbay.collectors.librenms import _colon_mac
+
+    assert _colon_mac("288088734256") == "28:80:88:73:42:56"
+    assert _colon_mac("28:80:88:73:42:54") == "28:80:88:73:42:54"  # passthrough
+    assert _colon_mac("") is None and _colon_mac(None) is None
+    assert _colon_mac("not-a-mac") == "not-a-mac"  # never invent structure
