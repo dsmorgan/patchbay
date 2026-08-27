@@ -6,6 +6,16 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Changed
+
+- **A source edit rebuilds the image in seconds.** The Dockerfile installs
+  dependencies in their own layer before copying `src/`, so a rebuild after
+  a code change no longer re-downloads fastapi, uvicorn, and pyvmomi
+  (8 s → 2 s on a fast link; the whole build, on a slow one). The image
+  itself is unchanged.
+
 ## [0.8.0] — 2026-08-27
 
 ### Added
