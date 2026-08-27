@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ sel }} — patchbay{% endblock %}
+{# the declared size reads as data, so it lives on the purpose line — in the
+   controls slot it sat beside the <h1> and read like part of the name #}
+{% block purpose %}Panel positions and the switch ports behind them{% if size %} · {{ size }} positions{% endif %}{% endblock %}
 {% block controls %}
 {% if panels | length > 1 %}
   <select onchange="location = '?panel=' + encodeURIComponent(this.value)"
@@ -9,7 +12,6 @@
     <option value="{{ p }}" {{ 'selected' if p == sel }}>{{ p }}{% endfor %}
   </select>
 {% endif %}
-{% if size %}<span class="muted">{{ size }} positions</span>{% endif %}
 {% endblock %}
 {% block main %}
 

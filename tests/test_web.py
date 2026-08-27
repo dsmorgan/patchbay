@@ -680,6 +680,17 @@ def test_patchpanel_rows_are_anchored(clean_env, tmp_path, client):
     seed(str(tmp_path / "test.db"))
     body = client.get("/patchpanel").text
     assert 'id="p3"' in body
+
+
+def test_panel_size_sits_on_the_purpose_line(clean_env, tmp_path, client):
+    # issue #18: the declared size is data, not a control — in the header's
+    # controls slot it sat beside the <h1> and read like part of the name
+    clean_env.setenv("PATCHBAY_PANELS", r"Basement:12=\[(\d+)\]")
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/patchpanel").text
+    assert "them · 12 positions</p>" in body
+    controls = body.split('<div class="controls">', 1)[1].split("</div>", 1)[0]
+    assert "positions" not in controls
 # --- map-tiers-fit ---
 
 
