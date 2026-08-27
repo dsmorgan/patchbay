@@ -6,6 +6,15 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+
+- **One command to see it running.** `scripts/demo.py` pulls the published
+  image, seeds the demo network inside the container, waits for the UI, and
+  opens it in your browser; Ctrl-C removes it, and nothing touches the host.
+  `--build` does the same for the checkout you're in.
+
 ## [0.8.0] — 2026-08-27
 
 ### Added
