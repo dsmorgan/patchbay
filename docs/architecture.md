@@ -100,6 +100,14 @@ Two ports resist all of it, and patchbay names both rather than guessing:
 
 ## Phased roadmap
 
+Planning and tracking of future work now happens in
+[GitHub issues](https://github.com/dsmorgan/patchbay/issues); this table
+records the phases and their status. The open phases are tracked as
+[#25](https://github.com/dsmorgan/patchbay/issues/25) (5 remainder),
+[#23](https://github.com/dsmorgan/patchbay/issues/23) (5.5),
+[#22](https://github.com/dsmorgan/patchbay/issues/22) (6), and
+[#24](https://github.com/dsmorgan/patchbay/issues/24) (7).
+
 | Phase | Scope | Done when |
 |---|---|---|
 | 0 ✅ | SNMPv3 + LLDP enabled everywhere; RO credentials for all APIs; DNS names | every device answers `snmpwalk` and every API answers a smoke test from the host |
