@@ -19,6 +19,10 @@ poll.</p>
 
 {% include "_actions.html" %}
 
+{# data-live wrappers render unconditionally so the region swap in
+   _actions.html (issue #19) has an element to replace even when the very
+   first poll turns "nothing" into "something" #}
+<div id="lastpoll" data-live>
 {% if last_poll %}
 <details style="max-width: 900px">
   <summary class="muted" style="cursor: pointer; font-size: 0.8rem">
@@ -29,6 +33,7 @@ poll.</p>
   >{{ last_poll.lines | join("\n") }}</pre>
 </details>
 {% endif %}
+</div>
 
 <h2>Declarations — what only you can tell patchbay</h2>
 <p class="muted" style="max-width: 66ch; margin-top: 0.2rem">Facts no protocol can
@@ -36,6 +41,7 @@ discover. Each declaration has one owner. <strong>If your env file sets it, the 
 file wins</strong> and the field here is read-only. Otherwise, edit it here and
 patchbay stores it in its database. Either way, the change takes effect on the next
 poll.</p>
+<div id="dclconflicts" data-live>
 {% if conflicts %}
 <div style="border: 1px solid var(--warn); border-radius: 8px; padding: 0.6rem 1rem;
             margin-bottom: 0.8rem; max-width: 760px">
@@ -50,6 +56,7 @@ poll.</p>
     never draw links on their own.</div>
 </div>
 {% endif %}
+</div>
 {% if warnings %}
 <div style="border: 1px solid var(--warn); border-radius: 8px; padding: 0.6rem 1rem;
             margin-bottom: 0.8rem; max-width: 700px">
@@ -118,6 +125,7 @@ poll.</p>
   </div>
 {% endfor %}
 </div>
+<div id="dclexport" data-live>
 {% if export %}
 <details style="max-width: 900px; margin-top: 0.6rem">
   <summary class="muted" style="cursor: pointer; font-size: 0.8rem">
@@ -126,12 +134,13 @@ poll.</p>
        border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.78rem">{{ export }}</pre>
 </details>
 {% endif %}
+</div>
 
 <h2>What patchbay is running on</h2>
 <p class="muted" style="max-width: 62ch; margin-top: 0.2rem">The values patchbay is
 acting on, with secrets redacted. To change one, edit your env file and restart.
 Nothing on this page writes to that file.</p>
-<div class="scroll" style="max-width: 900px">
+<div class="scroll" id="effconfig" data-live style="max-width: 900px">
 {% for section, rows in config %}
 <table style="margin-bottom: 1rem">
   <tr><th colspan="2">{{ section }}</th></tr>
@@ -178,6 +187,9 @@ document.querySelectorAll(".dclsave").forEach(a => a.addEventListener("click", a
       document.querySelector(`.dclq[data-var="${a.dataset.var}"]`)
         .setAttribute("aria-expanded", "true");
     }
+    // the save changes what the page reports (effective config, export
+    // lines, conflicts) — swap those regions in place (issue #19)
+    await window.patchbayRefreshLive();
     setTimeout(() => { a.textContent = "save"; }, 2500);
   } catch (err) { a.textContent = "save"; alert(err); }
 }));

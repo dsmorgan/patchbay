@@ -14,6 +14,26 @@
   button.act:disabled { opacity: 0.5; cursor: wait; }
 </style>
 <script>
+// An action changes what the page shows (a new snapshot in the kept list,
+// a fresh last-poll report, the effective config) — but these pages hold
+// the poll-driven refresh while output is on screen, which is exactly when
+// the result appears (issue #19). So after an action completes, re-fetch
+// this page and swap every [data-live] region in place by id. The output
+// pane, the buttons (their listeners would not survive a swap), and any
+// form fields live outside those regions, so nothing mid-read or mid-edit
+// is disturbed.
+window.patchbayRefreshLive = async () => {
+  try {
+    const r = await fetch(location.pathname + location.search, {cache: "no-store"});
+    if (!r.ok) return;
+    const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+    document.querySelectorAll("[data-live]").forEach(el => {
+      const fresh = doc.getElementById(el.id);
+      if (fresh) el.replaceWith(fresh);
+    });
+  } catch (e) {}
+};
+
 const out = document.getElementById("out");
 const buttons = [...document.querySelectorAll("button.act")];
 buttons.forEach(b => b.addEventListener("click", async () => {
@@ -24,6 +44,7 @@ buttons.forEach(b => b.addEventListener("click", async () => {
     const r = await fetch(b.dataset.url, {method: "POST"});
     const body = await r.json();
     out.textContent = (body.lines || [body.detail || r.statusText]).join("\n");
+    await window.patchbayRefreshLive();
   } catch (e) {
     out.textContent = `failed: ${e}`;
   }

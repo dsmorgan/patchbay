@@ -129,6 +129,22 @@ def test_ops_snapshot_download_404s_before_first_snapshot(client):
     assert client.get("/ops/snapshot/latest").status_code == 404
 
 
+def test_actions_refresh_their_live_regions(clean_env, client):
+    # issue #19: after an action completes, _actions.html re-fetches the page
+    # and swaps every [data-live] region by id. The regions render even when
+    # empty, so the first snapshot / first poll has an element to land in.
+    ops = client.get("/ops").text
+    assert "patchbayRefreshLive" in ops
+    for rid in ("lastpoll", "dclconflicts", "dclexport", "effconfig"):
+        assert f'id="{rid}" data-live' in ops, rid
+    snaps = client.get("/snapshots").text
+    assert "patchbayRefreshLive" in snaps
+    for rid in ("snaplatest", "snapkept"):
+        assert f'id="{rid}" data-live' in snaps, rid
+    # act buttons stay outside every region — a swap would drop listeners
+    assert 'data-live' not in snaps.split('<button class="act"')[1].split(">")[0]
+
+
 def test_ops_declaration_editing(clean_env, client):
     r = client.post("/ops/config", json={"var": "PATCHBAY_CAPACITY",
                                          "value": "sw1:1/0/16=3G"})

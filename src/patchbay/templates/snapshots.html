@@ -5,8 +5,11 @@
 
 <p style="display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center">
   <button class="act" data-url="/ops/snapshot">snapshot now</button>
-  {% if latest.exists %}<a href="{{ latest.href }}"
-     style="align-self: center; font-size: 0.8rem">download the latest</a>{% endif %}
+  {# data-live regions render unconditionally, empty included, so the swap in
+     _actions.html always has an element to replace — the very first snapshot
+     is exactly the case where "nothing here" becomes "something" #}
+  <span id="snaplatest" data-live>{% if latest.exists %}<a href="{{ latest.href }}"
+     style="align-self: center; font-size: 0.8rem">download the latest</a>{% endif %}</span>
 </p>
 
 {% include "_actions.html" %}
@@ -16,6 +19,7 @@
 these snapshots are safe to share.</p>
 {% endif %}
 
+<div id="snapkept" data-live>
 <h2>Kept here</h2>
 {% if snapshots %}
 <div class="scroll"><table>
@@ -33,6 +37,7 @@ these snapshots are safe to share.</p>
 <p class="muted">No snapshot yet — take one, or set
 <span class="mono">PATCHBAY_SNAPSHOT_AT</span> for one a day.</p>
 {% endif %}
+</div>
 
 <h2>Where they go</h2>
 <div style="max-width: 700px">
