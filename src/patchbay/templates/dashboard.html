@@ -76,7 +76,7 @@
 {% endif %}
 
 {% if fabric %}
-<h2>Fabric — switches, routers, and firewalls</h2>
+<h2>Fabric — switches, routers, and firewalls <a class="agg" href="/ports">all ports →</a></h2>
 <div class="cards">
   {% for d in fabric %}
   <div class="card {{ d.role }}">
@@ -90,7 +90,7 @@
 {% endif %}
 
 {% if aps %}
-<h2>Access points</h2>
+<h2>Access points <a class="agg" href="/clients">all clients →</a></h2>
 <div class="cards">
   {% for d in aps %}
   <div class="card ap">
@@ -104,7 +104,7 @@
 {% endif %}
 
 {% if hypervisors %}
-<h2>Hypervisors and their guests</h2>
+<h2>Hypervisors and their guests <a class="agg" href="/guests">all guests →</a></h2>
 <div class="cards">
   {% for d in hypervisors %}
   {% set guests = vms_by_host.get(d.name, []) %}
@@ -121,10 +121,7 @@
         <tr><th>VM</th><th>IP</th><th>Guest OS</th><th>State</th></tr>
         {% for v in guests %}
         <tr>
-          <td><span class="dot {{ v.status }}"></span>{{ v.name }}</td>
-          <td class="mono">{{ v.mgmt_ip or '-' }}</td>
-          <td class="muted">{{ v.os or '-' }}</td>
-          <td>{{ v.status }}</td>
+          {{ ui.guest_cells(v) }}
         </tr>
         {% endfor %}
       </table>
@@ -157,6 +154,9 @@
 {% endif %}
 
 <style>
+  /* aggregate-view entry links ride the section headings (#26) */
+  h2 .agg { font-size: 0.72rem; font-weight: 400; letter-spacing: 0.02em;
+            text-transform: none; margin-left: 0.7rem; }
   .attention { margin: 0.2rem 0 1.4rem; border: 1px solid var(--line);
                border-radius: 8px; padding: 0.6rem 0.9rem 0.7rem; max-width: 860px; }
   .attn-head { display: flex; align-items: baseline; gap: 0.7rem; flex-wrap: wrap; }

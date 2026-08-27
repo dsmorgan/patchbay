@@ -1725,6 +1725,161 @@ def config_node(request: Request, node: str):
     })
 
 
+# --- aggregate views (issue #26): every list is per-device on its own page;
+# these answer "show me every up port / active client / running guest"
+# without a device-by-device tour. Filtered state lives in the URL
+# (?state=all), consistent with the map. Row cells come from the same
+# _ui.html macros the per-device tables use, so the two cannot drift.
+
+@app.get("/ports", response_class=HTMLResponse)
+def all_ports(request: Request, state: str | None = None):
+    show_all = state == "all"
+    conn = _conn()
+    try:
+        db.init(conn)
+        settings = load_settings()
+        groups, n_total, n_up = [], 0, 0
+        for d in conn.execute(
+                "SELECT * FROM devices WHERE role IN ('switch','router','firewall') "
+                "ORDER BY name"):
+            ports = [p for p in conn.execute(
+                "SELECT * FROM interfaces WHERE device_id = ? ORDER BY ifindex, name",
+                (d["id"],)) if port_kind(p["name"]) == "physical"]
+            n_total += len(ports)
+            up = [p for p in ports if p["oper_status"] == "up"]
+            n_up += len(up)
+            shown = ports if show_all else up
+            if not shown:
+                continue
+            pv, pr = _port_vlan_views(conn, d["name"], shown)
+            eps = {r["interface"]: r["n"] for r in conn.execute(
+                "SELECT interface, COUNT(*) AS n FROM endpoints "
+                "WHERE device = ? GROUP BY interface", (d["name"],))}
+            groups.append({
+                "dev": d["name"], "ports": shown, "pv": pv, "pr": pr,
+                "eps": eps,
+                "caps": {i: c for (dv, i), c in settings.capacities.items()
+                         if dv == d["name"]},
+            })
+        return templates.TemplateResponse(request, "allports.html", {
+            "groups": groups, "show_all": show_all,
+            "n_total": n_total, "n_up": n_up,
+        })
+    finally:
+        conn.close()
+
+
+@app.get("/clients", response_class=HTMLResponse)
+def all_clients(request: Request, state: str | None = None):
+    show_all = state == "all"
+    conn = _conn()
+    try:
+        db.init(conn)
+        ap_names = [r["name"] for r in conn.execute(
+            "SELECT name FROM devices WHERE role = 'ap' ORDER BY name")]
+        rows, n_total, n_active = [], 0, 0
+        if ap_names:
+            marks = ",".join("?" * len(ap_names))
+            now = db.now()
+            for e in conn.execute(
+                    f"SELECT * FROM endpoints WHERE device IN ({marks}) "
+                    "ORDER BY device, hostname", ap_names):
+                n_total += 1
+                # active = seen within the same freshness window the top bar
+                # applies to sources; a departed client's row lingers with an
+                # aging last_seen until evidence retirement catches it
+                mins = (now - e["last_seen"]) / 60 if e["last_seen"] else None
+                active = mins is not None and mins <= STALE_MIN
+                n_active += active
+                if show_all or active:
+                    rows.append({"e": e, "mins": mins, "active": active})
+        return templates.TemplateResponse(request, "allclients.html", {
+            "rows": rows, "show_all": show_all,
+            "n_total": n_total, "n_active": n_active,
+        })
+    finally:
+        conn.close()
+
+
+@app.get("/guests", response_class=HTMLResponse)
+def all_guests(request: Request, state: str | None = None):
+    show_all = state == "all"
+    conn = _conn()
+    try:
+        db.init(conn)
+        # everything with a parent — including guests whose role got promoted
+        # (a virtualized firewall is still a VM here), same rule the Overview
+        # fold-in applies
+        guests = conn.execute(
+            "SELECT * FROM devices WHERE parent IS NOT NULL "
+            "ORDER BY parent, status != 'up', name").fetchall()
+        n_total = len(guests)
+        n_running = sum(1 for g in guests if g["status"] == "up")
+        shown = guests if show_all else [g for g in guests if g["status"] == "up"]
+        return templates.TemplateResponse(request, "allguests.html", {
+            "guests": shown, "show_all": show_all,
+            "n_total": n_total, "n_running": n_running,
+        })
+    finally:
+        conn.close()
+
+
+def _port_vlan_views(conn: sqlite3.Connection, dev_name: str,
+                     ports: list) -> tuple[dict, dict]:
+    """Per-port VLAN membership, and where the answer came from — a switch's
+    own config, the hypervisor's port group, or the subnet an address sits
+    in. Naming the source is the difference between a number and a number
+    you can act on. Shared by the device page and /ports (#26)."""
+    WHERE = {
+        "oxidized": "from the device's backed-up running-config",
+        "vsphere": "from the hypervisor port group carrying this NIC — "
+                   "the vSwitch adds the tag, so the guest OS can't see it",
+    }
+    pvrows: dict[str, dict] = {}
+    for r in conn.execute(
+            "SELECT interface, vid, tagged, source FROM port_vlans WHERE device = ?",
+            (dev_name,)):
+        e = pvrows.setdefault(r["interface"], {"u": [], "t": [], "src": r["source"]})
+        (e["t"] if r["tagged"] else e["u"]).append(r["vid"])
+    port_vlans = {}
+    for iface, e in pvrows.items():
+        u = ",".join(map(str, sorted(e["u"])))
+        t = ",".join(map(str, sorted(e["t"])))
+        where = WHERE.get(e["src"], f"reported by {e['src']}")
+        if e["t"]:
+            port_vlans[iface] = {"mode": "trunk", "why": where,
+                                 "text": (f"{u}u {t}" if u else t)}
+        else:
+            port_vlans[iface] = {"mode": "access", "text": u, "why": where}
+    port_roles: dict[str, str] = {
+        r["interface"]: (r["role"], r["detail"]) for r in conn.execute(
+            "SELECT interface, role, detail FROM port_roles WHERE device = ?",
+            (dev_name,))}
+    # L3 ports with no switching config (firewall NICs, mgmt interfaces):
+    # the interface's own address places it in a subnet, and the subnet
+    # maps to a VLAN — untagged from this port's point of view, so it
+    # reads as access. Parsed config, where present, still wins above.
+    subnet_vl = []
+    for r in conn.execute("SELECT cidr, vlan FROM subnets WHERE vlan IS NOT NULL"):
+        try:
+            subnet_vl.append((ipaddress.ip_network(r["cidr"], strict=False), r["vlan"]))
+        except ValueError:
+            pass
+    for p in ports:
+        if p["ip"] and p["name"] not in port_vlans:
+            try:
+                a = ipaddress.ip_address(p["ip"].split("/")[0])
+            except ValueError:
+                continue
+            vids = {v for net, v in subnet_vl if a in net}
+            if vids:
+                port_vlans[p["name"]] = {
+                    "mode": "access", "text": ",".join(map(str, sorted(vids))),
+                    "why": "inferred from the subnet this port's address "
+                           "sits in, not read from a device"}
+    return port_vlans, port_roles
+
+
 @app.get("/device/{name:path}", response_class=HTMLResponse)
 def device(request: Request, name: str):
     # :path converter — inferred switch names embed interface names ("1/0/8")
@@ -1753,57 +1908,7 @@ def device(request: Request, name: str):
                 ports.append(p)
             else:
                 hidden[kind] = hidden.get(kind, 0) + 1
-        # per-port VLAN membership, and where the answer came from — a switch's
-        # own config, the hypervisor's port group, or the subnet an address
-        # sits in. Naming the source is the difference between a number and a
-        # number you can act on.
-        WHERE = {
-            "oxidized": "from the device's backed-up running-config",
-            "vsphere": "from the hypervisor port group carrying this NIC — "
-                       "the vSwitch adds the tag, so the guest OS can't see it",
-        }
-        pvrows: dict[str, dict] = {}
-        for r in conn.execute(
-                "SELECT interface, vid, tagged, source FROM port_vlans WHERE device = ?",
-                (dev["name"],)):
-            e = pvrows.setdefault(r["interface"], {"u": [], "t": [], "src": r["source"]})
-            (e["t"] if r["tagged"] else e["u"]).append(r["vid"])
-        port_vlans = {}
-        for iface, e in pvrows.items():
-            u = ",".join(map(str, sorted(e["u"])))
-            t = ",".join(map(str, sorted(e["t"])))
-            where = WHERE.get(e["src"], f"reported by {e['src']}")
-            if e["t"]:
-                port_vlans[iface] = {"mode": "trunk", "why": where,
-                                     "text": (f"{u}u {t}" if u else t)}
-            else:
-                port_vlans[iface] = {"mode": "access", "text": u, "why": where}
-        port_roles: dict[str, str] = {
-            r["interface"]: (r["role"], r["detail"]) for r in conn.execute(
-                "SELECT interface, role, detail FROM port_roles WHERE device = ?",
-                (dev["name"],))}
-        # L3 ports with no switching config (firewall NICs, mgmt interfaces):
-        # the interface's own address places it in a subnet, and the subnet
-        # maps to a VLAN — untagged from this port's point of view, so it
-        # reads as access. Parsed config, where present, still wins above.
-        subnet_vl = []
-        for r in conn.execute("SELECT cidr, vlan FROM subnets WHERE vlan IS NOT NULL"):
-            try:
-                subnet_vl.append((ipaddress.ip_network(r["cidr"], strict=False), r["vlan"]))
-            except ValueError:
-                pass
-        for p in ports:
-            if p["ip"] and p["name"] not in port_vlans:
-                try:
-                    a = ipaddress.ip_address(p["ip"].split("/")[0])
-                except ValueError:
-                    continue
-                vids = {v for net, v in subnet_vl if a in net}
-                if vids:
-                    port_vlans[p["name"]] = {
-                        "mode": "access", "text": ",".join(map(str, sorted(vids))),
-                        "why": "inferred from the subnet this port's address "
-                               "sits in, not read from a device"}
+        port_vlans, port_roles = _port_vlan_views(conn, dev["name"], ports)
         endpoints = conn.execute(
             "SELECT * FROM endpoints WHERE device = ? ORDER BY interface, hostname",
             (name,),

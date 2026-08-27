@@ -93,16 +93,7 @@
   {% set eps = endpoints_by_port.get(p.name) %}
   <tr>
     <td class="mono"><a href="#" class="pg" data-if="{{ p.name }}" title="toggle 24h traffic graph">{{ p.name }}</a></td>
-    <td><span class="dot {{ 'up' if p.oper_status == 'up' else 'down' }}"></span>{{ p.oper_status or '?' }}</td>
-    <td class="muted">{{ p.admin_status or '-' }}</td>
-    <td class="mono">{{ p.speed_bps | speed }}{% if caps.get(p.name) %} <span class="muted">({{ caps[p.name] | speed }})</span>{% endif %}</td>
-    <td class="mono">{% if pr and pr[0] == 'monitor-dst' %}<span
-        style="color: var(--r-firewall)" title="{{ pr[1] }} — a mirror destination transmits copies of other ports' traffic, so its own MAC table and neighbor reports describe nothing">port mirror</span>{%
-      elif vp %}<span title="{{ vp.why }}">{% if vp.mode == 'trunk' %}<span style="color: var(--accent)">trunk</span>{% else %}<span class="muted">access</span>{% endif %} {{ vp.text }}</span>{%
-      else %}<span class="muted" title="no VLAN configuration parsed for this port, and its address doesn't fall in a known subnet">-</span>{% endif %}</td>
-    <td class="mono muted">{{ p.mac or '-' }}</td>
-    <td class="muted">{{ p.description or '' }}{% if pr and pr[0] == 'monitor-src' %}
-      <span style="color: var(--r-firewall)" title="{{ pr[1] }}">· mirrored</span>{% endif %}</td>
+    {{ ui.port_cells(p, vp, pr, caps.get(p.name)) }}
     <td class="mono">{% if eps %}<a href="#" class="ep" data-if="{{ p.name }}" title="toggle endpoints seen on this port">{{ eps | length }}</a>{% else %}<span class="muted">·</span>{% endif %}</td>
   </tr>
   {% endfor %}
@@ -159,10 +150,7 @@
   <tr><th>VM</th><th>IP</th><th>Guest OS</th><th>State</th></tr>
   {% for v in children %}
   <tr>
-    <td><span class="dot {{ v.status }}"></span>{{ v.name }}</td>
-    <td class="mono">{{ v.mgmt_ip or '-' }}</td>
-    <td class="muted">{{ v.os or '-' }}</td>
-    <td>{{ v.status }}</td>
+    {{ ui.guest_cells(v) }}
   </tr>
   {% endfor %}
 </table>
@@ -176,9 +164,7 @@
   <tr><th>Hostname</th><th>IP</th><th>MAC</th><th>Port / SSID</th><th>VLAN</th></tr>
   {% for e in endpoints_other %}
   <tr>
-    <td>{{ e.hostname or '-' }}</td>
-    <td class="mono">{{ e.ip or '-' }}</td>
-    <td class="mono muted">{{ e.mac }}</td>
+    {{ ui.endpoint_cells(e) }}
     <td class="mono">{{ e.interface or '-' }}</td>
     <td class="mono">{{ e.vlan or '-' }}</td>
   </tr>

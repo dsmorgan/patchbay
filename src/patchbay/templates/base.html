@@ -47,7 +47,8 @@
   <div class="rail-group">
     <div class="rail-heading"><span class="rail-heading-text">{{ label }}</span></div>
     {% for href, name, icon, desc in entries %}
-    {% set on = (path == "/" or path.startswith("/device/")) if href == "/"
+    {% set on = (path == "/" or path.startswith("/device/")
+                or path in ("/ports", "/clients", "/guests")) if href == "/"
                 else (path == href or path.startswith(href ~ "/")) %}
     <a class="rail-tab{{ ' on' if on }}" href="{{ href }}" title="{{ desc }}"
        data-name="{{ name }}" data-desc="{{ desc }}"{% if on %} aria-current="page"{% endif %}>
@@ -82,7 +83,8 @@
 {% set path = request.url.path %}
 {% set nav = namespace(title="", desc="") %}
 {% for label, entries in NAV %}{% for href, name, icon, desc in entries %}
-  {% set on = (path == "/" or path.startswith("/device/")) if href == "/"
+  {% set on = (path == "/" or path.startswith("/device/")
+                or path in ("/ports", "/clients", "/guests")) if href == "/"
             else (path == href or path.startswith(href ~ "/")) %}
   {% if on %}
     {% set nav.title = name %}{% set nav.desc = desc %}

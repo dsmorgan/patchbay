@@ -153,6 +153,20 @@
       transition: max-width 0.18s ease, opacity 0.12s ease, visibility 0.18s; }
   }
   main { padding: 1.2rem 1.4rem 3rem; max-width: 1200px; margin: 0 auto; }
+  /* filter chips: /alerts and the aggregate views (#26,#28). Filtered state
+     always lives in the URL, so a chip is a link, not a control. */
+  .filters { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center;
+             margin: 0 0 1rem; }
+  .fgroup { display: inline-flex; gap: 0.4rem; margin-left: 0.6rem;
+            padding-left: 1rem; border-left: 1px solid var(--grid); }
+  .fchip { font-size: 0.78rem; padding: 0.12rem 0.7rem; border-radius: 999px;
+           border: 1px solid var(--line); color: var(--muted); }
+  .fchip:hover { text-decoration: none; background: var(--hover); }
+  .fchip.on { color: var(--ink); border-color: var(--accent); }
+  .fchip.crit { color: var(--crit); }
+  .fchip.warn { color: var(--warn); }
+  .fchip.crit.on { border-color: var(--crit); }
+  .fchip.warn.on { border-color: var(--warn); }
   /* ---- page header: the question this page answers, and its controls. Title
      and purpose come from NAV (web.py), so the rail tooltip and the page say
      the same thing; a breadcrumb appears only on drill-downs. ---- */

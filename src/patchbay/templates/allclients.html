@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}all clients — patchbay{% endblock %}
+{% block page_title %}All AP clients{% endblock %}
+{% block purpose %}Every wireless client across the access points{% endblock %}
+{% block main %}
+
+<div class="filters">
+  <a class="fchip {{ 'on' if not show_all }}" href="/clients">active ({{ n_active }})</a>
+  <a class="fchip {{ 'on' if show_all }}" href="/clients?state=all">all ({{ n_total }})</a>
+</div>
+
+{% if rows %}
+<div class="scroll">
+<table>
+  <tr><th>AP</th><th>Hostname</th><th>IP</th><th>MAC</th><th>SSID</th><th>VLAN</th><th>Seen</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="/device/{{ r.e.device | urlencode }}">{{ r.e.device }}</a></td>
+    {{ ui.endpoint_cells(r.e) }}
+    <td>{{ r.e.interface or '-' }}</td>
+    <td class="mono">{{ r.e.vlan or '-' }}</td>
+    <td class="mono {{ 'muted' if not r.active }}">{% if r.mins is none %}-{% elif r.mins < 1 %}now{% else %}{{ r.mins | round | int }}m ago{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% elif n_total %}
+<p class="muted">No client seen in the last {{ STALE_MIN }} minutes —
+<a href="/clients?state=all">show all {{ n_total }}</a>.</p>
+{% else %}
+<p class="muted">No wireless clients yet — they appear once an AP source
+(UniFi) reports them.</p>
+{% endif %}
+
+{% endblock %}

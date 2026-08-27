@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}all guests — patchbay{% endblock %}
+{% block page_title %}All guests{% endblock %}
+{% block purpose %}Every VM across the hypervisors{% endblock %}
+{% block main %}
+
+<div class="filters">
+  <a class="fchip {{ 'on' if not show_all }}" href="/guests">running ({{ n_running }})</a>
+  <a class="fchip {{ 'on' if show_all }}" href="/guests?state=all">all ({{ n_total }})</a>
+</div>
+
+{% if guests %}
+<div class="scroll">
+<table>
+  <tr><th>Host</th><th>VM</th><th>IP</th><th>Guest OS</th><th>State</th></tr>
+  {% for v in guests %}
+  <tr>
+    <td><a href="/device/{{ v.parent | urlencode }}">{{ v.parent }}</a></td>
+    {{ ui.guest_cells(v) }}
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% elif n_total %}
+<p class="muted">Nothing is running —
+<a href="/guests?state=all">show all {{ n_total }}</a>.</p>
+{% else %}
+<p class="muted">No guests yet — they appear once a hypervisor source
+(vSphere) reports its VMs.</p>
+{% endif %}
+
+{% endblock %}

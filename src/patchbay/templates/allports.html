@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}all ports — patchbay{% endblock %}
+{% block page_title %}All ports{% endblock %}
+{% block purpose %}Every physical port across switches, routers, and firewalls{% endblock %}
+{% block main %}
+
+<div class="filters">
+  <a class="fchip {{ 'on' if not show_all }}" href="/ports">up ({{ n_up }})</a>
+  <a class="fchip {{ 'on' if show_all }}" href="/ports?state=all">all ({{ n_total }})</a>
+</div>
+
+{% if groups %}
+<div class="scroll">
+<table>
+  <tr><th>Device</th><th>Port</th><th>Oper</th><th>Admin</th><th>Speed</th><th>802.1Q</th><th>MAC</th><th>Description</th><th>Endpoints</th></tr>
+  {% for g in groups %}
+  {% for p in g.ports %}
+  {% set vp = g.pv.get(p.name.removeprefix("ethernet")) or g.pv.get(p.name) %}
+  {% set pr = g.pr.get(p.name.removeprefix("ethernet")) or g.pr.get(p.name) %}
+  {% set n_eps = g.eps.get(p.name) or g.eps.get(p.name.removeprefix("ethernet")) %}
+  <tr>
+    <td><a href="/device/{{ g.dev | urlencode }}">{{ g.dev }}</a></td>
+    {# graphs stay per-device: the port name walks you to the page that has them #}
+    <td class="mono"><a href="/device/{{ g.dev | urlencode }}" title="ports and graphs on {{ g.dev }}">{{ p.name }}</a></td>
+    {{ ui.port_cells(p, vp, pr, g.caps.get(p.name)) }}
+    <td class="mono">{% if n_eps %}{{ n_eps }}{% else %}<span class="muted">·</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  {% endfor %}
+</table>
+</div>
+{% elif n_total %}
+<p class="muted">All {{ n_total }} ports are down —
+<a href="/ports?state=all">show them</a>.</p>
+{% else %}
+<p class="muted">No fabric ports yet — they appear once a switch, router, or
+firewall source reports interfaces.</p>
+{% endif %}
+
+{% endblock %}

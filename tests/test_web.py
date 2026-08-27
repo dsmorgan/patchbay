@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 
 from patchbay import db as pdb
 
-PAGES = ["/", "/alerts", "/topology", "/vlans", "/drift", "/patchpanel",
-         "/ops", "/snapshots"]
+PAGES = ["/", "/alerts", "/ports", "/clients", "/guests", "/topology",
+         "/vlans", "/drift", "/patchpanel", "/ops", "/snapshots"]
 
 
 @pytest.fixture()
@@ -66,6 +66,9 @@ def test_pages_carry_a_header(clean_env, tmp_path, client):
     expect_h1 = {
         "/": "Overview",
         "/alerts": "Alerts",
+        "/ports": "All ports",
+        "/clients": "All AP clients",
+        "/guests": "All guests",
         "/topology": "Topology",
         "/vlans": "VLANs",
         "/drift": "Drift",
@@ -331,11 +334,11 @@ def test_empty_sections_are_hidden(clean_env, tmp_path, client):
     # answers it now), so no heading text for it exists to check.
     body = client.get("/").text
     for heading in ("Fabric — switches, routers, and firewalls", "Access points"):
-        assert f"<h2>{heading}</h2>" not in body
+        assert f"<h2>{heading}" not in body
     assert "<h2>Links</h2>" not in body
     seed(str(tmp_path / "test.db"))
     body = client.get("/").text
-    assert "<h2>Fabric — switches, routers, and firewalls</h2>" in body
+    assert "<h2>Fabric — switches, routers, and firewalls" in body
     assert "<h2>Access points</h2>" not in body   # the seed has no APs
     assert "<h2>Links</h2>" not in body
 
@@ -649,6 +652,75 @@ def test_overview_hides_the_strip_when_nothing_could_be_checked(client):
     # nothing honest to say, so it says nothing
     body = client.get("/").text
     assert '<section class="attention">' not in body
+
+
+def _aggregate_db(tmp_path):
+    """seed() plus a down port, an AP with one fresh and one stale client,
+    and a stopped VM — one of each thing the aggregate filters hide."""
+    dbp = str(tmp_path / "test.db")
+    seed(dbp)
+    c = sqlite3.connect(dbp)
+    c.row_factory = sqlite3.Row
+    sid = c.execute("SELECT id FROM devices WHERE name = 'sw1'").fetchone()[0]
+    pdb.upsert_interface(c, device_id=sid, name="1/0/2", oper_status="down",
+                         speed_bps=1_000_000_000, description="spare")
+    pdb.upsert_device(c, name="ap1", source="unifi", role="ap", status="up")
+    pdb.upsert_endpoint(c, mac="02:00:00:00:00:01", source="unifi",
+                        hostname="phone", ip="192.0.2.50", device="ap1",
+                        interface="lab-wifi", vlan=24)
+    pdb.upsert_endpoint(c, mac="02:00:00:00:00:02", source="unifi",
+                        hostname="tablet", ip="192.0.2.51", device="ap1",
+                        interface="lab-wifi", vlan=24)
+    c.execute("UPDATE endpoints SET last_seen = last_seen - 3600 "
+              "WHERE mac = '02:00:00:00:00:02'")
+    pdb.upsert_device(c, name="vm-b", source="vsphere", role="vm",
+                      parent="hyp1", status="down")
+    c.commit(); c.close()
+    return dbp
+
+
+def test_aggregate_ports(clean_env, tmp_path, client):
+    # issue #26: every fabric port on one page, Device column linking home,
+    # Up by default, ?state=all addressable in the URL
+    _aggregate_db(tmp_path)
+    body = client.get("/ports").text
+    assert 'href="/device/sw1"' in body
+    assert "1/0/1" in body and "uplink [3]" in body
+    assert "1/0/2" not in body                        # down port hidden
+    every = client.get("/ports?state=all").text
+    assert "1/0/2" in every and "spare" in every
+    # entry link rides the Overview section heading
+    assert 'href="/ports">all ports →</a>' in client.get("/").text
+
+
+def test_aggregate_clients(clean_env, tmp_path, client):
+    _aggregate_db(tmp_path)
+    body = client.get("/clients").text
+    assert "phone" in body and 'href="/device/ap1"' in body
+    assert "lab-wifi" in body
+    assert "tablet" not in body                       # stale client hidden
+    every = client.get("/clients?state=all").text
+    assert "tablet" in every
+    assert 'href="/clients">all clients →</a>' in client.get("/").text
+
+
+def test_aggregate_guests(clean_env, tmp_path, client):
+    _aggregate_db(tmp_path)
+    body = client.get("/guests").text
+    assert "vm-a" in body and 'href="/device/hyp1"' in body
+    assert "vm-b" not in body                         # stopped VM hidden
+    every = client.get("/guests?state=all").text
+    assert "vm-b" in every
+    assert 'href="/guests">all guests →</a>' in client.get("/").text
+
+
+def test_aggregates_degrade_on_empty_db(client):
+    # a category with no data renders a said-out-loud empty state, and the
+    # Overview shows no entry links because the headings themselves are gone
+    assert "No fabric ports yet" in client.get("/ports").text
+    assert "No wireless clients yet" in client.get("/clients").text
+    assert "No guests yet" in client.get("/guests").text
+    assert "all ports →" not in client.get("/").text
 
 
 def _slow_link_db(tmp_path):

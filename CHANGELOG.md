@@ -10,6 +10,18 @@ put.
 
 ### Added
 
+- **Aggregate views: all ports, all AP clients, all guests**
+  ([#26](https://github.com/dsmorgan/patchbay/issues/26)). "Show me every
+  up port on the fabric" no longer means a device-by-device tour: `/ports`
+  lists every physical port across switches, routers, and firewalls
+  (up by default), `/clients` every wireless client (active within the
+  staleness window by default), and `/guests` every VM (running by
+  default) — each with a device column linking home, an `?state=all`
+  filter addressable in the URL, and an entry link on its Overview
+  section heading. Row cells render through shared macros in `_ui.html`,
+  the same ones the per-device tables now use, so the two cannot drift;
+  port graphs stay on the device page, one click away.
+
 - **Attention gets a real section, and a page of its own**
   ([#28](https://github.com/dsmorgan/patchbay/issues/28)). The Overview's
   attention list is now a distinct bordered section with a heading, a

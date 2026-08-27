@@ -7,3 +7,30 @@
 {% macro nicon(key, cls="") -%}
 <svg class="rail-icon{{ ' ' ~ cls if cls }}" viewBox="0 0 18 18" aria-hidden="true" focusable="false"><path d="{{ NAV_ICONS[key] }}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
 {%- endmacro %}
+{# shared row cells (issue #26): the device page's tables and the aggregate
+   views render the same facts through the same macros, so the two cannot
+   drift. Each macro emits <td>s only — the caller owns the row and any
+   page-specific columns around them. #}
+{% macro port_cells(p, vp, pr, cap) -%}
+<td><span class="dot {{ 'up' if p.oper_status == 'up' else 'down' }}"></span>{{ p.oper_status or '?' }}</td>
+    <td class="muted">{{ p.admin_status or '-' }}</td>
+    <td class="mono">{{ p.speed_bps | speed }}{% if cap %} <span class="muted">({{ cap | speed }})</span>{% endif %}</td>
+    <td class="mono">{% if pr and pr[0] == 'monitor-dst' %}<span
+        style="color: var(--r-firewall)" title="{{ pr[1] }} — a mirror destination transmits copies of other ports' traffic, so its own MAC table and neighbor reports describe nothing">port mirror</span>{%
+      elif vp %}<span title="{{ vp.why }}">{% if vp.mode == 'trunk' %}<span style="color: var(--accent)">trunk</span>{% else %}<span class="muted">access</span>{% endif %} {{ vp.text }}</span>{%
+      else %}<span class="muted" title="no VLAN configuration parsed for this port, and its address doesn't fall in a known subnet">-</span>{% endif %}</td>
+    <td class="mono muted">{{ p.mac or '-' }}</td>
+    <td class="muted">{{ p.description or '' }}{% if pr and pr[0] == 'monitor-src' %}
+      <span style="color: var(--r-firewall)" title="{{ pr[1] }}">· mirrored</span>{% endif %}</td>
+{%- endmacro %}
+{% macro guest_cells(v) -%}
+<td><span class="dot {{ v.status }}"></span>{{ v.name }}</td>
+    <td class="mono">{{ v.mgmt_ip or '-' }}</td>
+    <td class="muted">{{ v.os or '-' }}</td>
+    <td>{{ v.status }}</td>
+{%- endmacro %}
+{% macro endpoint_cells(e) -%}
+<td>{{ e.hostname or '-' }}</td>
+    <td class="mono">{{ e.ip or '-' }}</td>
+    <td class="mono muted">{{ e.mac }}</td>
+{%- endmacro %}

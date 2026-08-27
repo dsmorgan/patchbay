@@ -7,7 +7,7 @@
    renders the checks' current state; the phase-6 engine (#22) extends
    these rows with fired/cleared history. #}
 
-<div class="alert-filters">
+<div class="filters">
   <a class="fchip {{ 'on' if not category and not severity }}" href="/alerts">all</a>
   <span class="fgroup">
   {% for cat, label in categories.items() %}
@@ -50,18 +50,6 @@ their sources report data. <a href="/ops">Ops</a> shows what is configured.</p>
 {% endif %}
 
 <style>
-  .alert-filters { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center;
-                   margin: 0 0 1rem; }
-  .fgroup { display: inline-flex; gap: 0.4rem; margin-left: 0.6rem;
-            padding-left: 1rem; border-left: 1px solid var(--grid); }
-  .fchip { font-size: 0.78rem; padding: 0.12rem 0.7rem; border-radius: 999px;
-           border: 1px solid var(--line); color: var(--muted); }
-  .fchip:hover { text-decoration: none; background: var(--hover); }
-  .fchip.on { color: var(--ink); border-color: var(--accent); }
-  .fchip.crit { color: var(--crit); }
-  .fchip.warn { color: var(--warn); }
-  .fchip.crit.on { border-color: var(--crit); }
-  .fchip.warn.on { border-color: var(--warn); }
   .attn-clear { margin: 0; font-size: 0.85rem; color: var(--muted); }
   .attn-clear::before { content: "●  "; color: var(--ok); font-size: 0.7rem; }
 </style>
