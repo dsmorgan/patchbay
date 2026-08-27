@@ -664,3 +664,48 @@ def test_topology_page_renders_tier_bands(clean_env, tmp_path, client):
 
     # the simulation can now shrink further to fit a large map to the frame
     assert "scaleExtent([0.2, 3])" in body
+
+
+# --- poll-driven refresh (issue #6) ---
+
+def test_freshness_is_null_before_the_first_poll(client):
+    r = client.get("/api/freshness")
+    assert r.status_code == 200
+    assert r.json() == {"last_poll": None}
+
+
+def test_freshness_reports_the_last_poll_time(client, tmp_path):
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    pdb.init(c)
+    pdb.save_last_poll(c, ["[ok] test"])
+    c.commit()
+    c.close()
+    ts = client.get("/api/freshness").json()["last_poll"]
+    assert isinstance(ts, float) and ts > 0
+
+
+def test_pages_refresh_by_freshness_not_by_timer(client, tmp_path):
+    """The blind 60-second meta refresh is gone everywhere; every shell page
+    carries the freshness script instead, and the header age is tickable."""
+    seed(str(tmp_path / "test.db"))
+    for page in PAGES:
+        body = client.get(page).text
+        assert "http-equiv" not in body, page
+        assert "/api/freshness" in body, page
+    # the tickable header age renders once a source has reported
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    pdb.init(c)
+    pdb.save_raw(c, source="librenms", endpoint="devices", payload=[])
+    c.commit()
+    c.close()
+    assert 'id="agespan"' in client.get("/").text
+
+
+def test_fragile_pages_hold_the_refresh(client, tmp_path):
+    """Pages whose on-screen state a reload would destroy define the hold
+    hook; the plain dashboard does not (it reloads freely)."""
+    seed(str(tmp_path / "test.db"))
+    for page in ("/topology", "/ops", "/snapshots"):
+        assert "patchbayHold" in client.get(page).text, page
+    body = client.get("/").text
+    assert "window.patchbayHold = " not in body

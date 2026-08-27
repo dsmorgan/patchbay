@@ -953,6 +953,28 @@ async def save_position(request: Request):
     return {"ok": True}
 
 
+@app.get("/api/freshness")
+def api_freshness():
+    """One fact for the base shell's refresh script: when the last poll
+    finished (epoch seconds, null before the first poll ever). Pages reload
+    when this advances rather than on a blind timer — see base.html."""
+    import json as _json
+
+    conn = _conn()
+    try:
+        db.init(conn)
+        raw = db.get_state(conn, "last_poll")
+    finally:
+        conn.close()
+    ts = None
+    if raw:
+        try:
+            ts = _json.loads(raw).get("ts")
+        except ValueError:
+            ts = None
+    return {"last_poll": ts}
+
+
 @app.post("/api/positions/reset")
 def reset_positions():
     conn = _conn()

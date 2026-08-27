@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block refresh %}{% endblock %}{# results on screen must not vanish mid-read #}
+
 {% block title %}snapshots — patchbay{% endblock %}
 {% block main %}
 
@@ -49,4 +49,10 @@ snapshot is for when this host is down.</p>
 {% endif %}
 </div>
 
+
+<script>
+// action output on screen must not vanish mid-read — hold the poll-driven
+// refresh while the #out pane (from _actions.html) is visible
+window.patchbayHold = () => document.getElementById("out")?.style.display === "";
+</script>
 {% endblock %}

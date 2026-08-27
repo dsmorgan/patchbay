@@ -1,6 +1,5 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
-{% block refresh %}{% endblock %}{# soft refresh below — a hard meta refresh closes open graphs #}
 {% block title %}{{ d.name }} — patchbay{% endblock %}
 {% block page_title %}{{ d.name }}{% endblock %}
 {% block breadcrumb %}<nav class="breadcrumb"><a href="/">Overview</a> / {{ d.name }}</nav>{% endblock %}
@@ -254,14 +253,12 @@ document.querySelectorAll("a.ep").forEach(a => a.addEventListener("click", e => 
   tr.after(row);
 }));
 
-// soft auto-refresh: keep the page current like every other page, but never
-// while a graph is open or the tab is hidden — a reload would close it
-setInterval(() => {
+// the base shell's poll-driven refresh asks before reloading: never while a
+// graph, endpoint row, or the health panel is open — a reload would close it
+window.patchbayHold = () => {
   const healthOpen = document.getElementById("health")?.style.display === "";
-  if (!document.querySelector(".graphrow, .eprow") && !healthOpen && !document.hidden && !window._hold) {
-    location.reload();
-  }
-}, 60000);
+  return !!(document.querySelector(".graphrow, .eprow") || healthOpen || window._hold);
+};
 </script>
 
 {% endblock %}

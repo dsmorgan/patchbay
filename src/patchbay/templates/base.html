@@ -4,7 +4,6 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-{% block refresh %}<meta http-equiv="refresh" content="60">{% endblock %}
 <title>{% block title %}patchbay{% endblock %}</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
 {% include "_style.html" %}
@@ -20,9 +19,9 @@
      source sets it, so a stuck collector shows up instead of hiding behind
      a healthy one; per-source detail is in the tooltip and on /ops. #}
   <span class="ages">{%- if ages %}{% set oldest = ages.values() | max %}
-    <span class="{{ 'stale' if oldest > STALE_MIN }}"
+    <span id="agespan" class="{{ 'stale' if oldest > STALE_MIN }}" data-mins="{{ oldest }}"
           title="time since each source last returned data — {% for s, m in ages.items() %}{{ s }} {{ m | round | int }}m{{ ' · ' if not loop.last }}{% endfor %}"
-      >last polled {{ oldest | round | int }} min ago</span>
+      >last polled <span id="agemin">{{ oldest | round | int }}</span> min ago</span>
     {%- endif %}</span>
 </header>
 {% if not bare %}
@@ -115,6 +114,61 @@
     apply();
   }));
   apply();
+})();
+</script>
+{% endif %}
+{% if not bare %}
+{# Poll-driven refresh (issue #6). The old 60-second meta refresh reloaded
+   into identical data, blind to visibility and poll cadence. This script
+   reloads only when /api/freshness says a poll actually landed, does nothing
+   while the tab is hidden, checks immediately when the tab becomes visible
+   again, and defers while the page says it's busy — a page opts out of a
+   moment by defining window.patchbayHold() returning true (device: an open
+   graph; ops/snapshots: action output on screen; confignode: always). A
+   focused form control always holds, so typing is never reloaded away. The
+   header's "last polled N min ago" ticks client-side between refreshes so
+   it stays honest even while a reload is held. #}
+<script>
+(() => {
+  const STALE = {{ STALE_MIN }};
+
+  // the header age keeps time on its own between reloads
+  const span = document.getElementById("agespan");
+  if (span) {
+    const base = parseFloat(span.dataset.mins), t0 = Date.now();
+    setInterval(() => {
+      const mins = base + (Date.now() - t0) / 60000;
+      document.getElementById("agemin").textContent = Math.round(mins);
+      span.classList.toggle("stale", mins > STALE);
+    }, 30000);
+  }
+
+  const held = () => {
+    const a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+    return !!(window.patchbayHold && window.patchbayHold());
+  };
+
+  let last, pending = false;
+  async function check() {
+    if (document.hidden) return;
+    if (pending && !held()) { location.reload(); return; }
+    try {
+      const r = await fetch("/api/freshness", {cache: "no-store"});
+      if (!r.ok) return;
+      const ts = (await r.json()).last_poll;
+      if (last === undefined) { last = ts; return; }   // baseline
+      if (ts !== null && ts !== last) {
+        last = ts;
+        if (held()) { pending = true; } else { location.reload(); }
+      }
+    } catch (e) {}   // transient network trouble — next tick tries again
+  }
+  check();
+  setInterval(check, 30000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) check();   // a returning tab catches up right away
+  });
 })();
 </script>
 {% endif %}

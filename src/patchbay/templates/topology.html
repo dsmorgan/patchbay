@@ -1,8 +1,19 @@
 {% extends "base.html" %}
-{% block refresh %}{% endblock %}{# no page auto-refresh — it would reset the layout #}
 {% block title %}topology — patchbay{% endblock %}
 {% block controls %}<a href="#" id="resetlayout" class="muted" title="forget every pinned position">reset layout</a>{% endblock %}
 {% block main %}
 {% set snapshot = false %}
 {% include "_topomap.html" %}
+
+<script>
+// reload would rerun the simulation and drop zoom/pan — fine on an untouched
+// map, jarring mid-inspection. First pointer or wheel on the map holds it.
+(() => {
+  const topo = document.getElementById("topo");
+  const touch = () => { window._topoTouched = 1; };
+  topo?.addEventListener("pointerdown", touch);
+  topo?.addEventListener("wheel", touch, {passive: true});
+  window.patchbayHold = () => !!window._topoTouched;
+})();
+</script>
 {% endblock %}
