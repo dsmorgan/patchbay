@@ -16,6 +16,7 @@
     --ok: #55b380; --warn: #cfa049; --crit: #d4715c;
     /* role palette — hues deliberately distinct from the status colors */
     --r-switch: #4db8c2; --r-firewall: #c792ea; --r-hyp: #82aaff; --r-ap: #d16ba5;
+    --r-router: #dd9046;
     /* tones of the neutrals above, not new hues. --ink2 is a heading one
        step under body ink; --hover and --selected are the two lightness
        steps a rail entry climbs; --grid is the faint rule between cells, so
@@ -153,6 +154,7 @@
   .card .sub { color: var(--muted); font-size: 0.8rem; }
   /* role-framed cards echo the topology node boxes */
   .card.switch { border-color: var(--r-switch); }
+  .card.router { border-color: var(--r-router); }
   .card.firewall { border-color: var(--r-firewall); }
   .card.hypervisor { border-color: var(--r-hyp); }
   .card.ap { border-color: var(--r-ap); }
@@ -160,6 +162,7 @@
   .card .cicon { position: absolute; top: 0.75rem; right: 0.9rem;
                  width: 18px; height: 18px; }
   .card.switch .cicon { color: var(--r-switch); }
+  .card.router .cicon { color: var(--r-router); }
   .card.firewall .cicon { color: var(--r-firewall); }
   .card.hypervisor .cicon { color: var(--r-hyp); }
   .card.ap .cicon { color: var(--r-ap); }

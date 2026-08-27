@@ -104,12 +104,14 @@ def hardware(d) -> str:
 templates.env.filters["hw"] = hardware
 
 # role icons: the standard diagram vocabulary, drawn as 18x18 stroke paths
-# (opposing arrows = switch, bricks = firewall, layers = hypervisor,
-#  radio arcs = AP, RJ45 jack = wired host) — shared by the topology map,
-# its legend, and the device cards
+# (opposing arrows = switch, the same arrows circled = router, bricks =
+#  firewall, layers = hypervisor, radio arcs = AP, RJ45 jack = wired host)
+# — shared by the topology map, its legend, and the device cards
 ICONS = {
     "switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5",
     "unmanaged-switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5",
+    "router": "M2 9a7 7 0 0014 0A7 7 0 002 9z M5 6.6h6.8 M11.8 6.6L10 4.8 M11.8 6.6L10 8.4 "
+              "M13 11.4H6.2 M6.2 11.4L8 9.6 M6.2 11.4L8 13.2",
     "firewall": "M1 3h16v12H1z M1 9h16 M9 3v6 M5 9v6 M13 9v6",
     "hypervisor": "M9 2l7 3.5L9 9 2 5.5z M2 9l7 3.5 7-3.5 M2 12.5L9 16l7-3.5",
     "ap": "M9 13.2a1.2 1.2 0 100 .01 M5.5 10a5 5 0 017 0 M3 7a8.5 8.5 0 0112 0",
@@ -390,7 +392,8 @@ def dashboard(request: Request):
         exceptions, checked = _exceptions(conn, settings)
         gateways = conn.execute("SELECT * FROM gateways ORDER BY name").fetchall()
         fabric = conn.execute(
-            "SELECT * FROM devices WHERE role IN ('switch','firewall') ORDER BY role, name"
+            "SELECT * FROM devices WHERE role IN ('switch','router','firewall') "
+            "ORDER BY role, name"
         ).fetchall()
         aps = conn.execute(
             "SELECT * FROM devices WHERE role = 'ap' ORDER BY status != 'up', name"
@@ -472,8 +475,8 @@ def dashboard(request: Request):
         conn.close()
 
 
-TOPO_ROLES = ("firewall", "switch", "hypervisor", "ap", "unmanaged-switch")
-RANK = {"cloud": -1, "firewall": 0, "switch": 1,
+TOPO_ROLES = ("firewall", "router", "switch", "hypervisor", "ap", "unmanaged-switch")
+RANK = {"cloud": -1, "firewall": 0, "router": 0, "switch": 1,
         "hypervisor": 2, "ap": 2, "unmanaged-switch": 2, "host": 2}
 
 

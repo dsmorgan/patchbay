@@ -285,14 +285,44 @@ def test_empty_sections_are_hidden(clean_env, tmp_path, client):
     # not only on a first run. The Links table is gone outright (the map
     # answers it now), so no heading text for it exists to check.
     body = client.get("/").text
-    for heading in ("Fabric — switches and firewalls", "Access points"):
+    for heading in ("Fabric — switches, routers, and firewalls", "Access points"):
         assert f"<h2>{heading}</h2>" not in body
     assert "<h2>Links</h2>" not in body
     seed(str(tmp_path / "test.db"))
     body = client.get("/").text
-    assert "<h2>Fabric — switches and firewalls</h2>" in body
+    assert "<h2>Fabric — switches, routers, and firewalls</h2>" in body
     assert "<h2>Access points</h2>" not in body   # the seed has no APs
     assert "<h2>Links</h2>" not in body
+
+
+def test_routers_belong_to_the_fabric(clean_env, tmp_path, client):
+    # issue #27: a dedicated router gets a Fabric card, and a router VM
+    # (promoted role + parent, like a virtualized firewall) appears both in
+    # Fabric and folded under its hypervisor. On the map, routers sit in the
+    # Edge tier beside firewalls, with their own legend entry.
+    import patchbay.web as web
+
+    dbp = str(tmp_path / "test.db")
+    seed(dbp)
+    c = sqlite3.connect(dbp)
+    c.row_factory = sqlite3.Row
+    pdb.upsert_device(c, name="rtr1", source="librenms", role="router",
+                      mgmt_ip="192.0.2.3", status="up")
+    pdb.upsert_device(c, name="vyos1", source="vsphere", role="router",
+                      parent="hyp1", status="up")
+    c.commit(); c.close()
+
+    body = client.get("/").text
+    assert '<div class="card router">' in body
+    assert "rtr1" in body
+    # the router VM is a Fabric card *and* a guest row under hyp1
+    assert body.count("vyos1") >= 2
+
+    topo = client.get("/topology").text
+    assert "rtr1" in topo and "vyos1" in topo
+    assert 'data-role="router"' in topo          # legend entry
+    assert web.RANK["router"] == web.RANK["firewall"]   # Edge tier
+    assert web.ICONS["router"]                   # has a glyph of its own
 
 
 def test_every_connection_enforces_foreign_keys(clean_env, tmp_path):

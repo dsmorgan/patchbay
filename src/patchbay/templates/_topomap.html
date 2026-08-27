@@ -38,6 +38,7 @@
   .speedlab.vslow { fill: var(--crit); }   /* ≤10M */
   .node rect { fill: var(--card); stroke: var(--line); stroke-width: 1.4; }
   .node.switch rect { stroke: var(--r-switch); }
+  .node.router rect { stroke: var(--r-router); }
   .node.firewall rect { stroke: var(--r-firewall); }
   .node.hypervisor rect { stroke: var(--r-hyp); }
   .node.ap rect { stroke: var(--r-ap); }
@@ -55,6 +56,7 @@
   /* colored roles match the legend's full brightness; unmanaged/host stay
      dimmed with the base rule */
   .node.switch .ricon { stroke: var(--r-switch); opacity: 1; }
+  .node.router .ricon { stroke: var(--r-router); opacity: 1; }
   .node.firewall .ricon { stroke: var(--r-firewall); opacity: 1; }
   .node.hypervisor .ricon { stroke: var(--r-hyp); opacity: 1; }
   .node.ap .ricon { stroke: var(--r-ap); opacity: 1; }
@@ -168,6 +170,7 @@
   <span class="item" data-modes="wiring load vlan evidence">ports: <span class="mono" style="color: var(--accent); font-weight: 600">1/2/2</span> trunk · <span class="mono">1/1/5</span> access · <span class="mono" style="color: var(--r-firewall); font-weight: 600">1/0/14</span> port mirror · <span class="mono">[n]</span> patch panel</span>
   <span class="item" data-modes="wiring load vlan evidence">nodes:
     <svg class="licon" data-role="switch" style="color: var(--r-switch)"></svg> switch
+    <svg class="licon" data-role="router" style="color: var(--r-router)"></svg> router
     <svg class="licon" data-role="firewall" style="color: var(--r-firewall)"></svg> firewall
     <svg class="licon" data-role="hypervisor" style="color: var(--r-hyp)"></svg> VM host
     <svg class="licon" data-role="ap" style="color: var(--r-ap)"></svg> AP
@@ -223,7 +226,7 @@ const TIERS = (() => {
   }
   return p.get("layout") === "tiers";
 })();
-const CORE_ROLES = new Set(["cloud", "firewall", "switch", "hypervisor"]);
+const CORE_ROLES = new Set(["cloud", "firewall", "router", "switch", "hypervisor"]);
 const OFF_STATUS = new Set(["down", "notresponding", "disabled"]);
 
 // degree from the raw data, before d3 rewrites link endpoints into objects

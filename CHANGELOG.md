@@ -6,6 +6,20 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+
+- **Routers belong to the fabric**
+  ([#27](https://github.com/dsmorgan/patchbay/issues/27)). Devices with role
+  `router` now appear in the overview's Fabric section (heading updated to
+  say so), on the topology map in the Edge tier beside firewalls, in the
+  map's core-only filter and legend, and in normalize's network-role and
+  trunk-propagation sets. Routers get their own icon (the switch arrows,
+  circled) and card color. A routed VM behaves like a virtualized firewall:
+  a Fabric card of its own, still folded in under its hypervisor. No
+  collector emits the role yet — this makes the UI ready for one that does.
+
 ## [0.6.1] — 2026-08-27
 
 ### Fixed

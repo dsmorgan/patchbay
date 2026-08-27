@@ -23,7 +23,7 @@ from . import db
 # field conflict; later sources only fill gaps. 'vm' role never overrides a
 # network role (a firewall that happens to be a VM is still a firewall).
 SOURCE_PRIORITY = ["librenms", "unifi", "opnsense", "vsphere", "phpipam"]
-NETWORK_ROLES = {"switch", "firewall", "ap", "hypervisor"}
+NETWORK_ROLES = {"switch", "router", "firewall", "ap", "hypervisor"}
 
 
 def canonical_name(name: str) -> str:
@@ -476,7 +476,8 @@ def _propagate_vlans(conn: sqlite3.Connection,
     filters = {**parsed, **(filters or {})}
     conn.execute("DELETE FROM device_vlans WHERE source = 'trunk'")
     fabric = {r["name"] for r in conn.execute(
-        "SELECT name FROM devices WHERE role IN ('switch','firewall','hypervisor','ap')")}
+        "SELECT name FROM devices "
+        "WHERE role IN ('switch','router','firewall','hypervisor','ap')")}
     carried: dict[str, set[int]] = {}
     for r in conn.execute("SELECT device, vid FROM device_vlans"):
         carried.setdefault(r["device"], set()).add(r["vid"])
