@@ -68,8 +68,7 @@ container and opens it in your browser; Ctrl-C tears it down, and nothing is
 written to disk:
 
 ```sh
-./scripts/demo.py                             # from a checkout (python scripts\demo.py on Windows)
-curl -fsSL https://raw.githubusercontent.com/dsmorgan/patchbay/main/scripts/demo.py | python3 -
+./scripts/demo.py                             # python scripts\demo.py on Windows
 ```
 
 It pulls the published image, runs `patchbay demo` inside it, waits for the UI

@@ -10,11 +10,7 @@ removes the container; nothing is written to the host.
     ./scripts/demo.py --build         # the code in this checkout instead
     ./scripts/demo.py -d              # leave it running; --stop removes it
 
-Needs Docker and Python 3.9+, not a patchbay install — it also runs straight
-from the network, no clone: curl -fsSL <raw url> | python3 -
-
-scripts/try.py reuses the container plumbing here to run any branch or
-worktree the same way.
+Needs Docker and Python 3.9+, not a patchbay install.
 """
 
 from __future__ import annotations
