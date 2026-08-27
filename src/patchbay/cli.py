@@ -65,6 +65,14 @@ def cmd_poll(args: argparse.Namespace) -> int:
             conn.rollback()
             say(f"[fail] normalize: {e}", err=True)
             rc = 1
+        # first-seen bookkeeping for the attention items (issue #28): the
+        # poll is when patchbay notices, so the poll is what timestamps it
+        try:
+            from .attention import record_first_seen
+
+            record_first_seen(conn, settings)
+        except Exception as e:
+            say(f"[warn] attention bookkeeping: {e}", err=True)
         db.save_last_poll(conn, lines)
         try:
             from . import snapshot as snap

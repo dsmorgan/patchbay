@@ -20,6 +20,9 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from . import db
+from .attention import (CATEGORIES, STALE_MIN, attention_items, drift_report,
+                        human_speed, ip_sort_key, ipam_link, source_ages,
+                        speed_tier, stamp_first_seen)
 from .config import load_settings
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -83,12 +86,6 @@ BUILD = _build_version()
 templates.env.globals["BUILD"] = BUILD
 
 
-def human_speed(bps) -> str:
-    if not bps:
-        return "-"
-    return f"{bps / 1e9:g}G" if bps >= 1_000_000_000 else f"{bps / 1e6:g}M"
-
-
 templates.env.filters["speed"] = human_speed
 
 
@@ -132,6 +129,8 @@ NAV = [
     ("Network", [
         ("/", "Overview", "overview",
          "Every device, live: the fabric, access points, hypervisors and their guests"),
+        ("/alerts", "Alerts", "alerts",
+         "Everything the checks flag, in one filterable list — and since when"),
         ("/topology", "Topology", "topology",
          "How it's wired: the physical map, with VLAN and load overlays"),
         ("/vlans", "VLANs", "vlans",
@@ -173,6 +172,8 @@ NAV_ICONS = {
     "chevrons-left": "M10 4L5.5 9 10 14 M15 4l-4.5 5 4.5 5",
     "chevrons-right": "M8 4l4.5 5L8 14 M3 4l4.5 5L3 14",
     "pin": "M6 2h6 M9 2v4 M7 6h4l2 4H5z M9 10v6",
+    "alerts": "M9 2.2a4.8 4.8 0 014.8 4.8v3.4l1.7 2.4H2.5l1.7-2.4V7A4.8 4.8 0 019 2.2z "
+              "M7.2 15.2a1.9 1.9 0 003.6 0",
 }
 templates.env.globals["NAV_ICONS"] = NAV_ICONS
 
@@ -205,183 +206,35 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
-STALE_MIN = 15  # same rule the top bar uses (base.html hardcodes this today)
 templates.env.globals["STALE_MIN"] = STALE_MIN   # the top bar uses the same threshold
 
 
-def _age(conn: sqlite3.Connection) -> dict[str, float]:
-    rows = conn.execute(
-        "SELECT source, (strftime('%s','now') - MAX(fetched_at)) / 60.0 AS mins "
-        "FROM raw_payloads GROUP BY source"
-    ).fetchall()
-    return {r["source"]: round(r["mins"], 1) for r in rows}
 
 
-def speed_tier(bps: int | None) -> str:
-    """"" | "slow" (<=100M) | "vslow" (<=10M) — the one shared threshold the
-    map's edge styling (`edge_speed`) and the overview's slow-link exception
-    both apply, so a link that reads "slow" on the map reads the same way
-    here."""
-    if not bps:
-        return ""
-    return "vslow" if bps <= 10_000_000 else "slow" if bps <= 100_000_000 else ""
+def _since(ts: float | None) -> str:
+    """How long an attention item has been firing, from its poll-recorded
+    first-seen. None means the poll hasn't recorded it yet — just noticed."""
+    if ts is None:
+        return "new"
+    mins = max(0, (db.now() - ts) / 60)
+    if mins < 60:
+        return f"{mins:.0f}m"
+    if mins < 60 * 48:
+        return f"{mins / 60:.0f}h"
+    return f"{mins / 1440:.0f}d"
 
 
-def drift_report(conn: sqlite3.Connection, settings) -> dict:
-    """Extracted from /drift so the overview's exceptions strip can ask "is
-    IPAM in sync?" without duplicating the query. /drift renders this dict
-    unchanged (plus its own `ages`); / uses only `len(conflicts)` and
-    `have_ipam`."""
-    from .normalize import canon_mac
-
-    nets = []
-    for r in conn.execute("SELECT cidr FROM subnets"):
-        try:
-            nets.append((ipaddress.ip_network(r["cidr"], strict=False), r["cidr"]))
-        except ValueError:
-            pass
-
-    def subnet_of(ip: str) -> str | None:
-        try:
-            a = ipaddress.ip_address(ip)
-        except ValueError:
-            return None
-        best = None
-        for net, cidr in nets:
-            if a in net and (best is None or net.prefixlen > best[0].prefixlen):
-                best = (net, cidr)
-        return best[1] if best else None
-
-    ipam = {r["ip"]: r for r in conn.execute("SELECT * FROM ipam_addresses")}
-    # best live record per IP (prefer one that knows a hostname)
-    observed: dict[str, sqlite3.Row] = {}
-    for r in conn.execute(
-            "SELECT * FROM endpoints WHERE ip IS NOT NULL ORDER BY last_seen"):
-        cur = observed.get(r["ip"])
-        if cur is None or (not cur["hostname"] and r["hostname"]):
-            observed[r["ip"]] = r
-
-    def short(h: str | None) -> str:
-        return (h or "").split(".")[0].lower()
-
-    undocumented, external, conflicts, in_sync = [], [], [], 0
-    for ip in sorted(observed, key=_ip_key):
-        e, doc = observed[ip], ipam.get(ip)
-        if doc is None:
-            entry = {
-                "ip": ip, "hostname": e["hostname"], "mac": e["mac"],
-                "seen_at": (f"{e['device']} {e['interface'] or ''}".strip()
-                            if e["device"] else e["source"]),
-                "subnet": subnet_of(ip),
-            }
-            # outside every documented subnet = WAN-side neighbors (dynamic
-            # carrier addresses) — report as info, not as drift
-            (undocumented if entry["subnet"] else external).append(entry)
-            continue
-        clean = True
-        ipam_h, live_h = short(doc["hostname"]), short(e["hostname"])
-        # prefix match = same name truncated somewhere (DHCP option 12 is
-        # commonly clipped), not drift
-        hostname_ok = (not ipam_h or not live_h
-                       or ipam_h.startswith(live_h) or live_h.startswith(ipam_h))
-        if not hostname_ok:
-            conflicts.append({"ip": ip, "kind": "hostname", "link": _ipam_link(settings, doc),
-                              "ipam": doc["hostname"], "live": e["hostname"]})
-            clean = False
-        if doc["mac"] and e["mac"] and canon_mac(doc["mac"]) != canon_mac(e["mac"]):
-            conflicts.append({"ip": ip, "kind": "mac", "link": _ipam_link(settings, doc),
-                              "ipam": doc["mac"], "live": e["mac"]})
-            clean = False
-        in_sync += clean
-    # "documented but quiet" only matters for addresses IPAM claims are
-    # fixed assets — DHCP-pool rows going quiet is normal, not drift
-    unseen, n_dhcp_quiet = [], 0
-    for ip in sorted(ipam, key=_ip_key):
-        if ip in observed:
-            continue
-        if (ipam[ip]["state"] or "") == "dhcp":
-            n_dhcp_quiet += 1
-        else:
-            unseen.append({**dict(ipam[ip]), "link": _ipam_link(settings, ipam[ip])})
-    have_ipam = bool(ipam)
-    return {
-        "undocumented": undocumented, "external": external, "unseen": unseen,
-        "n_dhcp_quiet": n_dhcp_quiet, "conflicts": conflicts,
-        "in_sync": in_sync, "have_ipam": have_ipam,
-    }
-
-
-def _exceptions(conn: sqlite3.Connection, settings) -> tuple[list[dict], list[str]]:
-    """The Overview's attention list: one flat, ordered list of items worth a
-    look, each linking to the page that owns the answer — not pre-categorized
-    cards, and never above the counts (issue #13). Rules only speak when they
-    can actually check something, so `checked` names only the checks that ran
-    and the all-clear line can only claim what it verified. Device state is
-    deliberately absent: the cards below ARE the device-state UI. Anything
-    here can be silenced by declaring it expected (PATCHBAY_EXPECT)."""
-    items: list[dict] = []
-    checked: list[str] = []
-
-    # slow-link: the better-known end's speed through speed_tier() — a link
-    # with no known speed is not slow, same rule the map uses. A port (or a
-    # whole device) declared expected keeps its legitimately-slow link quiet.
-    links = conn.execute("SELECT * FROM links ORDER BY a_device, a_interface").fetchall()
-    if links:
-        checked.append("no unexpected slow links")
-        speed_of: dict[tuple[str, str], int] = {}
-        for r in conn.execute(
-                "SELECT d.name AS dev, i.name AS iface, i.speed_bps FROM interfaces i "
-                "JOIN devices d ON d.id = i.device_id WHERE i.speed_bps > 0"):
-            speed_of[(r["dev"], r["iface"])] = r["speed_bps"]
-        for l in links:
-            bps = (speed_of.get((l["a_device"], l["a_interface"]))
-                   or speed_of.get((l["b_device"], l["b_interface"])))
-            tier = speed_tier(bps)
-            if not tier:
-                continue
-            names = {l["a_device"], l["b_device"],
-                     f"{l['a_device']}:{l['a_interface']}",
-                     f"{l['b_device']}:{l['b_interface']}"}
-            if names & settings.expected:
-                continue
-            items.append({
-                "severity": "crit" if tier == "vslow" else "warn",
-                "text": f"{l['a_device']} {l['a_interface']} ↔ "
-                        f"{l['b_device']} {l['b_interface']} runs at {human_speed(bps)}",
-                "href": f"/topology?focus={l['a_device']}",
-            })
-
-    # drift: only when the site has IPAM at all — no IPAM, no claim. One
-    # line; /drift owns the detail.
-    report = drift_report(conn, settings)
-    if report["have_ipam"]:
-        checked.append("IPAM in sync")
-        n = len(report["conflicts"])
-        if n:
-            items.append({
-                "severity": "warn",
-                "text": f"{n} IPAM conflict{'' if n == 1 else 's'} — "
-                        f"records and the network disagree",
-                "href": "/drift",
-            })
-
-    # stale-source: any source whose newest payload is older than STALE_MIN —
-    # same age the top bar already flags per-source. One line naming them.
-    ages = _age(conn)
-    if ages:
-        checked.append("every source fresh")
-        stale = sorted(((s, m) for s, m in ages.items() if m > STALE_MIN),
-                       key=lambda x: -x[1])
-        if stale:
-            named = ", ".join(f"{s} ({m:.0f}m)" for s, m in stale)
-            items.append({
-                "severity": "warn",
-                "text": f"stale source{'' if len(stale) == 1 else 's'}: {named}",
-                "href": "/ops",
-            })
-
-    items.sort(key=lambda i: i["severity"] != "crit")   # crit first, order kept
-    return items, checked
+def _attention_summary(items: list[dict]) -> list[dict]:
+    """Per-category counts for the strip, severity = the worst in the
+    category, in CATEGORIES order so the strip is stable across polls."""
+    out = []
+    for cat, label in CATEGORIES.items():
+        group = [i for i in items if i["category"] == cat]
+        if group:
+            out.append({"cat": cat, "label": label, "n": len(group),
+                        "sev": ("crit" if any(i["severity"] == "crit" for i in group)
+                                else "warn")})
+    return out
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -390,7 +243,11 @@ def dashboard(request: Request):
     try:
         db.init(conn)
         settings = load_settings()
-        exceptions, checked = _exceptions(conn, settings)
+        exceptions, checked = attention_items(conn, settings)
+        stamp_first_seen(conn, exceptions)
+        for it in exceptions:
+            it["since"] = _since(it["first_seen"])
+        attn_summary = _attention_summary(exceptions)
         gateways = conn.execute("SELECT * FROM gateways ORDER BY name").fetchall()
         fabric = conn.execute(
             "SELECT * FROM devices WHERE role IN ('switch','router','firewall') "
@@ -469,8 +326,37 @@ def dashboard(request: Request):
             "gateways": gateways, "fabric": fabric, "aps": aps,
             "hypervisors": hypervisors, "vms_by_host": vms_by_host,
             "orphan_vms": orphan_vms, "exceptions": exceptions, "checked": checked,
-            "counts": counts, "detail": detail, "sub": sub, "ages": _age(conn),
+            "attn_summary": attn_summary,
+            "counts": counts, "detail": detail, "sub": sub, "ages": source_ages(conn),
             "onboarding": onboarding,
+        })
+    finally:
+        conn.close()
+
+
+@app.get("/alerts", response_class=HTMLResponse)
+def alerts(request: Request, category: str | None = None,
+           severity: str | None = None):
+    """The full attention list (issue #28): everything the checks flag, with
+    category/severity filters addressable in the URL, and how long each item
+    has been firing. Today this renders the rules' current state; the
+    phase-6 engine (#22) extends these same rows with history."""
+    conn = _conn()
+    try:
+        db.init(conn)
+        settings = load_settings()
+        items, checked = attention_items(conn, settings)
+        stamp_first_seen(conn, items)
+        for it in items:
+            it["since"] = _since(it["first_seen"])
+        shown = [it for it in items
+                 if (not category or it["category"] == category)
+                 and (not severity or it["severity"] == severity)]
+        return templates.TemplateResponse(request, "alerts.html", {
+            "items": shown, "total": len(items), "checked": checked,
+            "attn_summary": _attention_summary(items),
+            "category": category, "severity": severity,
+            "categories": CATEGORIES, "ages": source_ages(conn),
         })
     finally:
         conn.close()
@@ -881,7 +767,7 @@ def topology(request: Request):
         return templates.TemplateResponse(request, "topology.html", {
             "graph_json": graph_json,
             "peak_ready": peak_ready,
-            "ages": _age(conn),
+            "ages": source_ages(conn),
         })
     finally:
         conn.close()
@@ -983,19 +869,11 @@ def patchpanel(request: Request, panel: str | None = None):
                  for n in range(1, top + 1) if n not in have]
         rows.sort(key=lambda r: (r["port"], r["dev"] or ""))
         return templates.TemplateResponse(request, "patchpanel.html",
-                                          {"rows": rows, "ages": _age(conn),
+                                          {"rows": rows, "ages": source_ages(conn),
                                            "panels": [p[0] for p in panels],
                                            "sel": sel, "size": size})
     finally:
         conn.close()
-
-
-def _ip_key(ip: str):
-    try:
-        a = ipaddress.ip_address(ip)
-        return (a.version, int(a))
-    except ValueError:
-        return (99, 0)
 
 
 @app.get("/vlans", response_class=HTMLResponse)
@@ -1122,25 +1000,12 @@ def vlans(request: Request):
                                     "routed": routed_by(s["cidr"])})
         return templates.TemplateResponse(request, "vlans.html", {
             "vlans": rows, "orphans": orphans, "aggregates": aggregates,
-            "ages": _age(conn),
+            "ages": source_ages(conn),
         })
     finally:
         conn.close()
 
 
-def _ipam_link(settings, row) -> str | None:
-    """Deep link into the IPAM's own UI, when it gave us its object ids.
-
-    phpIPAM address pages want three internal ids; an IPAM that doesn't
-    populate them (or a future NetBox collector) simply gets no link.
-    """
-    base = (settings.ipam_url or "").rstrip("/")
-    base = base.removesuffix("/api")
-    if base and row["ipam_id"] and row["ipam_subnet_id"] and row["ipam_section_id"]:
-        return (f"{base}/index.php?page=subnets&section={row['ipam_section_id']}"
-                f"&subnetId={row['ipam_subnet_id']}&sPage=address-details"
-                f"&ipaddrid={row['ipam_id']}")
-    return None
 
 
 @app.get("/drift", response_class=HTMLResponse)
@@ -1151,7 +1016,7 @@ def drift(request: Request):
         db.init(conn)
         report = drift_report(conn, settings)
         return templates.TemplateResponse(request, "drift.html", {
-            **report, "ages": _age(conn),
+            **report, "ages": source_ages(conn),
         })
     finally:
         conn.close()
@@ -1258,7 +1123,7 @@ def ops(request: Request):
             except (ValueError, KeyError, TypeError, AttributeError):
                 last_poll = None
         return templates.TemplateResponse(request, "ops.html", {
-            "sources": sorted(available(settings)), "ages": _age(conn),
+            "sources": sorted(available(settings)), "ages": source_ages(conn),
             "config": _effective_config(settings),
             "warnings": [w for w in settings.parse_warnings
                          if w not in fielded],
@@ -1349,7 +1214,7 @@ def snapshots(request: Request):
     try:
         db.init(conn)
         is_demo = db.get_state(conn, demo.MARKER) == "1"
-        ages = _age(conn)
+        ages = source_ages(conn)
     finally:
         conn.close()
     return templates.TemplateResponse(request, "snapshots.html", {
@@ -1453,6 +1318,14 @@ def ops_poll(source: str | None = None):
         except Exception as e:
             conn.rollback()
             lines.append(f"[fail] normalize: {e}")
+        # first-seen bookkeeping for the attention items (issue #28) — the
+        # poll is when patchbay notices, so the poll timestamps it
+        try:
+            from .attention import record_first_seen
+
+            record_first_seen(conn, settings)
+        except Exception as e:
+            lines.append(f"[warn] attention bookkeeping: {e}")
         db.save_last_poll(conn, lines)
         conn.commit()
     finally:

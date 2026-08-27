@@ -79,7 +79,7 @@ def generate(settings: Settings) -> str:
         # treat-as-sensitive one — nothing in it is real
         is_demo = db.get_state(conn, "demo_seed") == "1"
         graph_json, peak_ready = web.build_topology_graph(conn, settings)
-        ages = web._age(conn)
+        ages = web.source_ages(conn)
         devices = [dict(r) for r in conn.execute(
             "SELECT * FROM devices ORDER BY CASE role "
             "WHEN 'firewall' THEN 0 WHEN 'switch' THEN 1 WHEN 'hypervisor' THEN 2 "

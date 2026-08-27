@@ -50,10 +50,23 @@
    below are the device-state UI. PATCHBAY_EXPECT silences what's expected. #}
 {% if checked %}
 <section class="attention">
+  {# issue #28: a distinct section — heading, severity-colored category
+     strip, and only the top few items visible; /alerts owns the full list #}
+  <div class="attn-head">
+    <h2><a href="/alerts">Attention</a></h2>
+    {% if attn_summary %}
+    <span class="attn-strip">
+      {% for g in attn_summary %}<a class="attn-chip {{ g.sev }}"
+         href="/alerts?category={{ g.cat }}">{{ g.n }} {{ g.label }}</a>{% endfor %}
+    </span>
+    <a class="attn-all" href="/alerts">all {{ exceptions | length }} →</a>
+    {% endif %}
+  </div>
   {% if exceptions %}
-  <ul class="attn">
+  <ul class="attn capped">
     {% for it in exceptions %}
-    <li class="{{ it.severity }}"><a href="{{ it.href }}">{{ it.text }}</a></li>
+    <li class="{{ it.severity }}"><a href="{{ it.href }}">{{ it.text }}</a>
+      <span class="attn-since">{{ it.since }}</span></li>
     {% endfor %}
   </ul>
   {% else %}
@@ -144,15 +157,29 @@
 {% endif %}
 
 <style>
-  .attention { margin: 0.2rem 0 1.4rem; }
-  .attn { list-style: none; margin: 0; padding: 0;
+  .attention { margin: 0.2rem 0 1.4rem; border: 1px solid var(--line);
+               border-radius: 8px; padding: 0.6rem 0.9rem 0.7rem; max-width: 860px; }
+  .attn-head { display: flex; align-items: baseline; gap: 0.7rem; flex-wrap: wrap; }
+  .attn-head h2 { margin: 0; font-size: 0.8rem; letter-spacing: 0.08em;
+                  text-transform: uppercase; }
+  .attn-head h2 a { color: var(--ink2); }
+  .attn-strip { display: inline-flex; gap: 0.45rem; flex-wrap: wrap; }
+  .attn-chip { font-size: 0.72rem; padding: 0.05rem 0.55rem; border-radius: 999px;
+               border: 1px solid var(--warn); color: var(--warn); }
+  .attn-chip.crit { border-color: var(--crit); color: var(--crit); }
+  .attn-chip:hover { text-decoration: none; background: var(--hover); }
+  .attn-all { margin-left: auto; font-size: 0.75rem; }
+  .attn { list-style: none; margin: 0.5rem 0 0; padding: 0;
           display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.88rem; }
+  /* the Overview stays a summary: ~4 rows visible, the rest scroll (#28) */
+  .attn.capped { max-height: 6.6em; overflow-y: auto; }
   .attn li { padding-left: 0.85rem; position: relative; }
   .attn li::before { content: ""; position: absolute; left: 0; top: 0.42em;
                      width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
   .attn li.crit::before { background: var(--crit); }
   .attn a { color: var(--ink); }
-  .attn-clear { margin: 0; font-size: 0.85rem; color: var(--muted); }
+  .attn-since { color: var(--muted); font-size: 0.75rem; margin-left: 0.4rem; }
+  .attn-clear { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--muted); }
   .attn-clear::before { content: "●  "; color: var(--ok); font-size: 0.7rem; }
 </style>
 

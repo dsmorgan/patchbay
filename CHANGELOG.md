@@ -6,6 +6,24 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+
+- **Attention gets a real section, and a page of its own**
+  ([#28](https://github.com/dsmorgan/patchbay/issues/28)). The Overview's
+  attention list is now a distinct bordered section with a heading, a
+  severity-colored per-category summary strip, and a ~4-row scroll cap —
+  the Overview stays a summary. A new top-level **Alerts** page (in the
+  rail under Network) lists everything, filterable by category and
+  severity with the filtered state in the URL. Every item now carries a
+  stable identity, a category, and a first-seen time recorded at poll
+  time — shown as "for 42m" — so the phase-6 alerting engine
+  ([#22](https://github.com/dsmorgan/patchbay/issues/22)) can extend these
+  rows with history rather than replace them. The check rules moved to
+  `attention.py`, importable without the web stack; `PATCHBAY_EXPECT`
+  suppression applies throughout.
+
 ## [0.7.0] — 2026-08-27
 
 ### Added

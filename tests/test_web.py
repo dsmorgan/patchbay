@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 from patchbay import db as pdb
 
-PAGES = ["/", "/topology", "/vlans", "/drift", "/patchpanel", "/ops", "/snapshots"]
+PAGES = ["/", "/alerts", "/topology", "/vlans", "/drift", "/patchpanel",
+         "/ops", "/snapshots"]
 
 
 @pytest.fixture()
@@ -64,6 +65,7 @@ def test_pages_carry_a_header(clean_env, tmp_path, client):
     seed(str(tmp_path / "test.db"))
     expect_h1 = {
         "/": "Overview",
+        "/alerts": "Alerts",
         "/topology": "Topology",
         "/vlans": "VLANs",
         "/drift": "Drift",
@@ -647,6 +649,84 @@ def test_overview_hides_the_strip_when_nothing_could_be_checked(client):
     # nothing honest to say, so it says nothing
     body = client.get("/").text
     assert '<section class="attention">' not in body
+
+
+def _slow_link_db(tmp_path):
+    """seed() plus a 10M link speed, so the slow-link check fires."""
+    dbp = str(tmp_path / "test.db")
+    seed(dbp)
+    c = sqlite3.connect(dbp)
+    c.execute("UPDATE interfaces SET speed_bps = 10000000 WHERE name IN ('1/0/1', 'vmnic0')")
+    c.commit(); c.close()
+    return dbp
+
+
+def test_attention_section_and_alerts_page(clean_env, tmp_path, client):
+    # issue #28: the Overview's attention list is a distinct capped section
+    # with a severity-colored category strip, and /alerts is the full page
+    _slow_link_db(tmp_path)
+    body = client.get("/").text
+    assert '<section class="attention">' in body
+    assert ">Attention</a></h2>" in body
+    assert 'class="attn-chip crit"' in body          # 10M link = crit
+    assert "1 slow links" in body
+    assert '<ul class="attn capped">' in body
+    assert 'href="/alerts"' in body
+
+    page = client.get("/alerts").text
+    assert "runs at 10M" in page
+    assert "slow links" in page
+
+    # the filtered state is URL-addressable, like the map
+    assert "runs at 10M" in client.get("/alerts?category=link").text
+    assert "runs at 10M" not in client.get("/alerts?category=ipam").text
+    assert "runs at 10M" in client.get("/alerts?severity=crit").text
+    assert "runs at 10M" not in client.get("/alerts?severity=warn").text
+    assert "Nothing matches this filter" in client.get("/alerts?category=ipam").text
+
+
+def test_alerts_page_degrades(clean_env, tmp_path, client):
+    # empty DB: checks have nothing to look at; seeded clean DB: all clear
+    assert "No checks have anything to look at yet" in client.get("/alerts").text
+    seed(str(tmp_path / "test.db"))
+    assert "All clear" in client.get("/alerts").text
+
+
+def test_first_seen_recorded_at_poll_time(clean_env, tmp_path):
+    # issue #28 tie-in with #22: an item's first_seen is written by the poll
+    # path, kept while it fires, and forgotten when it clears — so a
+    # condition that clears and returns reads as new, which it is
+    from patchbay import db as pdb2
+    from patchbay.attention import (attention_items, record_first_seen,
+                                    stamp_first_seen)
+    from patchbay.config import load_settings
+
+    dbp = _slow_link_db(tmp_path)
+    clean_env.setenv("PATCHBAY_DB", dbp)
+    settings = load_settings()
+    c = sqlite3.connect(dbp)
+    c.row_factory = sqlite3.Row
+
+    items, _ = attention_items(c, settings)
+    assert items and items[0]["category"] == "link" and items[0]["key"]
+    stamp_first_seen(c, items)
+    assert items[0]["first_seen"] is None            # nothing recorded yet
+
+    record_first_seen(c, settings)
+    stamp_first_seen(c, items)
+    first = items[0]["first_seen"]
+    assert first is not None
+    record_first_seen(c, settings)                   # still firing: kept
+    stamp_first_seen(c, items)
+    assert items[0]["first_seen"] == first
+
+    # the condition clears -> the key is forgotten
+    c.execute("UPDATE interfaces SET speed_bps = 10000000000")
+    c.commit()
+    record_first_seen(c, settings)
+    stamp_first_seen(c, items)
+    assert items[0]["first_seen"] is None
+    c.close()
 
 
 def test_overview_folds_vms_into_hypervisors(clean_env, tmp_path, client):

@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}alerts — patchbay{% endblock %}
+{% block main %}
+
+{# The full attention list (issue #28). Filters are plain links so the
+   filtered state lives in the URL, same principle as the map. This page
+   renders the checks' current state; the phase-6 engine (#22) extends
+   these rows with fired/cleared history. #}
+
+<div class="alert-filters">
+  <a class="fchip {{ 'on' if not category and not severity }}" href="/alerts">all</a>
+  <span class="fgroup">
+  {% for cat, label in categories.items() %}
+  <a class="fchip {{ 'on' if category == cat }}" href="/alerts?category={{ cat }}">{{ label }}</a>
+  {% endfor %}
+  </span>
+  <span class="fgroup">
+  <a class="fchip crit {{ 'on' if severity == 'crit' }}" href="/alerts?severity=crit">critical</a>
+  <a class="fchip warn {{ 'on' if severity == 'warn' }}" href="/alerts?severity=warn">warning</a>
+  </span>
+</div>
+
+{% if items %}
+<div class="scroll" style="max-width: 900px">
+<table>
+  <tr><th></th><th>category</th><th>what</th><th>for</th></tr>
+  {% for it in items %}
+  <tr>
+    <td><span class="dot {{ 'down' if it.severity == 'crit' else 'unknown' }}"
+             title="{{ 'critical' if it.severity == 'crit' else 'warning' }}"></span></td>
+    <td class="muted">{{ categories[it.category] }}</td>
+    <td><a href="{{ it.href }}">{{ it.text }}</a></td>
+    <td class="muted mono" title="how long this has been firing (recorded at poll time)">{{ it.since }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% if items | length != total %}
+<p class="muted" style="font-size: 0.82rem">{{ items | length }} of {{ total }}
+shown — <a href="/alerts">clear the filter</a>.</p>
+{% endif %}
+{% elif total %}
+<p class="muted">Nothing matches this filter — <a href="/alerts">all
+{{ total }} item{{ '' if total == 1 else 's' }}</a>.</p>
+{% elif checked %}
+<p class="attn-clear">All clear — {{ checked | join(", ") }}</p>
+{% else %}
+<p class="muted">No checks have anything to look at yet — they speak once
+their sources report data. <a href="/ops">Ops</a> shows what is configured.</p>
+{% endif %}
+
+<style>
+  .alert-filters { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center;
+                   margin: 0 0 1rem; }
+  .fgroup { display: inline-flex; gap: 0.4rem; margin-left: 0.6rem;
+            padding-left: 1rem; border-left: 1px solid var(--grid); }
+  .fchip { font-size: 0.78rem; padding: 0.12rem 0.7rem; border-radius: 999px;
+           border: 1px solid var(--line); color: var(--muted); }
+  .fchip:hover { text-decoration: none; background: var(--hover); }
+  .fchip.on { color: var(--ink); border-color: var(--accent); }
+  .fchip.crit { color: var(--crit); }
+  .fchip.warn { color: var(--warn); }
+  .fchip.crit.on { border-color: var(--crit); }
+  .fchip.warn.on { border-color: var(--warn); }
+  .attn-clear { margin: 0; font-size: 0.85rem; color: var(--muted); }
+  .attn-clear::before { content: "●  "; color: var(--ok); font-size: 0.7rem; }
+</style>
+
+{% endblock %}
