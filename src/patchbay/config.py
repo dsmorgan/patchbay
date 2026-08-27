@@ -21,6 +21,7 @@ DECLARATION_VARS = (
     "PATCHBAY_ALIASES", "PATCHBAY_UNMANAGED", "PATCHBAY_LINKS",
     "PATCHBAY_RELATED", "PATCHBAY_VLAN_FILTER", "PATCHBAY_CAPACITY",
     "PATCHBAY_PANELS", "PATCHBAY_WAN_NAME", "PATCHBAY_WAN_PORT",
+    "PATCHBAY_EXPECT",
 )
 
 
@@ -61,6 +62,13 @@ class Settings:
     # Site-provided identity aliases, e.g. a chassis serial no source maps:
     # PATCHBAY_ALIASES="ABC123456=core1,oldname=newname"
     aliases: dict[str, str]
+    # Conditions the operator has declared expected, so the Overview's
+    # attention list stays quiet about them: "dev:iface" silences the
+    # slow-link item for that port (a management drop that is legitimately
+    # 100M); a bare "dev" silences every item that names the device. An
+    # alert nobody can silence trains everyone to ignore the list.
+    # PATCHBAY_EXPECT="core1:1/0/16,esxi1"
+    expected: set[str]
     # Declared unmanaged switches (ports the operator knows feed one), shown
     # even when too few MACs are live to infer them:
     # PATCHBAY_UNMANAGED="core1:1/0/12,edge1:ethernet1/1/5"
@@ -245,6 +253,11 @@ def load_settings() -> Settings:
             aliases[alias.strip()] = canonical.strip()
         elif pair.strip():
             warn("PATCHBAY_ALIASES", pair)
+    expected = set()
+    for spec in (env("PATCHBAY_EXPECT") or "").split(","):
+        s = spec.strip()
+        if s:
+            expected.add(":".join(part.strip() for part in s.split(":", 1)))
     unmanaged = []
     for spec in (env("PATCHBAY_UNMANAGED") or "").split(","):
         if ":" in spec:
@@ -328,6 +341,7 @@ def load_settings() -> Settings:
         db_path=env("PATCHBAY_DB", "patchbay.db"),
         tls_verify=tls_verify,
         aliases=aliases,
+        expected=expected,
         unmanaged=unmanaged,
         links=links,
         wan_names=usable,

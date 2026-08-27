@@ -26,25 +26,6 @@
 </div>
 {% endif %}
 
-{% if checked %}
-<section class="exceptions">
-  {% if exceptions %}
-  {% for ex in exceptions %}
-  <div class="excard {{ ex.severity }}">
-    <div class="extitle">{% if ex.href %}<a href="{{ ex.href }}">{{ ex.title }}</a>{% else %}{{ ex.title }}{% endif %}</div>
-    <ul class="exitems">
-      {% for item in ex['items'] %}
-      <li>{% if item.href %}<a href="{{ item.href }}">{{ item.label }}</a>{% else %}{{ item.label }}{% endif %}<span class="muted"> — {{ item.detail }}</span></li>
-      {% endfor %}
-    </ul>
-  </div>
-  {% endfor %}
-  {% else %}
-  <div class="excard clear">All clear — {{ checked | join(", ") }}</div>
-  {% endif %}
-</section>
-{% endif %}
-
 <div class="statgrid">
   {% for key, label in [("ports", "ports"), ("endpoints", "endpoints"),
                         ("subnets", "subnets"), ("vlans", "vlans")] %}
@@ -62,6 +43,24 @@
   </div>
   {% endfor %}
 </div>
+
+{# The attention list (issue #13): below the counts — the page opens with
+   what the network IS — one flat ordered list, each line linking to the
+   page that owns the answer. Device state is not repeated here: the cards
+   below are the device-state UI. PATCHBAY_EXPECT silences what's expected. #}
+{% if checked %}
+<section class="attention">
+  {% if exceptions %}
+  <ul class="attn">
+    {% for it in exceptions %}
+    <li class="{{ it.severity }}"><a href="{{ it.href }}">{{ it.text }}</a></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="attn-clear">All clear — {{ checked | join(", ") }}</p>
+  {% endif %}
+</section>
+{% endif %}
 
 {% if fabric %}
 <h2>Fabric — switches and firewalls</h2>
@@ -145,17 +144,16 @@
 {% endif %}
 
 <style>
-  .exceptions { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-bottom: 1.4rem; }
-  .excard { background: var(--card); border: 1.4px solid var(--line); border-left: 4px solid var(--muted);
-            border-radius: 8px; padding: 0.7rem 1rem; flex: 1 1 260px; }
-  .excard.crit { border-left-color: var(--crit); }
-  .excard.warn { border-left-color: var(--warn); }
-  .excard.info { border-left-color: var(--muted); }
-  .excard.clear { border-left-color: var(--ok); flex-basis: 100%; }
-  .excard .extitle { font-weight: 600; }
-  .excard .extitle a { color: var(--ink); }
-  .excard .exitems { list-style: none; margin: 0.4rem 0 0; padding: 0;
-                      display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85rem; }
+  .attention { margin: 0.2rem 0 1.4rem; }
+  .attn { list-style: none; margin: 0; padding: 0;
+          display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.88rem; }
+  .attn li { padding-left: 0.85rem; position: relative; }
+  .attn li::before { content: ""; position: absolute; left: 0; top: 0.42em;
+                     width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+  .attn li.crit::before { background: var(--crit); }
+  .attn a { color: var(--ink); }
+  .attn-clear { margin: 0; font-size: 0.85rem; color: var(--muted); }
+  .attn-clear::before { content: "●  "; color: var(--ok); font-size: 0.7rem; }
 </style>
 
 {% endblock %}

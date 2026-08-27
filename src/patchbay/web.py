@@ -309,116 +309,76 @@ def drift_report(conn: sqlite3.Connection, settings) -> dict:
 
 
 def _exceptions(conn: sqlite3.Connection, settings) -> tuple[list[dict], list[str]]:
-    """The strip that answers "is anything wrong?" before anything else on
-    the page. Each rule only speaks when it can actually check something —
-    an empty DB has no opinion on any of these — so `checked` names only the
-    checks that ran; the all-clear card can only claim what it verified."""
-
-    def cnt(n: int, noun: str) -> str:
-        return f"{n} {noun}{'' if n == 1 else 's'}"
-
-    exceptions: list[dict] = []
+    """The Overview's attention list: one flat, ordered list of items worth a
+    look, each linking to the page that owns the answer — not pre-categorized
+    cards, and never above the counts (issue #13). Rules only speak when they
+    can actually check something, so `checked` names only the checks that ran
+    and the all-clear line can only claim what it verified. Device state is
+    deliberately absent: the cards below ARE the device-state UI. Anything
+    here can be silenced by declaring it expected (PATCHBAY_EXPECT)."""
+    items: list[dict] = []
     checked: list[str] = []
 
-    # device-down: unknown/NULL status is no opinion, never an exception.
-    # Guests (role='vm') are folded into their hypervisor's card, not here —
-    # TOPO_ROLES already excludes 'vm'.
-    topo_devices = conn.execute(
-        f"SELECT name, role, status FROM devices WHERE role IN "
-        f"({','.join('?' * len(TOPO_ROLES))}) ORDER BY status, name",
-        TOPO_ROLES).fetchall()
-    if topo_devices:
-        checked.append("every device up")
-        down = [r for r in topo_devices if r["status"] in ("down", "notResponding")]
-        disabled = [r for r in topo_devices if r["status"] == "disabled"]
-        if down:
-            exceptions.append({
-                "kind": "device-down", "severity": "crit",
-                "title": f"{cnt(len(down), 'device')} {'is' if len(down) == 1 else 'are'} not up",
-                "href": None,
-                "items": [{"label": r["name"], "detail": f"{r['status']} · {r['role']}",
-                          "href": f"/device/{r['name']}"} for r in down],
-            })
-        if disabled:
-            exceptions.append({
-                "kind": "device-down", "severity": "info",
-                "title": f"{cnt(len(disabled), 'device')} disabled",
-                "href": None,
-                "items": [{"label": r["name"], "detail": f"disabled · {r['role']}",
-                          "href": f"/device/{r['name']}"} for r in disabled],
-            })
-
     # slow-link: the better-known end's speed through speed_tier() — a link
-    # with no known speed is not slow, same rule the map uses. A small SELECT
-    # of its own; build_topology_graph's speed_of pass isn't refactored for
-    # this.
+    # with no known speed is not slow, same rule the map uses. A port (or a
+    # whole device) declared expected keeps its legitimately-slow link quiet.
     links = conn.execute("SELECT * FROM links ORDER BY a_device, a_interface").fetchall()
     if links:
-        checked.append("no slow links")
+        checked.append("no unexpected slow links")
         speed_of: dict[tuple[str, str], int] = {}
         for r in conn.execute(
                 "SELECT d.name AS dev, i.name AS iface, i.speed_bps FROM interfaces i "
                 "JOIN devices d ON d.id = i.device_id WHERE i.speed_bps > 0"):
             speed_of[(r["dev"], r["iface"])] = r["speed_bps"]
-        vslow, slow = [], []
         for l in links:
             bps = (speed_of.get((l["a_device"], l["a_interface"]))
                    or speed_of.get((l["b_device"], l["b_interface"])))
             tier = speed_tier(bps)
             if not tier:
                 continue
-            item = {
-                "label": f"{l['a_device']} {l['a_interface']} ↔ {l['b_device']} {l['b_interface']}",
-                "detail": human_speed(bps),
+            names = {l["a_device"], l["b_device"],
+                     f"{l['a_device']}:{l['a_interface']}",
+                     f"{l['b_device']}:{l['b_interface']}"}
+            if names & settings.expected:
+                continue
+            items.append({
+                "severity": "crit" if tier == "vslow" else "warn",
+                "text": f"{l['a_device']} {l['a_interface']} ↔ "
+                        f"{l['b_device']} {l['b_interface']} runs at {human_speed(bps)}",
                 "href": f"/topology?focus={l['a_device']}",
-            }
-            (vslow if tier == "vslow" else slow).append(item)
-        if vslow:
-            exceptions.append({
-                "kind": "slow-link", "severity": "crit",
-                "title": f"{cnt(len(vslow), 'link')} {'is' if len(vslow) == 1 else 'are'} "
-                         f"very slow (≤10M)",
-                "href": None, "items": vslow,
-            })
-        if slow:
-            exceptions.append({
-                "kind": "slow-link", "severity": "warn",
-                "title": f"{cnt(len(slow), 'link')} {'is' if len(slow) == 1 else 'are'} "
-                         f"slow (≤100M)",
-                "href": None, "items": slow,
             })
 
-    # drift: only when the site has IPAM at all — no IPAM, no claim.
+    # drift: only when the site has IPAM at all — no IPAM, no claim. One
+    # line; /drift owns the detail.
     report = drift_report(conn, settings)
     if report["have_ipam"]:
         checked.append("IPAM in sync")
-        conflicts = report["conflicts"]
-        if conflicts:
-            exceptions.append({
-                "kind": "drift", "severity": "warn",
-                "title": f"{cnt(len(conflicts), 'IPAM conflict')}",
+        n = len(report["conflicts"])
+        if n:
+            items.append({
+                "severity": "warn",
+                "text": f"{n} IPAM conflict{'' if n == 1 else 's'} — "
+                        f"records and the network disagree",
                 "href": "/drift",
-                "items": [{"label": c["ip"],
-                          "detail": f"{c['kind']}: IPAM says {c['ipam']}, network says {c['live']}",
-                          "href": c.get("link")} for c in conflicts],
             })
 
-    # stale-source: any source whose newest payload is older than STALE_MIN,
-    # named — same age the top bar already flags per-source.
+    # stale-source: any source whose newest payload is older than STALE_MIN —
+    # same age the top bar already flags per-source. One line naming them.
     ages = _age(conn)
     if ages:
         checked.append("every source fresh")
-        stale = {s: m for s, m in ages.items() if m > STALE_MIN}
+        stale = sorted(((s, m) for s, m in ages.items() if m > STALE_MIN),
+                       key=lambda x: -x[1])
         if stale:
-            exceptions.append({
-                "kind": "stale-source", "severity": "warn",
-                "title": f"{cnt(len(stale), 'source')} {'is' if len(stale) == 1 else 'are'} stale",
+            named = ", ".join(f"{s} ({m:.0f}m)" for s, m in stale)
+            items.append({
+                "severity": "warn",
+                "text": f"stale source{'' if len(stale) == 1 else 's'}: {named}",
                 "href": "/ops",
-                "items": [{"label": s, "detail": f"{m:.0f}m since last data", "href": None}
-                          for s, m in sorted(stale.items(), key=lambda x: -x[1])],
             })
 
-    return exceptions, checked
+    items.sort(key=lambda i: i["severity"] != "crit")   # crit first, order kept
+    return items, checked
 
 
 @app.get("/", response_class=HTMLResponse)

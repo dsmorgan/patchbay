@@ -529,12 +529,9 @@ def _graph_at(client, qs):
     return json.loads(m.group(1))
 # --- overview-exceptions ---
 
-def test_overview_shows_exceptions_when_something_is_wrong(clean_env, tmp_path, client):
-    # a device down and a slow link: two cards, each pointing where the
-    # detail actually lives (the device page, the map centred on it).
-    # links store their two ends direction-normalized (sorted), so the
-    # sw1<->hyp1 link's "a" end is hyp1 — shrink both interfaces so the
-    # slow tier holds regardless of which end speed_of resolves to.
+def test_overview_attention_list_is_flat_and_below_the_counts(clean_env, tmp_path, client):
+    # issue #13: a slow link is one line in one list, positioned after the
+    # stat grid; device state is NOT repeated here (the cards are that UI)
     dbp = str(tmp_path / "test.db")
     seed(dbp)
     c = sqlite3.connect(dbp)
@@ -543,24 +540,40 @@ def test_overview_shows_exceptions_when_something_is_wrong(clean_env, tmp_path, 
     c.commit(); c.close()
 
     body = client.get("/").text
-    assert body.count('class="excard') == 2  # no all-clear card alongside real ones
-    assert "All clear" not in body
-    assert '<a href="/device/fw1">' in body
+    assert "hyp1 vmnic0 ↔ sw1 1/0/1 runs at 10M" in body
     assert '<a href="/topology?focus=hyp1">' in body
-    assert "hyp1 vmnic0 ↔ sw1 1/0/1" in body
+    assert "All clear" not in body
+    assert "not up" not in body                      # no device-down banner
+    assert body.index('class="statgrid"') < body.index('class="attention"')
+
+
+def test_overview_expected_declaration_silences_an_item(clean_env, tmp_path, client):
+    dbp = str(tmp_path / "test.db")
+    seed(dbp)
+    c = sqlite3.connect(dbp)
+    c.execute("UPDATE interfaces SET speed_bps = 10000000 WHERE name IN ('1/0/1', 'vmnic0')")
+    c.commit(); c.close()
+
+    clean_env.setenv("PATCHBAY_EXPECT", "sw1:1/0/1")
+    body = client.get("/").text
+    assert "runs at 10M" not in body                 # the declared port is quiet
+    assert "All clear" in body                       # and the list can go clear
+
+    clean_env.setenv("PATCHBAY_EXPECT", "hyp1")      # bare device silences too
+    assert "runs at 10M" not in client.get("/").text
 
 
 def test_overview_says_all_clear_when_nothing_is(clean_env, tmp_path, client):
     seed(str(tmp_path / "test.db"))
     body = client.get("/").text
-    assert '<div class="excard clear">All clear — every device up, no slow links</div>' in body
+    assert "All clear — no unexpected slow links" in body
 
 
 def test_overview_hides_the_strip_when_nothing_could_be_checked(client):
-    # first-run empty DB: no devices, no links, no IPAM, no polls yet — the
-    # strip has nothing honest to say, so it says nothing
+    # first-run empty DB: no links, no IPAM, no polls yet — the list has
+    # nothing honest to say, so it says nothing
     body = client.get("/").text
-    assert '<section class="exceptions">' not in body
+    assert '<section class="attention">' not in body
 
 
 def test_overview_folds_vms_into_hypervisors(clean_env, tmp_path, client):

@@ -19,6 +19,36 @@ put.
   From [@slmingol](https://github.com/slmingol)
   ([#9](https://github.com/dsmorgan/patchbay/pull/9)).
 
+### Changed
+
+- **The Overview's attention strip is now one quiet list below the counts.**
+  Running 0.5.0 on a real network showed the pre-categorized cards crying
+  wolf: the device-down count duplicated the cards right below it (which
+  are the device-state UI, and stay so), a legitimately-100M link was
+  flagged forever, and IPAM drift demanded top billing it didn't deserve.
+  Now the page opens with what the network *is*; attention items follow as
+  one flat ordered list, each line linking to the page that owns the
+  answer, and `PATCHBAY_EXPECT` declares a port or device expected so its
+  items stay silent. The honest all-clear line stays — it can only claim
+  the checks that actually ran.
+- **The map arranges freely by default.** The tier bands didn't survive
+  contact with a real network: a pseudo-physical map wants the operator's
+  arrangement to win. `layout=free` (the new default) restores the soft
+  rank force and full two-axis pinning; `layout=tiers` keeps the banded
+  layout as an opt-in, from the URL or the "tier lanes" toolbar checkbox.
+  Pins saved before 0.5.0 load exactly again in free mode.
+
+### Fixed
+
+- **Config version views no longer double-space.** oxidized-web's
+  list-shaped response carries each line's own newline, and joining with
+  another one doubled every blank line; CRLF bodies doubled the same way.
+- **Interface MACs read `28:80:88:73:42:54`, not `288088734256`.**
+  LibreNMS emits `ifPhysAddress` as bare hex and it was stored verbatim
+  since 0.1.0 — visible once the endpoints-per-port view put both formats
+  side by side. Formatted at ingestion; existing rows self-heal on the
+  next poll.
+
 ## [0.5.0] — 2026-08-27
 
 ### Added
