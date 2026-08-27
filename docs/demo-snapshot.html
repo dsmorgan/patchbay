@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>patchbay snapshot — 2026-08-27 00:20 EDT</title>
+<title>patchbay snapshot — 2026-08-27 15:38 EDT</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
 <style>
   /* IBM Plex Sans, variable weight, Latin subset, self-hosted (SIL OFL 1.1 —
@@ -23,6 +23,7 @@
     --ok: #55b380; --warn: #cfa049; --crit: #d4715c;
     /* role palette — hues deliberately distinct from the status colors */
     --r-switch: #4db8c2; --r-firewall: #c792ea; --r-hyp: #82aaff; --r-ap: #d16ba5;
+    --r-router: #dd9046;
     /* tones of the neutrals above, not new hues. --ink2 is a heading one
        step under body ink; --hover and --selected are the two lightness
        steps a rail entry climbs; --grid is the faint rule between cells, so
@@ -34,25 +35,34 @@
     /* the rail is one width and a handful of switches, so its collapsed
        state — html.rail-collapsed, or any viewport too narrow for labels —
        is the same rail with different values, not a second set of rules */
-    --rail-w: 172px; --rail-label: block; --when-wide: block; --when-narrow: none;
+    --rail-w: 172px; --when-wide: block; --when-narrow: none;
+    /* labels animate (issue #21): width/opacity/visibility instead of
+       display, so the collapse can slide rather than snap */
+    --rail-label-max: 12rem; --rail-label-o: 1; --rail-label-vis: visible;
+    --rail-gap: 0.55rem;
     --rail-heading-pad: 0.3rem 0.5rem 0.25rem; --rail-heading-h: auto;
     --rail-tab-pad: 0.36rem 0.6rem 0.36rem 0.5rem; --rail-tab-justify: flex-start;
     --rail-indent: 6px; --rail-top-justify: flex-end;
   }
   html.rail-collapsed {
-    --rail-w: 54px; --rail-label: none; --when-wide: none; --when-narrow: block;
+    --rail-w: 54px; --when-wide: none; --when-narrow: block;
+    --rail-label-max: 0px; --rail-label-o: 0; --rail-label-vis: hidden;
+    --rail-gap: 0;
     --rail-heading-pad: 0; --rail-heading-h: 6px;
     --rail-tab-pad: 0.42rem 0; --rail-tab-justify: center;
     --rail-indent: 0; --rail-top-justify: center;
   }
   @media (max-width: 640px) {
     :root {
-      --rail-w: 54px; --rail-label: none; --when-wide: none; --when-narrow: block;
+      --rail-w: 54px; --when-wide: none; --when-narrow: block;
+      --rail-label-max: 0px; --rail-label-o: 0; --rail-label-vis: hidden;
+      --rail-gap: 0;
       --rail-heading-pad: 0; --rail-heading-h: 6px;
       --rail-tab-pad: 0.42rem 0; --rail-tab-justify: center;
       --rail-indent: 0; --rail-top-justify: center;
     }
     .rail .rail-toggle { display: none; }  /* nothing to toggle: too narrow for labels */
+    .rail .rail-pin { display: none; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
@@ -115,13 +125,15 @@
   .rail-heading { padding: var(--rail-heading-pad); height: var(--rail-heading-h);
                   overflow: hidden; color: var(--ink2); font-size: 0.64rem;
                   font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
-  .rail-heading-text { display: var(--rail-label); }
+  .rail-heading-text { display: block; overflow: hidden; white-space: nowrap;
+                       max-width: var(--rail-label-max);
+                       opacity: var(--rail-label-o); visibility: var(--rail-label-vis); }
   .rail-group, .rail-foot { display: flex; flex-direction: column; gap: 1px; }
   .rail-group + .rail-group, .rail-foot { margin-top: 8px; padding-top: 8px;
                                          border-top: 1px solid var(--grid); }
   .rail-group .rail-tab { margin-left: var(--rail-indent); }
   .rail-tab { display: flex; align-items: center; justify-content: var(--rail-tab-justify);
-              gap: 0.55rem; padding: var(--rail-tab-pad);
+              gap: var(--rail-gap); padding: var(--rail-tab-pad);
               border: 0; border-left: 2px solid transparent; border-radius: 6px;
               background: none; color: var(--muted); font: 600 0.8rem/1.3 var(--font-ui);
               text-align: left; white-space: nowrap; overflow: hidden; cursor: pointer; }
@@ -131,9 +143,22 @@
      column of words; the selected one comes up with the rest of the row */
   .rail-icon { flex: none; width: 16px; height: 16px; opacity: 0.85; }
   .rail-tab.on .rail-icon, .rail-tab:hover .rail-icon, .rail-chevron .rail-icon { opacity: 1; }
-  .rail-label { display: var(--rail-label); overflow: hidden; text-overflow: ellipsis; }
+  .rail-label { display: block; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; max-width: var(--rail-label-max);
+                opacity: var(--rail-label-o); visibility: var(--rail-label-vis); }
+  /* pin only exists while there are labels to keep; pinned = accent */
+  html.rail-collapsed .rail-pin { display: none; }
+  .rail-pin[aria-pressed="true"] { color: var(--accent); }
   .when-wide { display: var(--when-wide); }
   .when-narrow { display: var(--when-narrow); }
+  /* the collapse slides instead of snapping — skipped, not slowed, when the
+     viewer prefers reduced motion */
+  @media (prefers-reduced-motion: no-preference) {
+    body.shell { transition: grid-template-columns 0.18s ease; }
+    .rail-tab { transition: gap 0.18s ease; }
+    .rail-label, .rail-heading-text {
+      transition: max-width 0.18s ease, opacity 0.12s ease, visibility 0.18s; }
+  }
   main { padding: 1.2rem 1.4rem 3rem; max-width: 1200px; margin: 0 auto; }
   /* ---- page header: the question this page answers, and its controls. Title
      and purpose come from NAV (web.py), so the rail tooltip and the page say
@@ -160,6 +185,7 @@
   .card .sub { color: var(--muted); font-size: 0.8rem; }
   /* role-framed cards echo the topology node boxes */
   .card.switch { border-color: var(--r-switch); }
+  .card.router { border-color: var(--r-router); }
   .card.firewall { border-color: var(--r-firewall); }
   .card.hypervisor { border-color: var(--r-hyp); }
   .card.ap { border-color: var(--r-ap); }
@@ -167,6 +193,7 @@
   .card .cicon { position: absolute; top: 0.75rem; right: 0.9rem;
                  width: 18px; height: 18px; }
   .card.switch .cicon { color: var(--r-switch); }
+  .card.router .cicon { color: var(--r-router); }
   .card.firewall .cicon { color: var(--r-firewall); }
   .card.hypervisor .cicon { color: var(--r-hyp); }
   .card.ap .cicon { color: var(--r-ap); }
@@ -235,7 +262,7 @@
     <rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/>
   </g>
 </svg>patchbay snapshot</h1>
-  <nav class="muted">generated 2026-08-27 00:20 EDT · build 0.6.1</nav>
+  <nav class="muted">generated 2026-08-27 15:38 EDT · build 0.7.0</nav>
   <span class="ages">data age at generation: librenms 0.0m · opnsense 0.0m · oxidized 0.0m · phpipam 0.0m · unifi 0.0m · vsphere 0.0m</span>
 </header>
 <main>
@@ -277,6 +304,7 @@ from your own network.</p>
   .speedlab.vslow { fill: var(--crit); }   /* ≤10M */
   .node rect { fill: var(--card); stroke: var(--line); stroke-width: 1.4; }
   .node.switch rect { stroke: var(--r-switch); }
+  .node.router rect { stroke: var(--r-router); }
   .node.firewall rect { stroke: var(--r-firewall); }
   .node.hypervisor rect { stroke: var(--r-hyp); }
   .node.ap rect { stroke: var(--r-ap); }
@@ -294,6 +322,7 @@ from your own network.</p>
   /* colored roles match the legend's full brightness; unmanaged/host stay
      dimmed with the base rule */
   .node.switch .ricon { stroke: var(--r-switch); opacity: 1; }
+  .node.router .ricon { stroke: var(--r-router); opacity: 1; }
   .node.firewall .ricon { stroke: var(--r-firewall); opacity: 1; }
   .node.hypervisor .ricon { stroke: var(--r-hyp); opacity: 1; }
   .node.ap .ricon { stroke: var(--r-ap); opacity: 1; }
@@ -406,6 +435,7 @@ from your own network.</p>
   <span class="item" data-modes="wiring load vlan evidence">ports: <span class="mono" style="color: var(--accent); font-weight: 600">1/2/2</span> trunk · <span class="mono">1/1/5</span> access · <span class="mono" style="color: var(--r-firewall); font-weight: 600">1/0/14</span> port mirror · <span class="mono">[n]</span> patch panel</span>
   <span class="item" data-modes="wiring load vlan evidence">nodes:
     <svg class="licon" data-role="switch" style="color: var(--r-switch)"></svg> switch
+    <svg class="licon" data-role="router" style="color: var(--r-router)"></svg> router
     <svg class="licon" data-role="firewall" style="color: var(--r-firewall)"></svg> firewall
     <svg class="licon" data-role="hypervisor" style="color: var(--r-hyp)"></svg> VM host
     <svg class="licon" data-role="ap" style="color: var(--r-ap)"></svg> AP
@@ -430,7 +460,7 @@ from your own network.</p>
 
 <script>
 const SNAPSHOT = true;
-const graph = {"nodes": [{"name": "ap-attic", "label": "ap-attic", "w": 134.8, "sub": "1 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-attic", "vlans": [1], "px": null, "py": null}, {"name": "ap-den", "label": "ap-den", "w": 119.6, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-den", "vlans": [1], "px": null, "py": null}, {"name": "ap-garage", "label": "ap-garage", "w": 142.39999999999998, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-garage", "vlans": [1], "px": null, "py": null}, {"name": "core1", "label": "core1", "w": 180.0, "sub": "192.0.2.2", "status": "up", "role": "switch", "rank": 1, "title": "core1", "vlans": [1], "px": null, "py": null}, {"name": "edge1", "label": "edge1", "w": 180.0, "sub": "192.0.2.3", "status": "up", "role": "switch", "rank": 1, "title": "edge1", "vlans": [1], "px": null, "py": null}, {"name": "fw1", "label": "fw1", "w": 107.4, "sub": "192.0.2.1", "status": "up", "role": "firewall", "rank": 0, "title": "fw1", "vlans": [1, 20, 30], "px": null, "py": null}, {"name": "hyp1", "label": "hyp1", "w": 180.0, "sub": "192.0.2.10 \u00b7 4/4 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp1", "vlans": [1], "px": null, "py": null}, {"name": "hyp2", "label": "hyp2", "w": 180.0, "sub": "192.0.2.11 \u00b7 3/3 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp2", "vlans": [1], "px": null, "py": null}, {"name": "unmanaged@edge1:e1/0/8", "label": "unmanaged", "w": 142.39999999999998, "sub": "5 MACs", "status": "up", "role": "unmanaged-switch", "rank": 2, "title": "unmanaged@edge1:e1/0/8 \u00b7 ~5 MACs behind edge1 e1/0/8", "vlans": [30], "px": null, "py": null}, {"name": "internet", "role": "cloud", "rank": -1, "w": 127.60000000000001, "sub": "WAN_GW Online", "status": "up", "vlans": [], "px": null, "py": null}, {"name": "console", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "203.0.113.61", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "nas1", "role": "host", "rank": 2, "viaUn": false, "w": 114.0, "sub": "wired host", "status": "up", "vlans": [20], "px": null, "py": null}, {"name": "pi-hole", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.62", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "printer", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.61", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "shelly-plug", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.62", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "tv-basement", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.60", "status": "up", "vlans": [30], "px": null, "py": null}], "links": [{"source": "core1", "target": "hyp1", "alab": "1/0/1 [1]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.2, "putil": 33.1, "vlans": [1], "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/2 [2]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 0.7, "putil": 33.8, "vlans": [1], "note": null}, {"source": "core1", "target": "edge1", "alab": "1/0/3 [3]", "blab": "e1/0/1", "amode": "trunk", "bmode": "trunk", "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.5, "putil": 33.6, "vlans": [1], "note": null}, {"source": "ap-attic", "target": "edge1", "alab": "eth0", "blab": "e1/0/2", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 4.4, "putil": 33.1, "vlans": null, "note": null}, {"source": "ap-den", "target": "edge1", "alab": "eth0", "blab": "e1/0/3", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 9.4, "putil": 33.9, "vlans": null, "note": null}, {"source": "ap-garage", "target": "edge1", "alab": "eth0", "blab": "e1/0/4", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 10.3, "putil": 33.8, "vlans": null, "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/4", "blab": "vmnic1", "amode": null, "bmode": null, "cls": "vspherehint", "sw": 7.4, "speed": "10G", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "edge1", "target": "unmanaged@edge1:e1/0/8", "alab": "e1/0/8", "blab": "", "amode": "access", "bmode": null, "cls": "fdbinference", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "fw1", "target": "hyp1", "alab": "vm", "blab": "", "amode": null, "bmode": null, "cls": "virtualized", "sw": 2.5, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "internet", "alab": "WAN", "blab": "", "amode": null, "bmode": null, "cls": "wan", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "console", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "edge1", "target": "nas1", "alab": "e1/0/10", "blab": "lan1", "amode": "access", "bmode": null, "cls": "fdbhost", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [20], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "pi-hole", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "printer", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "shelly-plug", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "tv-basement", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}], "vlans": [{"vid": 1, "name": "mgmt"}, {"vid": 20, "name": "servers"}, {"vid": 30, "name": "iot"}]};
+const graph = {"nodes": [{"name": "ap-attic", "label": "ap-attic", "w": 134.8, "sub": "1 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-attic", "vlans": [1], "px": null, "py": null}, {"name": "ap-den", "label": "ap-den", "w": 119.6, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-den", "vlans": [1], "px": null, "py": null}, {"name": "ap-garage", "label": "ap-garage", "w": 142.39999999999998, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-garage", "vlans": [1], "px": null, "py": null}, {"name": "core1", "label": "core1", "w": 180.0, "sub": "192.0.2.2", "status": "up", "role": "switch", "rank": 1, "title": "core1", "vlans": [1], "px": null, "py": null}, {"name": "edge1", "label": "edge1", "w": 180.0, "sub": "192.0.2.3", "status": "up", "role": "switch", "rank": 1, "title": "edge1", "vlans": [1], "px": null, "py": null}, {"name": "fw1", "label": "fw1", "w": 107.4, "sub": "192.0.2.1", "status": "up", "role": "firewall", "rank": 0, "title": "fw1", "vlans": [1, 20, 30], "px": null, "py": null}, {"name": "hyp1", "label": "hyp1", "w": 180.0, "sub": "192.0.2.10 \u00b7 4/4 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp1", "vlans": [1], "px": null, "py": null}, {"name": "hyp2", "label": "hyp2", "w": 180.0, "sub": "192.0.2.11 \u00b7 3/3 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp2", "vlans": [1], "px": null, "py": null}, {"name": "unmanaged@edge1:e1/0/8", "label": "unmanaged", "w": 142.39999999999998, "sub": "5 MACs", "status": "up", "role": "unmanaged-switch", "rank": 2, "title": "unmanaged@edge1:e1/0/8 \u00b7 ~5 MACs behind edge1 e1/0/8", "vlans": [30], "px": null, "py": null}, {"name": "internet", "role": "cloud", "rank": -1, "w": 127.60000000000001, "sub": "WAN_GW Online", "status": "up", "vlans": [], "px": null, "py": null}, {"name": "console", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "203.0.113.61", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "nas1", "role": "host", "rank": 2, "viaUn": false, "w": 114.0, "sub": "wired host", "status": "up", "vlans": [20], "px": null, "py": null}, {"name": "pi-hole", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.62", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "printer", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.61", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "shelly-plug", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.62", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "tv-basement", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.60", "status": "up", "vlans": [30], "px": null, "py": null}], "links": [{"source": "core1", "target": "hyp1", "alab": "1/0/1 [1]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.2, "putil": 33.9, "vlans": [1], "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/2 [2]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 0.7, "putil": 33.2, "vlans": [1], "note": null}, {"source": "core1", "target": "edge1", "alab": "1/0/3 [3]", "blab": "e1/0/1", "amode": "trunk", "bmode": "trunk", "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.5, "putil": 33.6, "vlans": [1], "note": null}, {"source": "ap-attic", "target": "edge1", "alab": "eth0", "blab": "e1/0/2", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 4.4, "putil": 33.6, "vlans": null, "note": null}, {"source": "ap-den", "target": "edge1", "alab": "eth0", "blab": "e1/0/3", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 9.4, "putil": 33.7, "vlans": null, "note": null}, {"source": "ap-garage", "target": "edge1", "alab": "eth0", "blab": "e1/0/4", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 10.3, "putil": 33.7, "vlans": null, "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/4", "blab": "vmnic1", "amode": null, "bmode": null, "cls": "vspherehint", "sw": 7.4, "speed": "10G", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "edge1", "target": "unmanaged@edge1:e1/0/8", "alab": "e1/0/8", "blab": "", "amode": "access", "bmode": null, "cls": "fdbinference", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "fw1", "target": "hyp1", "alab": "vm", "blab": "", "amode": null, "bmode": null, "cls": "virtualized", "sw": 2.5, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "internet", "alab": "WAN", "blab": "", "amode": null, "bmode": null, "cls": "wan", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "console", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "edge1", "target": "nas1", "alab": "e1/0/10", "blab": "lan1", "amode": "access", "bmode": null, "cls": "fdbhost", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [20], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "pi-hole", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "printer", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "shelly-plug", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "tv-basement", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}], "vlans": [{"vid": 1, "name": "mgmt"}, {"vid": 20, "name": "servers"}, {"vid": 30, "name": "iot"}]};
 const svg = d3.select("#topo");
 let W, H;
 ({ width: W, height: H } = svg.node().getBoundingClientRect());
@@ -452,6 +482,19 @@ function bandCenter(rank) {
   const b = BANDS.find(b => b.rank === rank);
   return (b.y0 + b.y1) / 2 * H;
 }
+// Remembered view options (issue #16): a bare /topology — no query, no
+// state-carrying hash — restores the last-used state from localStorage by
+// rewriting the URL *before* anything reads it, so TIERS, readState() and a
+// reload/share all see the same honest URL. Any explicit params mean a deep
+// link, which uses its own params + defaults — no merging; predictable links
+// beat sticky preferences. The snapshot is exempt: the file IS the state.
+if (!SNAPSHOT && !location.search && !location.hash.includes("=")) {
+  try {
+    const qs = localStorage.getItem("patchbay.topo");
+    if (qs) history.replaceState(null, "", location.pathname + "?" + qs);
+  } catch (e) {}
+}
+
 // layout=free (default): ranks are a soft force and pins are full XY — the
 // operator's arrangement wins. layout=tiers: the bands own every node's Y.
 // Read early — node seeding below runs long before the state model.
@@ -462,7 +505,7 @@ const TIERS = (() => {
   }
   return p.get("layout") === "tiers";
 })();
-const CORE_ROLES = new Set(["cloud", "firewall", "switch", "hypervisor"]);
+const CORE_ROLES = new Set(["cloud", "firewall", "router", "switch", "hypervisor"]);
 const OFF_STATUS = new Set(["down", "notresponding", "disabled"]);
 
 // degree from the raw data, before d3 rewrites link endpoints into objects
@@ -540,7 +583,7 @@ const slab = gContent.append("g").selectAll("text").data(graph.links.filter(d =>
     .attr("text-anchor", "middle").text(d => d.speed);
 
 // role icons come from the shared server-side dictionary (web.py ICONS)
-const ICONS = {"ap": "M9 13.2a1.2 1.2 0 100 .01 M5.5 10a5 5 0 017 0 M3 7a8.5 8.5 0 0112 0", "firewall": "M1 3h16v12H1z M1 9h16 M9 3v6 M5 9v6 M13 9v6", "host": "M3 2h12v7h-2.5v3H10v2H8v-2H5.5V9H3z M6 2v3 M9 2v3 M12 2v3", "hypervisor": "M9 2l7 3.5L9 9 2 5.5z M2 9l7 3.5 7-3.5 M2 12.5L9 16l7-3.5", "switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5", "unmanaged-switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5"};
+const ICONS = {"ap": "M9 13.2a1.2 1.2 0 100 .01 M5.5 10a5 5 0 017 0 M3 7a8.5 8.5 0 0112 0", "firewall": "M1 3h16v12H1z M1 9h16 M9 3v6 M5 9v6 M13 9v6", "host": "M3 2h12v7h-2.5v3H10v2H8v-2H5.5V9H3z M6 2v3 M9 2v3 M12 2v3", "hypervisor": "M9 2l7 3.5L9 9 2 5.5z M2 9l7 3.5 7-3.5 M2 12.5L9 16l7-3.5", "router": "M2 9a7 7 0 0014 0A7 7 0 002 9z M5 6.6h6.8 M11.8 6.6L10 4.8 M11.8 6.6L10 8.4 M13 11.4H6.2 M6.2 11.4L8 9.6 M6.2 11.4L8 13.2", "switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5", "unmanaged-switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5"};
 
 const node = gContent.append("g").selectAll("g").data(graph.nodes).join("g")
     .attr("class", d => `node ${d.role}` + (d.px != null ? " pinned" : ""));
@@ -769,6 +812,15 @@ function writeState() {
                           // on file:// in Chrome (opaque origin)
   const qs = buildParams().toString();
   history.replaceState(null, "", location.pathname + (qs ? "?" + qs : ""));
+  // remember the preference half of the state for the next bare visit:
+  // focus names a one-time destination and foreign (_extra) params belong
+  // to the link that carried them, so neither persists
+  try {
+    const keep = buildParams();
+    keep.delete("focus");
+    for (const k in (state._extra || {})) keep.delete(k);
+    localStorage.setItem("patchbay.topo", keep.toString());
+  } catch (e) {}
 }
 
 function set(patch) {
