@@ -50,6 +50,23 @@ Everything above is [@Moonchopper](https://github.com/Moonchopper)
 
 ### Fixed
 
+- **Pages refresh when a poll lands, not on a blind timer.** The old
+  60-second meta refresh reloaded into identical data whether or not the
+  tab was visible, and the pages that opted out to protect on-screen state
+  (topology, ops, configs) never refreshed at all — freezing their own
+  "last polled" header. One shared script now asks `/api/freshness` while
+  the tab is visible, reloads only when a poll actually finished, catches
+  a returning tab up immediately, and defers while the page is busy: an
+  open graph or endpoint row, action output on screen, a config diff, a
+  map the user has touched, or a focused form control. The header age
+  ticks client-side between reloads, so it stays honest everywhere.
+- **Port-graph series are named in readable HTML.** rrdtool draws its
+  legend as tiny vector paths, illegible after scaling — on the errors
+  graph, which color is "Discards In" was a guess, and `58.18m` reads as
+  mega until you squint (it's milli: fractions of a packet per second).
+  Each port graph now carries a caption naming every series with the exact
+  colors the image uses — verified against live LibreNMS output — and
+  spelling out the unit suffixes.
 - **`OPNSENSE_HOST` accepts a scheme.** A full URL (`http://fw1.example.net`)
   reaches an OPNsense that doesn't terminate TLS on its management
   interface; a bare hostname still defaults to HTTPS. Previously the

@@ -205,10 +205,31 @@ document.querySelectorAll("a.pg").forEach(a => a.addEventListener("click", e => 
       `&iface=${encodeURIComponent(a.dataset.if)}&gtype=${g}&hours=${h}&w=${w}`;
   const flex = document.createElement("div");
   flex.style.cssText = "display: flex; gap: .6rem; align-items: flex-start; flex-wrap: wrap";
+  // rrdtool renders its legend as tiny vector paths — illegible after
+  // scaling — so each graph gets an HTML caption naming the series with the
+  // exact colors the image uses, and spelling out rrdtool's unit suffixes
+  // (m = milli: 58.18m pps is a fraction of a packet/s, not mega). Issue #5.
+  const caption = (pairs, unit) => {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.style.cssText = "font-size: .72rem; margin: .25rem 0 0";
+    p.innerHTML = pairs.map(([c, label]) =>
+      `<span style="display:inline-block;width:.65em;height:.65em;border-radius:2px;` +
+      `background:${c};margin-right:.3em"></span>${label}`).join('<span style="margin:0 .5em">·</span>')
+      + `&ensp;<span style="opacity:.8">${unit}</span>`;
+    return p;
+  };
+  const col = (img, cap) => {
+    const d = document.createElement("div");
+    d.style.cssText = img.style.cssText;
+    img.style.cssText = "width: 100%; border-radius: 6px";
+    d.appendChild(img); d.appendChild(cap);
+    return d;
+  };
   const traffic = document.createElement("img");
-  traffic.style.cssText = "max-width: 680px; min-width: 0; flex: 3 1 420px; border-radius: 6px";
+  traffic.style.cssText = "max-width: 680px; min-width: 0; flex: 3 1 420px";
   const errors = document.createElement("img");
-  errors.style.cssText = "max-width: 400px; min-width: 0; flex: 1 1 260px; border-radius: 6px";
+  errors.style.cssText = "max-width: 400px; min-width: 0; flex: 1 1 260px";
   errors.title = "errors";
   const load = h => {
     traffic.src = src("port_bits", h, 620);
@@ -228,10 +249,20 @@ document.querySelectorAll("a.pg").forEach(a => a.addEventListener("click", e => 
     });
     bar.appendChild(b);
   });
+  // colors are ground truth: In/Out/95th are what the /graph proxy paints
+  // (GRAPH_RECOLOR in web.py); the errors palette is what LibreNMS's
+  // port_errors graph emits, verified against a live SVG
+  const trafficCol = col(traffic, caption(
+    [["#58b9c3", "In"], ["#6d83c4", "Out"], ["#cfa049", "95th pct"]],
+    "bits/s — k = thousand, M = million, G = billion"));
+  const errorsCol = col(errors, caption(
+    [["#ff3300", "Errors In"], ["#ff6633", "Errors Out"],
+     ["#805080", "Discards In"], ["#c0a060", "Discards Out"]],
+    "packets/s — m = milli (thousandths), k = thousand"));
   traffic.onerror = () => { td.textContent = "no graph in LibreNMS for this port"; td.className = "muted"; };
-  errors.onerror = () => { errors.dataset.dead = "1"; errors.remove(); };
+  errors.onerror = () => { errors.dataset.dead = "1"; errorsCol.remove(); };
   load(24);
-  flex.appendChild(traffic); flex.appendChild(errors);
+  flex.appendChild(trafficCol); flex.appendChild(errorsCol);
   td.appendChild(bar); td.appendChild(flex); row.appendChild(td); tr.after(row);
 }));
 

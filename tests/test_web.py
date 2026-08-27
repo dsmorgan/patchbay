@@ -709,3 +709,14 @@ def test_fragile_pages_hold_the_refresh(client, tmp_path):
         assert "patchbayHold" in client.get(page).text, page
     body = client.get("/").text
     assert "window.patchbayHold = " not in body
+
+
+def test_port_graphs_carry_readable_captions(client, tmp_path):
+    """Issue #5: rrdtool's legend is illegible vector paths, so the graph row
+    names each series in HTML with the image's exact colors and spells out
+    the unit suffixes (m = milli, not mega)."""
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/device/sw1").text
+    for needle in ("Errors In", "Discards Out", "#805080",
+                   "m = milli (thousandths)", "95th pct"):
+        assert needle in body, needle
