@@ -128,6 +128,19 @@
   .when-wide { display: var(--when-wide); }
   .when-narrow { display: var(--when-narrow); }
   main { padding: 1.2rem 1.4rem 3rem; max-width: 1200px; margin: 0 auto; }
+  /* ---- page header: the question this page answers, and its controls. Title
+     and purpose come from NAV (web.py), so the rail tooltip and the page say
+     the same thing; a breadcrumb appears only on drill-downs. ---- */
+  .page { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.25rem 1rem;
+          padding-bottom: 0.7rem; margin-bottom: 0.9rem; border-bottom: 1px solid var(--grid); }
+  .page h1 { font-size: 1.05rem; font-weight: 650; margin: 0; letter-spacing: 0.01em; }
+  .page .purpose { color: var(--muted); font-size: 0.82rem; margin: 0; flex: 1 1 24ch; }
+  .page .controls { margin-left: auto; display: flex; align-items: center; gap: 0.8rem;
+                    font-size: 0.8rem; }
+  .page .controls:empty { display: none; }
+  .page .breadcrumb { flex-basis: 100%; color: var(--muted); font-size: 0.75rem; }
+  .page .breadcrumb a { color: var(--muted); }
+  .page + h2 { margin-top: 0.4rem; }
   h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.12em;
        color: var(--muted); margin: 1.6rem 0 0.6rem; }
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 0.7rem; }

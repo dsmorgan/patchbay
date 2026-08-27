@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block refresh %}{% endblock %}{# results on screen must not vanish mid-read #}
 {% block title %}ops — patchbay{% endblock %}
-{% block crumb %}<span class="muted">/ ops</span>{% endblock %}
 {% block main %}
 
 <h2>Collect now</h2>
@@ -17,14 +16,9 @@ poll.</p>
   <button class="act" data-url="/ops/poll?source={{ s }}">{{ s }}</button>
   {% endfor %}
   <button class="act" data-url="/ops/rediscover">rediscover (LibreNMS)</button>
-  <button class="act" data-url="/ops/snapshot">snapshot now</button>
-  {% if has_snapshot %}<a href="/ops/snapshot/latest"
-     style="align-self: center; font-size: 0.8rem">download the latest snapshot</a>{% endif %}
 </p>
 
-<pre id="out" class="mono muted" style="display: none; background: var(--card);
-  border: 1px solid var(--line); border-radius: 8px; padding: 0.8rem 1rem;
-  white-space: pre-wrap"></pre>
+{% include "_actions.html" %}
 
 {% if last_poll %}
 <details style="max-width: 900px">
@@ -37,10 +31,12 @@ poll.</p>
 </details>
 {% endif %}
 
-<h2>Effective configuration</h2>
-<p class="muted" style="max-width: 62ch; margin-top: 0.2rem">The values patchbay is
-acting on, with secrets redacted. To change one, edit your env file and restart.
-Nothing on this page writes to that file.</p>
+<h2>Declarations — what only you can tell patchbay</h2>
+<p class="muted" style="max-width: 66ch; margin-top: 0.2rem">Facts no protocol can
+discover. Each declaration has one owner. <strong>If your env file sets it, the env
+file wins</strong> and the field here is read-only. Otherwise, edit it here and
+patchbay stores it in its database. Either way, the change takes effect on the next
+poll.</p>
 {% if conflicts %}
 <div style="border: 1px solid var(--warn); border-radius: 8px; padding: 0.6rem 1rem;
             margin-bottom: 0.8rem; max-width: 760px">
@@ -66,24 +62,6 @@ Nothing on this page writes to that file.</p>
     undeclared link on the next poll. Fix the entry in your env file.</div>
 </div>
 {% endif %}
-<div class="scroll" style="max-width: 900px">
-{% for section, rows in config %}
-<table style="margin-bottom: 1rem">
-  <tr><th colspan="2">{{ section }}</th></tr>
-  {% for k, v in rows %}
-  <tr><td class="mono muted" style="white-space: nowrap; padding-right: 1.4rem">{{ k }}</td>
-      <td class="mono" style="word-break: break-word">{{ v }}</td></tr>
-  {% endfor %}
-</table>
-{% endfor %}
-</div>
-
-<h2>Declarations</h2>
-<p class="muted" style="max-width: 66ch; margin-top: 0.2rem">Facts no protocol can
-discover. Each declaration has one owner. <strong>If your env file sets it, the env
-file wins</strong> and the field here is read-only. Otherwise, edit it here and
-patchbay stores it in its database. Either way, the change takes effect on the next
-poll.</p>
 {% if not decls | selectattr("editable") | list %}
 <p class="muted" style="max-width: 66ch; border-left: 2px solid var(--line);
    padding-left: 0.8rem; font-size: 0.82rem">
@@ -125,29 +103,23 @@ poll.</p>
 </details>
 {% endif %}
 
-<style>
-  button.act { background: var(--card); color: var(--ink); border: 1px solid var(--accent);
-               border-radius: 999px; padding: 0.35rem 0.9rem; font-size: 0.85rem;
-               cursor: pointer; }
-  button.act:hover { background: var(--line); }
-  button.act:disabled { opacity: 0.5; cursor: wait; }
-</style>
+<h2>What patchbay is running on</h2>
+<p class="muted" style="max-width: 62ch; margin-top: 0.2rem">The values patchbay is
+acting on, with secrets redacted. To change one, edit your env file and restart.
+Nothing on this page writes to that file.</p>
+<div class="scroll" style="max-width: 900px">
+{% for section, rows in config %}
+<table style="margin-bottom: 1rem">
+  <tr><th colspan="2">{{ section }}</th></tr>
+  {% for k, v in rows %}
+  <tr><td class="mono muted" style="white-space: nowrap; padding-right: 1.4rem">{{ k }}</td>
+      <td class="mono" style="word-break: break-word">{{ v }}</td></tr>
+  {% endfor %}
+</table>
+{% endfor %}
+</div>
+
 <script>
-const out = document.getElementById("out");
-const buttons = [...document.querySelectorAll("button.act")];
-buttons.forEach(b => b.addEventListener("click", async () => {
-  buttons.forEach(x => x.disabled = true);
-  out.style.display = "";
-  out.textContent = `running ${b.textContent}…`;
-  try {
-    const r = await fetch(b.dataset.url, {method: "POST"});
-    const body = await r.json();
-    out.textContent = (body.lines || [body.detail || r.statusText]).join("\n");
-  } catch (e) {
-    out.textContent = `failed: ${e}`;
-  }
-  buttons.forEach(x => x.disabled = false);
-}));
 document.querySelectorAll(".dclsave").forEach(a => a.addEventListener("click", async e => {
   e.preventDefault();
   const input = document.querySelector(`input.dcl[data-var="${a.dataset.var}"]`);

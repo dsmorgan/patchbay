@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from patchbay import db as pdb
 
-PAGES = ["/", "/topology", "/vlans", "/drift", "/patchpanel", "/ops"]
+PAGES = ["/", "/topology", "/vlans", "/drift", "/patchpanel", "/ops", "/snapshots"]
 
 
 @pytest.fixture()
@@ -55,6 +55,30 @@ def test_all_pages_render_on_seeded_db(clean_env, tmp_path, client):
         assert r.status_code == 200, (p, r.status_code)
     assert "sw1" in client.get("/").text
     assert "vm-a" in client.get("/device/hyp1").text  # guests listed
+
+
+def test_pages_carry_a_header(clean_env, tmp_path, client):
+    # every shell page uses the page-header slot: a <header class="page">
+    # with an <h1> matching the rail's name for that page (NAV, or the
+    # device name for a drill-down) — and none of the old top-bar crumbs
+    seed(str(tmp_path / "test.db"))
+    expect_h1 = {
+        "/": "Overview",
+        "/topology": "Topology",
+        "/vlans": "VLANs",
+        "/drift": "Drift",
+        "/patchpanel": "Patch panels",
+        "/ops": "Ops",
+        "/snapshots": "Snapshots",
+        "/device/sw1": "sw1",
+    }
+    old_crumbs = ["/ vlans", "/ drift", "/ ops", "/ patch panels", "/ configs"]
+    for p in PAGES + ["/device/sw1"]:
+        body = client.get(p).text
+        assert '<header class="page">' in body, p
+        assert f"<h1>{expect_h1[p]}</h1>" in body, p
+        for crumb in old_crumbs:
+            assert crumb not in body, (p, crumb)
 
 
 def test_configs_page_degrades_without_oxidized(client):
@@ -258,14 +282,17 @@ def test_build_stamp_always_names_the_release(clean_env):
 
 def test_empty_sections_are_hidden(clean_env, tmp_path, client):
     # An empty "Access points" heading is noise for every site without APs,
-    # not only on a first run
+    # not only on a first run. The Links table is gone outright (the map
+    # answers it now), so no heading text for it exists to check.
     body = client.get("/").text
-    for heading in ("Fabric", "Access points", "Links"):
+    for heading in ("Fabric — switches and firewalls", "Access points"):
         assert f"<h2>{heading}</h2>" not in body
+    assert "<h2>Links</h2>" not in body
     seed(str(tmp_path / "test.db"))
     body = client.get("/").text
-    assert "<h2>Fabric</h2>" in body and "<h2>Links</h2>" in body
+    assert "<h2>Fabric — switches and firewalls</h2>" in body
     assert "<h2>Access points</h2>" not in body   # the seed has no APs
+    assert "<h2>Links</h2>" not in body
 
 
 def test_every_connection_enforces_foreign_keys(clean_env, tmp_path):
@@ -296,3 +323,344 @@ def test_every_connection_enforces_foreign_keys(clean_env, tmp_path):
     c.execute("DELETE FROM devices WHERE name = 'gone'")
     assert c.execute("SELECT COUNT(*) FROM interfaces").fetchone()[0] == 0
     c.close()
+
+
+# --- configs-timeline ---
+
+def _ox_mock(monkeypatch, handler):
+    """Point web._ox_client at an httpx.MockTransport for the life of a test —
+    no real Oxidized, no new dependency."""
+    import httpx
+    import patchbay.web as web
+
+    monkeypatch.setattr(web, "_ox_client", lambda settings: httpx.Client(
+        transport=httpx.MockTransport(handler), base_url="http://ox.invalid"))
+
+
+def test_configs_timeline_lists_newest_first(clean_env, monkeypatch, client):
+    import httpx
+
+    clean_env.setenv("OXIDIZED_URL", "http://ox.invalid")
+    nodes_json = [{"name": "core1"}, {"name": "edge1"}]
+    versions = {
+        # newest-first per node, like oxidized's own /node/version.json
+        "core1": [
+            {"oid": "c2", "date": "2026-08-20 10:00:00 +0000",
+             "message": "core1 change 2", "author": "alice"},
+            {"oid": "c1", "date": "2026-08-18 10:00:00 +0000",
+             "message": "core1 change 1", "author": "alice"},
+        ],
+        "edge1": [
+            {"oid": "e2", "date": "2026-08-21 10:00:00 +0000",
+             "message": "edge1 change 2", "author": "bob"},
+            {"oid": "e1", "date": "2026-08-15 10:00:00 +0000",
+             "message": "edge1 change 1", "author": "bob"},
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/nodes.json":
+            return httpx.Response(200, json=nodes_json)
+        if request.url.path == "/node/version.json":
+            return httpx.Response(200, json=versions[request.url.params["node_full"]])
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    _ox_mock(monkeypatch, handler)
+    r = client.get("/configs")
+    assert r.status_code == 200
+    body = r.text
+
+    # interleaved across nodes, newest first: edge1(21st), core1(20th),
+    # core1(18th), edge1(15th) — each row's diff/view link carries oid+prev
+    pos_e2 = body.index("/configs/edge1?v=e2&amp;prev=e1")
+    pos_c2 = body.index("/configs/core1?v=c2&amp;prev=c1")
+    pos_c1 = body.index("/configs/core1?v=c1")
+    pos_e1 = body.index("/configs/edge1?v=e1")
+    assert pos_e2 < pos_c2 < pos_c1 < pos_e1
+    assert "&amp;prev=" not in body[pos_c1:pos_c1 + 40]   # oldest version: no prev
+    assert "&amp;prev=" not in body[pos_e1:pos_e1 + 40]
+
+
+def test_configs_timeline_survives_one_bad_node(clean_env, monkeypatch, client):
+    import httpx
+
+    clean_env.setenv("OXIDIZED_URL", "http://ox.invalid")
+    nodes_json = [{"name": "core1"}, {"name": "edge1"}]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/nodes.json":
+            return httpx.Response(200, json=nodes_json)
+        if request.url.path == "/node/version.json":
+            node = request.url.params["node_full"]
+            if node == "edge1":
+                return httpx.Response(500, text="boom")
+            return httpx.Response(200, json=[
+                {"oid": "c1", "date": "2026-08-20 10:00:00 +0000",
+                 "message": "core1 change", "author": "alice"},
+            ])
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    _ox_mock(monkeypatch, handler)
+    r = client.get("/configs")
+    assert r.status_code == 200
+    body = r.text
+    assert "core1 change" in body
+    assert "/configs/core1?v=c1" in body
+    assert "Could not read history for: edge1" in body
+
+
+def test_configs_timeline_unreachable_is_a_state_not_a_crash(clean_env, monkeypatch, client):
+    import httpx
+
+    clean_env.setenv("OXIDIZED_URL", "http://ox.invalid")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    _ox_mock(monkeypatch, handler)
+    r = client.get("/configs")
+    assert r.status_code == 200
+    assert "unreachable" in r.text.lower()
+# --- snapshots-page ---
+
+def test_snapshots_page_lists_newest_first(clean_env, tmp_path, client):
+    d = tmp_path / "snaps"
+    d.mkdir()
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(d))
+    (d / "patchbay-20250101-000000.html").write_text("old")
+    (d / "patchbay-20250201-000000.html").write_text("new")
+    (d / "patchbay-latest.html").write_text("latest")
+    body = client.get("/snapshots").text
+    i_new = body.index("patchbay-20250201-000000.html")
+    i_old = body.index("patchbay-20250101-000000.html")
+    assert i_new < i_old  # newest first
+    assert '/snapshots/patchbay-20250201-000000.html' in body
+    assert '/snapshots/patchbay-latest.html' in body  # "download the latest" link
+
+
+def test_snapshot_download_serves_only_the_pattern(clean_env, tmp_path, client):
+    d = tmp_path / "snaps"
+    d.mkdir()
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(d))
+    (d / "patchbay-20250101-000000.html").write_text("hello")
+    (d / "other.html").write_text("nope")
+
+    r = client.get("/snapshots/patchbay-20250101-000000.html")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("attachment")
+    assert r.text == "hello"
+
+    assert client.get("/snapshots/..%2F..%2Fpatchbay.db").status_code == 404
+    assert client.get("/snapshots/other.html").status_code == 404
+    assert client.get("/snapshots/patchbay-latest.html").status_code == 404  # not written yet
+
+
+def test_snapshots_page_empty_state(client):
+    r = client.get("/snapshots")
+    assert r.status_code == 200
+    assert "No snapshot yet" in r.text
+    assert "PATCHBAY_SNAPSHOT_AT" in r.text
+
+
+def test_ops_no_longer_offers_snapshot_buttons(client):
+    body = client.get("/ops").text
+    assert "snapshot now" not in body
+    assert "download the latest snapshot" not in body
+    assert 'data-url="/ops/snapshot"' not in body
+    # Declarations now comes before the effective-configuration table
+    i_decl = body.index("Declarations — what only you can tell patchbay")
+    i_conf = body.index("What patchbay is running on")
+    assert i_decl < i_conf
+# --- map-url-modes ---
+
+
+def test_topology_page_renders_mode_control(clean_env, tmp_path, client):
+    # ADR-0001 Decision 1: the map's state lives in the URL and `view` is a
+    # mode picked from a segmented control, not a checkbox — same route,
+    # same graph JSON, the client just paints differently.
+    import re
+
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/topology").text
+
+    for mode in ("wiring", "load", "vlan", "evidence"):
+        assert f'id="view-{mode}" value="{mode}"' in body, mode
+        assert f'<label for="view-{mode}">' in body, mode
+
+    # every legend .item is tagged with the modes it applies to, and at
+    # least one item claims each of the four modes
+    items = re.findall(r'<span class="item"[^>]*>', body)
+    assert items, "no legend items found"
+    assert all('data-modes="' in item for item in items), "every .item must carry data-modes"
+    for mode in ("wiring", "load", "vlan", "evidence"):
+        assert any(
+            (m := re.search(r'data-modes="([^"]*)"', item)) and mode in m.group(1).split()
+            for item in items
+        ), f"no legend item claims mode {mode}"
+
+    # the old load-view-checkbox-driven show/hide is gone
+    assert "lnksrc" not in body
+
+    # toolbar ids the ADR/brief pin down as stable stay stable
+    for control_id in ("hideoff", "coreonly", "hosts", "unmhosts", "loadmode",
+                        "vlansel", "legend", "leg-heat", "leg-peak", "leg-vlan", "topo"):
+        assert f'id="{control_id}"' in body, control_id
+
+
+def test_topology_view_load_vlan_and_focus_params_do_not_change_the_graph(clean_env, tmp_path, client):
+    # Decision 1's whole point: no route change. The graph JSON is identical
+    # no matter what the client will do with `view`/`vlan`/`focus` — those
+    # are client-side paint, not server-side filters.
+    seed(str(tmp_path / "test.db"))
+    base = _graph(client, tmp_path)
+    for qs in ("?view=load&load=peak", "?view=vlan&vlan=24", "?view=evidence",
+               "?focus=sw1", "?view=bogus", "?vlan=99999"):
+        assert _graph_at(client, qs) == base, qs
+
+
+def _graph_at(client, qs):
+    import json
+    import re
+
+    r = client.get(f"/topology{qs}")
+    assert r.status_code == 200
+    m = re.search(r"const graph = (\{.*?\});", r.text, re.S)
+    assert m
+    return json.loads(m.group(1))
+# --- overview-exceptions ---
+
+def test_overview_shows_exceptions_when_something_is_wrong(clean_env, tmp_path, client):
+    # a device down and a slow link: two cards, each pointing where the
+    # detail actually lives (the device page, the map centred on it).
+    # links store their two ends direction-normalized (sorted), so the
+    # sw1<->hyp1 link's "a" end is hyp1 — shrink both interfaces so the
+    # slow tier holds regardless of which end speed_of resolves to.
+    dbp = str(tmp_path / "test.db")
+    seed(dbp)
+    c = sqlite3.connect(dbp)
+    c.execute("UPDATE devices SET status = 'down' WHERE name = 'fw1'")
+    c.execute("UPDATE interfaces SET speed_bps = 10000000 WHERE name IN ('1/0/1', 'vmnic0')")
+    c.commit(); c.close()
+
+    body = client.get("/").text
+    assert body.count('class="excard') == 2  # no all-clear card alongside real ones
+    assert "All clear" not in body
+    assert '<a href="/device/fw1">' in body
+    assert '<a href="/topology?focus=hyp1">' in body
+    assert "hyp1 vmnic0 ↔ sw1 1/0/1" in body
+
+
+def test_overview_says_all_clear_when_nothing_is(clean_env, tmp_path, client):
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/").text
+    assert '<div class="excard clear">All clear — every device up, no slow links</div>' in body
+
+
+def test_overview_hides_the_strip_when_nothing_could_be_checked(client):
+    # first-run empty DB: no devices, no links, no IPAM, no polls yet — the
+    # strip has nothing honest to say, so it says nothing
+    body = client.get("/").text
+    assert '<section class="exceptions">' not in body
+
+
+def test_overview_folds_vms_into_hypervisors(clean_env, tmp_path, client):
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/").text
+    assert "<details>" in body
+    assert '<summary class="sub">1/1 VMs running</summary>' in body
+    assert "vm-a" in body
+    assert "<th>Host</th>" not in body
+
+
+def test_overview_drops_the_links_table(clean_env, tmp_path, client):
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/").text
+    assert "<h2>Links</h2>" not in body
+    assert "<tr><th>A</th><th>Port</th><th>B</th><th>Port</th><th>Source</th></tr>" not in body
+# --- deep-links-and-device-endpoints ---
+
+def test_device_page_folds_endpoints_into_ports(clean_env, tmp_path, client):
+    # ADR-0001 Decision 7: endpoints fold into the ports table (exact port
+    # name first, then the same "ethernet"-prefix strip port_vlans/port_roles
+    # use); AP clients (interface = SSID) and MAC-only rows land in the
+    # not-tied-to-a-port section instead.
+    import re
+
+    dbp = str(tmp_path / "test.db")
+    seed(dbp)
+    c = sqlite3.connect(dbp)
+    c.row_factory = sqlite3.Row
+    pdb.init(c)
+    sid = pdb.upsert_device(c, name="sw1", source="librenms")
+    pdb.upsert_interface(c, device_id=sid, name="ethernet1/0/5", oper_status="up")
+    pdb.upsert_endpoint(c, mac="02:00:00:00:00:01", source="fdb", device="sw1",
+                        interface="1/0/1", hostname="laptop1", ip="192.0.2.50", vlan=24)
+    pdb.upsert_endpoint(c, mac="02:00:00:00:00:02", source="fdb", device="sw1",
+                        interface="1/0/5", hostname="laptop2", ip="192.0.2.51", vlan=24)
+    pdb.upsert_endpoint(c, mac="02:00:00:00:00:03", source="unifi", device="sw1",
+                        interface="Guest-WiFi", hostname="phone1")
+    pdb.upsert_endpoint(c, mac="02:00:00:00:00:04", source="fdb", device="sw1")
+    c.commit(); c.close()
+
+    body = client.get("/device/sw1").text
+    assert "Endpoints seen here" not in body
+
+    # exact port-name match: the count link shows "1" and its eprow carries
+    # the endpoint's hostname
+    assert re.search(r'class="ep" data-if="1/0/1"[^>]*>1<', body)
+    m = re.search(r'<tr class="eprow" data-if="1/0/1">(.*?)'
+                  r'(?=<tr class="eprow"|</template>)', body, re.S)
+    assert m and "laptop1" in m.group(1)
+
+    # the "ethernet" prefix fallback: keyed by the port's own name, not the
+    # bare interface number the endpoint carries
+    m = re.search(r'<tr class="eprow" data-if="ethernet1/0/5">(.*?)'
+                  r'(?=<tr class="eprow"|</template>)', body, re.S)
+    assert m and "laptop2" in m.group(1)
+
+    # not tied to a port: the AP client (by SSID) and the MAC-only row
+    assert "Endpoints not tied to a port (2)" in body
+    assert "phone1" in body and "Guest-WiFi" in body
+
+
+def test_vlans_row_links_to_the_map(clean_env, tmp_path, client):
+    # ADR-0001 Decisions 1 & 6: only non-default URL params are serialized
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/vlans").text
+    assert "/topology?view=vlan&vlan=24" in body
+    assert "hideoff=" not in body
+
+
+def test_patchpanel_rows_are_anchored(clean_env, tmp_path, client):
+    # seed()'s sw1 port carries description "uplink [3]" -> populated
+    # position 3; /patchpanel?panel=<name>#p3 must have somewhere to land
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/patchpanel").text
+    assert 'id="p3"' in body
+# --- map-tiers-fit ---
+
+
+def test_topology_page_renders_tier_bands(clean_env, tmp_path, client):
+    # ADR-0001 Decision 2: RANK becomes four labelled swimlanes drawn behind
+    # the nodes; the map fits itself to the frame instead of "breathing" in
+    # two dimensions. The bands are drawn client-side (data-driven — a band
+    # only renders once a rank has a visible node), so what ships is the JS
+    # that draws them, not server-rendered markup.
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/topology").text
+
+    for name in ("Internet", "Edge", "Fabric", "Access & compute"):
+        assert f'"{name}"' in body, name
+
+    # a `fit` control exists in the toolbar, next to nothing else
+    assert 'id="fitbtn"' in body
+
+    # Y is owned by the tier: no separate force pulls nodes toward a rank,
+    # every node's fy is fixed to its band centre, and dragging only ever
+    # sets fx (X-only pins)
+    assert "forceY" not in body
+    assert "bandCenter(n.rank)" in body
+    assert "d.fx = e.x; })" in body  # the drag handler no longer touches fy
+
+    # the simulation can now shrink further to fit a large map to the frame
+    assert "scaleExtent([0.2, 3])" in body

@@ -1,9 +1,7 @@
 {% extends "base.html" %}
 {% block title %}vlans — patchbay{% endblock %}
-{% block crumb %}<span class="muted">/ vlans</span>{% endblock %}
 {% block main %}
 
-<h2>VLANs</h2>
 <p class="muted" style="font-size: 0.8rem">
   carried by = reports the VLAN (Q-BRIDGE); <em>name*</em> = assumed reachable
   over a trunk (trunks pass everything unless PATCHBAY_VLAN_FILTER says otherwise) ·
@@ -18,7 +16,7 @@
     {% if v.subnets %}
       {% for s in v.subnets %}
       <tr>
-        <td class="mono">{{ v.vid if loop.first else "" }}</td>
+        <td class="mono">{% if loop.first %}<a href="/topology?view=vlan&vlan={{ v.vid }}" title="show on the map">{{ v.vid }}</a>{% endif %}</td>
         <td>{{ v.name or "" if loop.first else "" }}</td>
         <td class="mono">{{ s.cidr }}</td>
         <td class="muted">{{ s.descr or "" }}</td>
@@ -30,7 +28,7 @@
       {% endfor %}
     {% else %}
       <tr>
-        <td class="mono">{{ v.vid }}</td>
+        <td class="mono"><a href="/topology?view=vlan&vlan={{ v.vid }}" title="show on the map">{{ v.vid }}</a></td>
         <td>{{ v.name or "" }}</td>
         <td class="muted" colspan="5">no subnet documented in IPAM</td>
         <td class="muted">{% for d in v.devices %}<a href="/device/{{ d.name | urlencode }}">{{ d.name }}</a>{% if d.assumed %}*{% endif %}{{ ", " if not loop.last }}{% endfor %}</td>
@@ -40,7 +38,7 @@
 </table></div>
 
 {% if orphans %}
-<h2>Subnets without a VLAN mapping</h2>
+<h2>Subnets no VLAN claims</h2>
 <div class="scroll"><table>
   <tr><th>subnet</th><th>description</th><th>routed</th><th>live</th><th>documented</th></tr>
   {% for s in orphans %}

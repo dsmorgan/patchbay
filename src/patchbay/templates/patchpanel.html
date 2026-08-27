@@ -1,26 +1,32 @@
 {% extends "base.html" %}
 {% block title %}{{ sel }} — patchbay{% endblock %}
-{% block crumb %}<span class="muted">/ patch panels</span>{% endblock %}
-{% block main %}
-
-<h2 style="margin-top: 0.4rem; display: flex; align-items: center; gap: 0.8rem">
-  {{ sel }}{% if size %} <span style="text-transform: none; letter-spacing: 0">({{ size }} positions)</span>{% endif %}
-  {% if panels | length > 1 %}
+{% block controls %}
+{% if panels | length > 1 %}
   <select onchange="location = '?panel=' + encodeURIComponent(this.value)"
           style="background: var(--card); color: var(--ink); border: 1px solid var(--line);
                  border-radius: 4px; font-size: 0.8rem; padding: 0.1rem 0.3rem">
     {% for p in panels %}
     <option value="{{ p }}" {{ 'selected' if p == sel }}>{{ p }}{% endfor %}
   </select>
-  {% endif %}
-</h2>
+{% endif %}
+{% if size %}<span class="muted">{{ size }} positions</span>{% endif %}
+{% endblock %}
+{% block main %}
+
+<style>
+  /* :target — /patchpanel?panel=<n>#p<i> lands here; accent inset like the rail */
+  tr[id]:target { background: var(--selected); }
+  tr[id]:target td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+</style>
+
+<h2>Positions — {{ sel }}</h2>
 
 <div class="scroll">
 <table>
   <tr><th>Position</th><th>Switch</th><th>Port</th><th>Status</th><th>Speed</th><th>Description</th></tr>
   {% for r in rows %}
   {% if r.dev %}
-  <tr>
+  <tr id="p{{ r.port }}">
     <td class="mono">{{ r.port }}</td>
     <td><a href="/device/{{ r.dev | urlencode }}">{{ r.dev }}</a></td>
     <td class="mono">{{ r.iface }}</td>

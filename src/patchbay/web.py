@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import ipaddress
 import sqlite3
+import time
+from datetime import datetime
 from importlib import resources
 from pathlib import Path
 
@@ -140,6 +142,8 @@ NAV = [
          "IPAM against what the network actually shows"),
         ("/configs", "Configs", "configs",
          "Device configuration history and diffs, from Oxidized"),
+        ("/snapshots", "Snapshots", "snapshots",
+         "Break-glass copies of the whole picture: what is kept, and where it is delivered"),
     ]),
 ]
 templates.env.globals["NAV"] = NAV
@@ -159,6 +163,7 @@ NAV_ICONS = {
                   "M4.5 8v2 M7.5 8v2 M10.5 8v2 M13.5 8v2",
     "drift": "M3 5.5h12 M12 2.5l3 3-3 3 M15 12.5H3 M6 9.5l-3 3 3 3",
     "configs": "M4 1.5h7l4 4v11H4z M11 1.5v4h4 M6.5 9h5 M6.5 12h5",
+    "snapshots": "M2 4.5h14v3H2z M3.5 7.5h11V15h-11z M7 10.5h4",
     "ops": "M2.5 4.5h13 M2.5 9h13 M2.5 13.5h13 M6 2.5v4 M12 7v4 M8 11.5v4",
     "signout": "M7 2.5H3.5v13H7 M11 12.5 14.5 9 11 5.5 M6.5 9H14",
     "collapse": "M2 3h14v12H2z M7 3v12 M13 7l-2 2 2 2",
@@ -197,6 +202,10 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
+STALE_MIN = 15  # same rule the top bar uses (base.html hardcodes this today)
+templates.env.globals["STALE_MIN"] = STALE_MIN   # the top bar uses the same threshold
+
+
 def _age(conn: sqlite3.Connection) -> dict[str, float]:
     rows = conn.execute(
         "SELECT source, (strftime('%s','now') - MAX(fetched_at)) / 60.0 AS mins "
@@ -205,11 +214,220 @@ def _age(conn: sqlite3.Connection) -> dict[str, float]:
     return {r["source"]: round(r["mins"], 1) for r in rows}
 
 
+def speed_tier(bps: int | None) -> str:
+    """"" | "slow" (<=100M) | "vslow" (<=10M) — the one shared threshold the
+    map's edge styling (`edge_speed`) and the overview's slow-link exception
+    both apply, so a link that reads "slow" on the map reads the same way
+    here."""
+    if not bps:
+        return ""
+    return "vslow" if bps <= 10_000_000 else "slow" if bps <= 100_000_000 else ""
+
+
+def drift_report(conn: sqlite3.Connection, settings) -> dict:
+    """Extracted from /drift so the overview's exceptions strip can ask "is
+    IPAM in sync?" without duplicating the query. /drift renders this dict
+    unchanged (plus its own `ages`); / uses only `len(conflicts)` and
+    `have_ipam`."""
+    from .normalize import canon_mac
+
+    nets = []
+    for r in conn.execute("SELECT cidr FROM subnets"):
+        try:
+            nets.append((ipaddress.ip_network(r["cidr"], strict=False), r["cidr"]))
+        except ValueError:
+            pass
+
+    def subnet_of(ip: str) -> str | None:
+        try:
+            a = ipaddress.ip_address(ip)
+        except ValueError:
+            return None
+        best = None
+        for net, cidr in nets:
+            if a in net and (best is None or net.prefixlen > best[0].prefixlen):
+                best = (net, cidr)
+        return best[1] if best else None
+
+    ipam = {r["ip"]: r for r in conn.execute("SELECT * FROM ipam_addresses")}
+    # best live record per IP (prefer one that knows a hostname)
+    observed: dict[str, sqlite3.Row] = {}
+    for r in conn.execute(
+            "SELECT * FROM endpoints WHERE ip IS NOT NULL ORDER BY last_seen"):
+        cur = observed.get(r["ip"])
+        if cur is None or (not cur["hostname"] and r["hostname"]):
+            observed[r["ip"]] = r
+
+    def short(h: str | None) -> str:
+        return (h or "").split(".")[0].lower()
+
+    undocumented, external, conflicts, in_sync = [], [], [], 0
+    for ip in sorted(observed, key=_ip_key):
+        e, doc = observed[ip], ipam.get(ip)
+        if doc is None:
+            entry = {
+                "ip": ip, "hostname": e["hostname"], "mac": e["mac"],
+                "seen_at": (f"{e['device']} {e['interface'] or ''}".strip()
+                            if e["device"] else e["source"]),
+                "subnet": subnet_of(ip),
+            }
+            # outside every documented subnet = WAN-side neighbors (dynamic
+            # carrier addresses) — report as info, not as drift
+            (undocumented if entry["subnet"] else external).append(entry)
+            continue
+        clean = True
+        ipam_h, live_h = short(doc["hostname"]), short(e["hostname"])
+        # prefix match = same name truncated somewhere (DHCP option 12 is
+        # commonly clipped), not drift
+        hostname_ok = (not ipam_h or not live_h
+                       or ipam_h.startswith(live_h) or live_h.startswith(ipam_h))
+        if not hostname_ok:
+            conflicts.append({"ip": ip, "kind": "hostname", "link": _ipam_link(settings, doc),
+                              "ipam": doc["hostname"], "live": e["hostname"]})
+            clean = False
+        if doc["mac"] and e["mac"] and canon_mac(doc["mac"]) != canon_mac(e["mac"]):
+            conflicts.append({"ip": ip, "kind": "mac", "link": _ipam_link(settings, doc),
+                              "ipam": doc["mac"], "live": e["mac"]})
+            clean = False
+        in_sync += clean
+    # "documented but quiet" only matters for addresses IPAM claims are
+    # fixed assets — DHCP-pool rows going quiet is normal, not drift
+    unseen, n_dhcp_quiet = [], 0
+    for ip in sorted(ipam, key=_ip_key):
+        if ip in observed:
+            continue
+        if (ipam[ip]["state"] or "") == "dhcp":
+            n_dhcp_quiet += 1
+        else:
+            unseen.append({**dict(ipam[ip]), "link": _ipam_link(settings, ipam[ip])})
+    have_ipam = bool(ipam)
+    return {
+        "undocumented": undocumented, "external": external, "unseen": unseen,
+        "n_dhcp_quiet": n_dhcp_quiet, "conflicts": conflicts,
+        "in_sync": in_sync, "have_ipam": have_ipam,
+    }
+
+
+def _exceptions(conn: sqlite3.Connection, settings) -> tuple[list[dict], list[str]]:
+    """The strip that answers "is anything wrong?" before anything else on
+    the page. Each rule only speaks when it can actually check something —
+    an empty DB has no opinion on any of these — so `checked` names only the
+    checks that ran; the all-clear card can only claim what it verified."""
+
+    def cnt(n: int, noun: str) -> str:
+        return f"{n} {noun}{'' if n == 1 else 's'}"
+
+    exceptions: list[dict] = []
+    checked: list[str] = []
+
+    # device-down: unknown/NULL status is no opinion, never an exception.
+    # Guests (role='vm') are folded into their hypervisor's card, not here —
+    # TOPO_ROLES already excludes 'vm'.
+    topo_devices = conn.execute(
+        f"SELECT name, role, status FROM devices WHERE role IN "
+        f"({','.join('?' * len(TOPO_ROLES))}) ORDER BY status, name",
+        TOPO_ROLES).fetchall()
+    if topo_devices:
+        checked.append("every device up")
+        down = [r for r in topo_devices if r["status"] in ("down", "notResponding")]
+        disabled = [r for r in topo_devices if r["status"] == "disabled"]
+        if down:
+            exceptions.append({
+                "kind": "device-down", "severity": "crit",
+                "title": f"{cnt(len(down), 'device')} {'is' if len(down) == 1 else 'are'} not up",
+                "href": None,
+                "items": [{"label": r["name"], "detail": f"{r['status']} · {r['role']}",
+                          "href": f"/device/{r['name']}"} for r in down],
+            })
+        if disabled:
+            exceptions.append({
+                "kind": "device-down", "severity": "info",
+                "title": f"{cnt(len(disabled), 'device')} disabled",
+                "href": None,
+                "items": [{"label": r["name"], "detail": f"disabled · {r['role']}",
+                          "href": f"/device/{r['name']}"} for r in disabled],
+            })
+
+    # slow-link: the better-known end's speed through speed_tier() — a link
+    # with no known speed is not slow, same rule the map uses. A small SELECT
+    # of its own; build_topology_graph's speed_of pass isn't refactored for
+    # this.
+    links = conn.execute("SELECT * FROM links ORDER BY a_device, a_interface").fetchall()
+    if links:
+        checked.append("no slow links")
+        speed_of: dict[tuple[str, str], int] = {}
+        for r in conn.execute(
+                "SELECT d.name AS dev, i.name AS iface, i.speed_bps FROM interfaces i "
+                "JOIN devices d ON d.id = i.device_id WHERE i.speed_bps > 0"):
+            speed_of[(r["dev"], r["iface"])] = r["speed_bps"]
+        vslow, slow = [], []
+        for l in links:
+            bps = (speed_of.get((l["a_device"], l["a_interface"]))
+                   or speed_of.get((l["b_device"], l["b_interface"])))
+            tier = speed_tier(bps)
+            if not tier:
+                continue
+            item = {
+                "label": f"{l['a_device']} {l['a_interface']} ↔ {l['b_device']} {l['b_interface']}",
+                "detail": human_speed(bps),
+                "href": f"/topology?focus={l['a_device']}",
+            }
+            (vslow if tier == "vslow" else slow).append(item)
+        if vslow:
+            exceptions.append({
+                "kind": "slow-link", "severity": "crit",
+                "title": f"{cnt(len(vslow), 'link')} {'is' if len(vslow) == 1 else 'are'} "
+                         f"very slow (≤10M)",
+                "href": None, "items": vslow,
+            })
+        if slow:
+            exceptions.append({
+                "kind": "slow-link", "severity": "warn",
+                "title": f"{cnt(len(slow), 'link')} {'is' if len(slow) == 1 else 'are'} "
+                         f"slow (≤100M)",
+                "href": None, "items": slow,
+            })
+
+    # drift: only when the site has IPAM at all — no IPAM, no claim.
+    report = drift_report(conn, settings)
+    if report["have_ipam"]:
+        checked.append("IPAM in sync")
+        conflicts = report["conflicts"]
+        if conflicts:
+            exceptions.append({
+                "kind": "drift", "severity": "warn",
+                "title": f"{cnt(len(conflicts), 'IPAM conflict')}",
+                "href": "/drift",
+                "items": [{"label": c["ip"],
+                          "detail": f"{c['kind']}: IPAM says {c['ipam']}, network says {c['live']}",
+                          "href": c.get("link")} for c in conflicts],
+            })
+
+    # stale-source: any source whose newest payload is older than STALE_MIN,
+    # named — same age the top bar already flags per-source.
+    ages = _age(conn)
+    if ages:
+        checked.append("every source fresh")
+        stale = {s: m for s, m in ages.items() if m > STALE_MIN}
+        if stale:
+            exceptions.append({
+                "kind": "stale-source", "severity": "warn",
+                "title": f"{cnt(len(stale), 'source')} {'is' if len(stale) == 1 else 'are'} stale",
+                "href": "/ops",
+                "items": [{"label": s, "detail": f"{m:.0f}m since last data", "href": None}
+                          for s, m in sorted(stale.items(), key=lambda x: -x[1])],
+            })
+
+    return exceptions, checked
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     conn = _conn()
     try:
         db.init(conn)
+        settings = load_settings()
+        exceptions, checked = _exceptions(conn, settings)
         gateways = conn.execute("SELECT * FROM gateways ORDER BY name").fetchall()
         fabric = conn.execute(
             "SELECT * FROM devices WHERE role IN ('switch','firewall') ORDER BY role, name"
@@ -221,12 +439,19 @@ def dashboard(request: Request):
             "SELECT * FROM devices WHERE role = 'hypervisor' ORDER BY name"
         ).fetchall()
         # anything with a parent lives on a hypervisor — including guests
-        # whose role got promoted (a virtualized firewall is still a VM here)
-        vms = conn.execute(
-            "SELECT * FROM devices WHERE parent IS NOT NULL "
-            "ORDER BY status != 'up', name"
-        ).fetchall()
-        links = conn.execute("SELECT * FROM links ORDER BY a_device, a_interface").fetchall()
+        # whose role got promoted (a virtualized firewall is still a VM here).
+        # vms_by_host groups by devices.parent for the folded-in VM table;
+        # orphan_vms is a parent that isn't a hypervisor on this page, so a
+        # guest never silently disappears.
+        hyp_names = {h["name"] for h in hypervisors}
+        vms_by_host: dict[str, list] = {}
+        orphan_vms: list = []
+        for v in conn.execute(
+                "SELECT * FROM devices WHERE parent IS NOT NULL "
+                "ORDER BY status != 'up', name"):
+            target = (vms_by_host.setdefault(v["parent"], []) if v["parent"] in hyp_names
+                      else orphan_vms)
+            target.append(v)
         # every headline number says what it counted, so nobody has to guess
         # what "93 ports" is a count of
         per_device: dict[str, int] = {}
@@ -268,7 +493,6 @@ def dashboard(request: Request):
 
         from .collectors import available
 
-        settings = load_settings()
         onboarding = None
         if not (fabric or aps or hypervisors):
             configured = sorted(available(settings))
@@ -279,7 +503,8 @@ def dashboard(request: Request):
             }
         return templates.TemplateResponse(request, "dashboard.html", {
             "gateways": gateways, "fabric": fabric, "aps": aps,
-            "hypervisors": hypervisors, "vms": vms, "links": links,
+            "hypervisors": hypervisors, "vms_by_host": vms_by_host,
+            "orphan_vms": orphan_vms, "exceptions": exceptions, "checked": checked,
             "counts": counts, "detail": detail, "sub": sub, "ages": _age(conn),
             "onboarding": onboarding,
         })
@@ -404,8 +629,7 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
         if cap and cap != bps:
             label = f"{label} ({human_speed(cap)})"
         width = max(4.2, min(1.0 + math.log10(bps / 1e8) * 3.2, 9.0))
-        tier = ("vslow" if bps <= 10_000_000
-                else "slow" if bps <= 100_000_000 else "")
+        tier = speed_tier(bps)
         return round(width, 1), label, tier
 
     # VLAN membership per node: Q-BRIDGE tables where a switch reports
@@ -935,86 +1159,13 @@ def _ipam_link(settings, row) -> str | None:
 
 @app.get("/drift", response_class=HTMLResponse)
 def drift(request: Request):
-    from .normalize import canon_mac
-
     settings = load_settings()
     conn = _conn()
     try:
         db.init(conn)
-        nets = []
-        for r in conn.execute("SELECT cidr FROM subnets"):
-            try:
-                nets.append((ipaddress.ip_network(r["cidr"], strict=False), r["cidr"]))
-            except ValueError:
-                pass
-
-        def subnet_of(ip: str) -> str | None:
-            try:
-                a = ipaddress.ip_address(ip)
-            except ValueError:
-                return None
-            best = None
-            for net, cidr in nets:
-                if a in net and (best is None or net.prefixlen > best[0].prefixlen):
-                    best = (net, cidr)
-            return best[1] if best else None
-
-        ipam = {r["ip"]: r for r in conn.execute("SELECT * FROM ipam_addresses")}
-        # best live record per IP (prefer one that knows a hostname)
-        observed: dict[str, sqlite3.Row] = {}
-        for r in conn.execute(
-                "SELECT * FROM endpoints WHERE ip IS NOT NULL ORDER BY last_seen"):
-            cur = observed.get(r["ip"])
-            if cur is None or (not cur["hostname"] and r["hostname"]):
-                observed[r["ip"]] = r
-
-        def short(h: str | None) -> str:
-            return (h or "").split(".")[0].lower()
-
-        undocumented, external, conflicts, in_sync = [], [], [], 0
-        for ip in sorted(observed, key=_ip_key):
-            e, doc = observed[ip], ipam.get(ip)
-            if doc is None:
-                entry = {
-                    "ip": ip, "hostname": e["hostname"], "mac": e["mac"],
-                    "seen_at": (f"{e['device']} {e['interface'] or ''}".strip()
-                                if e["device"] else e["source"]),
-                    "subnet": subnet_of(ip),
-                }
-                # outside every documented subnet = WAN-side neighbors (dynamic
-                # carrier addresses) — report as info, not as drift
-                (undocumented if entry["subnet"] else external).append(entry)
-                continue
-            clean = True
-            ipam_h, live_h = short(doc["hostname"]), short(e["hostname"])
-            # prefix match = same name truncated somewhere (DHCP option 12 is
-            # commonly clipped), not drift
-            hostname_ok = (not ipam_h or not live_h
-                           or ipam_h.startswith(live_h) or live_h.startswith(ipam_h))
-            if not hostname_ok:
-                conflicts.append({"ip": ip, "kind": "hostname", "link": _ipam_link(settings, doc),
-                                  "ipam": doc["hostname"], "live": e["hostname"]})
-                clean = False
-            if doc["mac"] and e["mac"] and canon_mac(doc["mac"]) != canon_mac(e["mac"]):
-                conflicts.append({"ip": ip, "kind": "mac", "link": _ipam_link(settings, doc),
-                                  "ipam": doc["mac"], "live": e["mac"]})
-                clean = False
-            in_sync += clean
-        # "documented but quiet" only matters for addresses IPAM claims are
-        # fixed assets — DHCP-pool rows going quiet is normal, not drift
-        unseen, n_dhcp_quiet = [], 0
-        for ip in sorted(ipam, key=_ip_key):
-            if ip in observed:
-                continue
-            if (ipam[ip]["state"] or "") == "dhcp":
-                n_dhcp_quiet += 1
-            else:
-                unseen.append({**dict(ipam[ip]), "link": _ipam_link(settings, ipam[ip])})
-        have_ipam = bool(ipam)
+        report = drift_report(conn, settings)
         return templates.TemplateResponse(request, "drift.html", {
-            "undocumented": undocumented, "external": external, "unseen": unseen,
-            "n_dhcp_quiet": n_dhcp_quiet, "conflicts": conflicts,
-            "in_sync": in_sync, "have_ipam": have_ipam, "ages": _age(conn),
+            **report, "ages": _age(conn),
         })
     finally:
         conn.close()
@@ -1123,7 +1274,6 @@ def ops(request: Request):
                                 if stored.get(v)),
             "last_poll": last_poll,
             "conflicts": _json_state(conn, "declaration_conflicts") or [],
-            "has_snapshot": (Path(settings.snapshot_dir) / "patchbay-latest.html").exists(),
         })
     finally:
         conn.close()
@@ -1170,6 +1320,72 @@ def ops_snapshot_latest():
         raise HTTPException(404, "no snapshot generated yet")
     return Response(p.read_bytes(), media_type="text/html", headers={
         "Content-Disposition": 'attachment; filename="patchbay-snapshot.html"'})
+
+
+@app.get("/snapshots", response_class=HTMLResponse)
+def snapshots(request: Request):
+    """Kept break-glass snapshots: what is on disk, and where they go. The
+    live UI's action button posts to /ops/snapshot (unchanged); this page
+    just lists and serves what that leaves behind."""
+    import re
+    import time as _time
+
+    from . import demo
+
+    settings = load_settings()
+    d = Path(settings.snapshot_dir)
+    found = []
+    if d.is_dir():
+        for p in d.glob("patchbay-2*.html"):  # excludes patchbay-latest.html
+            m = re.fullmatch(r"patchbay-(\d{8})-(\d{6})\.html", p.name)
+            if not m:
+                continue
+            try:
+                ts = _time.mktime(_time.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S"))
+            except ValueError:
+                continue
+            found.append({
+                "name": p.name,
+                "when": _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(ts)),
+                "ts": ts,
+                "size_mb": round(p.stat().st_size / 1e6, 1),
+                "href": f"/snapshots/{p.name}",
+            })
+    found.sort(key=lambda s: s["ts"], reverse=True)
+    conn = _conn()
+    try:
+        db.init(conn)
+        is_demo = db.get_state(conn, demo.MARKER) == "1"
+        ages = _age(conn)
+    finally:
+        conn.close()
+    return templates.TemplateResponse(request, "snapshots.html", {
+        "snapshots": found,
+        "latest": {"exists": (d / "patchbay-latest.html").exists(),
+                   "href": "/snapshots/patchbay-latest.html"},
+        "settings_view": {"dir": settings.snapshot_dir,
+                           "deliver_dir": settings.snapshot_deliver_dir,
+                           "at": settings.snapshot_at, "keep": settings.snapshot_keep},
+        "is_demo": is_demo,
+        "ages": ages,
+    })
+
+
+@app.get("/snapshots/{name}")
+def snapshot_file(name: str):
+    """Serve one kept snapshot as a download. The filename allowlist admits
+    no separators, so a %2F-smuggled '../' cannot match it; the resolved-
+    parent check is defense in depth against the same class of mistake."""
+    import re
+
+    settings = load_settings()
+    d = Path(settings.snapshot_dir)
+    p = d / name
+    if (not re.fullmatch(r"patchbay-(?:\d{8}-\d{6}|latest)\.html", name)
+            or p.resolve().parent != d.resolve() or not p.exists()):
+        raise HTTPException(404, "no such snapshot")
+    return Response(p.read_bytes(), media_type="text/html", headers={
+        "Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.post("/ops/config")
@@ -1459,6 +1675,72 @@ def _ox_nodes(client: httpx.Client) -> list[dict]:
     return r.json()
 
 
+# cross-device "what changed" timeline: entries across every node, per node,
+# and a wall-clock budget so one slow oxidized instance can't hang the page
+OX_TIMELINE_LIMIT, OX_TIMELINE_PER_NODE, OX_TIMELINE_BUDGET = 50, 20, 8.0
+
+
+def _ox_ts(date: str | None) -> float | None:
+    """Parse an Oxidized version's `date` field into a sortable epoch time.
+    Normally "%Y-%m-%d %H:%M:%S %z"; some setups/versions emit ISO 8601.
+    None (missing or unparseable) so callers can push it to the end."""
+    if not date:
+        return None
+    try:
+        return datetime.strptime(date, "%Y-%m-%d %H:%M:%S %z").timestamp()
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(date).timestamp()
+    except ValueError:
+        return None
+
+
+def _ox_timeline(client: httpx.Client, nodes: list[dict]) -> tuple[list[dict], list[str]]:
+    """One GET /node/version.json?node_full=<node> per node — the same call
+    config_node() makes — merged newest first across every node. A node whose
+    fetch fails is named in the returned `problems` list and simply
+    contributes no rows: one bad or slow node must not blank the rest.
+    Stops picking up further nodes once OX_TIMELINE_BUDGET seconds have
+    elapsed; each node contributes at most OX_TIMELINE_PER_NODE entries."""
+    from urllib.parse import quote
+
+    entries: list[dict] = []
+    problems: list[str] = []
+    start = time.monotonic()
+    for n in nodes:
+        name = n.get("name")
+        if not name:
+            continue
+        if time.monotonic() - start > OX_TIMELINE_BUDGET:
+            break
+        try:
+            r = client.get("/node/version.json", params={"node_full": name})
+            r.raise_for_status()
+            raw = r.json() or []
+        except Exception:
+            problems.append(name)
+            continue
+        for i, v in enumerate(raw[:OX_TIMELINE_PER_NODE]):
+            author = v.get("author")
+            if isinstance(author, dict):
+                author = author.get("name") or author.get("email")
+            oid = v.get("oid", "")
+            prev = raw[i + 1].get("oid", "") if i + 1 < len(raw) else None
+            date = v.get("date") or v.get("time")
+            href = f"/configs/{quote(name, safe='')}?v={quote(oid, safe='')}"
+            if prev:
+                href += f"&prev={quote(prev, safe='')}"
+            entries.append({
+                "node": name, "oid": oid, "prev": prev, "date": date,
+                "ts": _ox_ts(date),
+                "message": (v.get("message") or v.get("subject") or "").strip(),
+                "author": author, "href": href,
+            })
+    entries.sort(key=lambda e: e["ts"] or 0, reverse=True)
+    return entries, problems
+
+
 def _ox_version_text(client: httpx.Client, node: str, v: dict, num: int) -> str:
     """Config text at a given version. oxidized-web's view endpoint has varied
     a little across releases, so accept any of the shapes it's known to emit."""
@@ -1483,12 +1765,14 @@ def _ox_version_text(client: httpx.Client, node: str, v: dict, num: int) -> str:
 def configs(request: Request):
     settings = load_settings()
     nodes, error = [], None
+    entries, problems, truncated = [], [], False
     if not settings.oxidized_url:
         error = "unconfigured"
     else:
         try:
             with _ox_client(settings) as client:
-                for n in _ox_nodes(client):
+                raw_nodes = _ox_nodes(client)
+                for n in raw_nodes:
                     last = n.get("last") or {}
                     nodes.append({
                         "name": n.get("name"), "ip": n.get("ip"),
@@ -1496,10 +1780,15 @@ def configs(request: Request):
                         "status": last.get("status") or n.get("status") or "never",
                         "time": last.get("end") or n.get("time") or n.get("mtime"),
                     })
+                entries, problems = _ox_timeline(client, raw_nodes)
+                if len(entries) > OX_TIMELINE_LIMIT:
+                    truncated = True
+                    entries = entries[:OX_TIMELINE_LIMIT]
         except Exception as exc:  # unreachable oxidized is a state, not a crash
             error = str(exc)
     return templates.TemplateResponse(request, "configs.html", {
         "nodes": nodes, "error": error, "oxidized_url": settings.oxidized_url,
+        "entries": entries, "problems": problems, "truncated": truncated,
     })
 
 
@@ -1646,6 +1935,23 @@ def device(request: Request, name: str):
             "SELECT * FROM endpoints WHERE device = ? ORDER BY interface, hostname",
             (name,),
         ).fetchall()
+        # fold endpoints onto the port they were learned on: exact port name
+        # first, then the same "ethernet"-prefix strip used above for
+        # port_vlans/port_roles, so all three line up on one port identity.
+        # AP clients (interface = SSID) and MAC-only rows land in "other".
+        port_by_ifname: dict[str, str] = {}
+        for p in ports:
+            port_by_ifname.setdefault(p["name"], p["name"])
+        for p in ports:
+            port_by_ifname.setdefault(p["name"].removeprefix("ethernet"), p["name"])
+        endpoints_by_port: dict[str, list] = {}
+        endpoints_other: list = []
+        for e in endpoints:
+            port_name = port_by_ifname.get(e["interface"]) if e["interface"] else None
+            if port_name:
+                endpoints_by_port.setdefault(port_name, []).append(e)
+            else:
+                endpoints_other.append(e)
         links = conn.execute(
             "SELECT * FROM links WHERE a_device = ? OR b_device = ? "
             "ORDER BY a_device, a_interface", (name, name),
@@ -1657,7 +1963,8 @@ def device(request: Request, name: str):
         return templates.TemplateResponse(request, "device.html", {
             "d": dev, "ports": ports, "hidden": hidden, "show_all": show_all,
             "port_vlans": port_vlans, "caps": caps, "port_roles": port_roles,
-            "endpoints": endpoints, "links": links, "children": children,
+            "endpoints_by_port": endpoints_by_port, "endpoints_other": endpoints_other,
+            "links": links, "children": children,
         })
     finally:
         conn.close()

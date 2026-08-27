@@ -16,12 +16,11 @@
 <body class="{{ 'bare' if bare else 'shell' }}">
 <header>
   <h1><a href="/">{% include "_mark.html" %}patchbay</a><span class="ver" title="running build">{{ BUILD }}</span></h1>
-  {% block crumb %}{% endblock %}
   {# one honest number: how stale the freshest full picture is. The oldest
      source sets it, so a stuck collector shows up instead of hiding behind
      a healthy one; per-source detail is in the tooltip and on /ops. #}
   <span class="ages">{%- if ages %}{% set oldest = ages.values() | max %}
-    <span class="{{ 'stale' if oldest > 15 }}"
+    <span class="{{ 'stale' if oldest > STALE_MIN }}"
           title="time since each source last returned data — {% for s, m in ages.items() %}{{ s }} {{ m | round | int }}m{{ ' · ' if not loop.last }}{% endfor %}"
       >last polled {{ oldest | round | int }} min ago</span>
     {%- endif %}</span>
@@ -69,7 +68,30 @@
   </div>
 </div></nav>
 {% endif %}
-<main>{% block main %}{% endblock %}</main>
+<main>
+{% if not bare %}
+{# The page header: what this page answers, in the same words as the rail's
+   tooltip (NAV), with the page's own controls on the right. Drill-downs
+   override `page_title` (a device, a config node) and set `breadcrumb`. #}
+{% set path = request.url.path %}
+{% set nav = namespace(title="", desc="") %}
+{% for label, entries in NAV %}{% for href, name, icon, desc in entries %}
+  {% set on = (path == "/" or path.startswith("/device/")) if href == "/"
+            else (path == href or path.startswith(href ~ "/")) %}
+  {% if on %}
+    {% set nav.title = name %}{% set nav.desc = desc %}
+  {% endif %}
+{% endfor %}{% endfor %}
+{% if path.startswith("/ops") %}{% set nav.title = "Ops" %}
+  {% set nav.desc = "Collect now, the effective configuration, and operator declarations" %}{% endif %}
+<header class="page">
+  {% block breadcrumb %}{% endblock %}
+  <h1>{% block page_title %}{{ nav.title }}{% endblock %}</h1>
+  <p class="purpose">{% block purpose %}{{ nav.desc }}{% endblock %}</p>
+  <div class="controls">{% block controls %}{% endblock %}</div>
+</header>
+{% endif %}
+{% block main %}{% endblock %}</main>
 {% if not bare %}
 <script>
 // the rail's one preference: wide (icons and names) or narrow (icons, names

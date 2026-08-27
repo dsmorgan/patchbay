@@ -108,8 +108,9 @@ and renders one navigable picture:
 - **Ops page** — the effective configuration with secrets redacted, editable
   declarations, and buttons to poll a collector or trigger LibreNMS
   rediscovery after you recable something.
-- **Break-glass snapshots** — `patchbay snapshot`, or the button on the ops
-  page, writes one self-contained HTML file: the interactive map, every device
+- **Break-glass snapshots** — `patchbay snapshot`, or the Snapshots page under
+  Records (which also lists what is kept and where it is delivered), writes one
+  self-contained HTML file: the interactive map, every device
   and port, links, endpoints, traffic graphs, and redacted configs, all
   openable with no connectivity. Ship the snapshot directory to storage that
   survives the network going down.
