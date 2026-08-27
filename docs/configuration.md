@@ -115,7 +115,7 @@ Each collector activates when its variables are set and is skipped otherwise.
 | Oxidized | `OXIDIZED_URL` (its REST API, such as `http://host:8888`) |
 | phpIPAM | `IPAM_URL`, `IPAM_APP_ID`, `IPAM_TOKEN` |
 | UniFi Network app | `UNIFI_URL`, `UNIFI_USER`, `UNIFI_PASS` |
-| OPNsense | `OPNSENSE_HOST`, `OPNSENSE_API_KEY`, `OPNSENSE_API_SECRET` |
+| OPNsense | `OPNSENSE_HOST`, `OPNSENSE_API_KEY`, `OPNSENSE_API_SECRET` — see [OPNsense privileges](#opnsense-api-user-privileges) |
 | vSphere | `VSPHERE_HOST`, `VSPHERE_USER`, `VSPHERE_PASS`, optional `VSPHERE_TLS_VERIFY` (per-source verify override) |
 
 `VSPHERE_TLS_VERIFY` exists because a stock vCenter serves a self-signed VMCA
@@ -125,6 +125,30 @@ point the variable at the VMCA root bundle
 (`https://<vcenter>/certs/download.zip`) so verification passes on the real
 certificate. Leaving verification off means anything on the path can
 impersonate vCenter.
+
+### OPNsense API user privileges
+
+Create a dedicated read-only user (System → Access → Users → +) with a
+scrambled password and an API key. The API key authenticates all collector
+calls; the password is never used. Grant the user these privileges — a 403
+on any endpoint is logged and skipped rather than failing the whole poll, so
+partial grants degrade gracefully:
+
+| Privilege | Endpoint it unlocks |
+|---|---|
+| Diagnostics: ARP Table | ARP table → endpoint MAC/IP mapping |
+| Diagnostics: Routing Tables | Route table → subnet reachability |
+| System: Gateways | Gateway health and status |
+| DHCP: Leases | DHCPv4 lease table → hostname/IP mapping |
+
+The interfaces overview endpoint (`interfaces/overview/export`) does not map
+to a named privilege in current OPNsense releases; if patchbay logs a 403 for
+it, add **Interfaces: Assign network ports** as a fallback — it is the
+broadest read-only interfaces privilege available.
+
+`OPNSENSE_HOST` accepts a bare hostname (`opnsense-rtr1.bub.lan`, defaults to
+HTTPS) or a full URL with scheme (`http://opnsense-rtr1.bub.lan`) for
+installations that do not terminate TLS on the management interface.
 
 ## Operator declarations
 

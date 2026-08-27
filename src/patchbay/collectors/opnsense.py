@@ -27,7 +27,8 @@ class OpnsenseCollector:
                     and settings.opnsense_api_secret)
 
     def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
-        base = f"https://{settings.opnsense_host}/api"
+        host = settings.opnsense_host
+        base = f"{host.rstrip('/')}/api" if "://" in host else f"https://{host}/api"
         auth = (settings.opnsense_api_key, settings.opnsense_api_secret)
         notes: list[str] = []
 
@@ -43,7 +44,8 @@ class OpnsenseCollector:
             # the firewall knows what it is — SNMP only sees "FreeBSD/amd64"
             fw = get("core/firmware/info") or {}
             version = fw.get("product_version")
-            dev_id = db.upsert_device(conn, name=settings.opnsense_host.split(".")[0],
+            _hostname = host.split("://")[-1].split(":")[0]
+            dev_id = db.upsert_device(conn, name=_hostname.split(".")[0],
                                       source=NAME, role="firewall", status="up",
                                       vendor="OPNsense",
                                       os=(f"opnsense {version}" if version else None))
@@ -98,7 +100,7 @@ class OpnsenseCollector:
             n_routes = 0
             if routes:
                 db.save_raw(conn, source=NAME, endpoint="routes", payload=routes)
-                fw_name = settings.opnsense_host.split(".")[0]
+                fw_name = _hostname.split(".")[0]
                 conn.execute("DELETE FROM routes WHERE source = ?", (NAME,))
                 for rt in routes if isinstance(routes, list) else []:
                     dest, proto = rt.get("destination"), rt.get("proto")
