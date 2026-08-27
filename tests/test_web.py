@@ -720,3 +720,30 @@ def test_port_graphs_carry_readable_captions(client, tmp_path):
     for needle in ("Errors In", "Discards Out", "#805080",
                    "m = milli (thousandths)", "95th pct"):
         assert needle in body, needle
+
+
+# --- config version view spacing (issue #12) ---
+
+def test_version_text_never_doubles_newlines(clean_env, monkeypatch):
+    """oxidized-web's list-shaped view response carries a trailing newline on
+    each element; joining with '\n' doubled every blank line. CRLF string
+    bodies doubled the same way in <pre>."""
+    import httpx
+    import patchbay.web as web
+
+    shapes = [
+        ["line one\n", "line two\n", "\n", "line three\n"],   # list w/ newlines
+        ["line one", "line two", "", "line three"],           # list w/o
+        "line one\r\nline two\r\n\r\nline three\r\n",         # CRLF string
+        {"output": "line one\nline two\n\nline three\n"},     # dict, clean
+    ]
+    for shape in shapes:
+        def handler(request, s=shape):
+            return httpx.Response(200, json=s)
+        client = httpx.Client(transport=httpx.MockTransport(handler),
+                              base_url="http://ox.invalid")
+        text = web._ox_version_text(client, "core1", {"oid": "x"}, 0)
+        assert "\n\n\n" not in text, shape       # a blank line stays one blank line
+        assert "\r" not in text
+        assert text.count("line three") == 1
+        assert "line one\nline two\n" in text.replace("\n\n", "\n")

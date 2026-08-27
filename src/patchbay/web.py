@@ -1772,14 +1772,21 @@ def _ox_version_text(client: httpx.Client, node: str, v: dict, num: int) -> str:
     })
     r.raise_for_status()
     data = r.json()
+
+    def clean(text: str) -> str:
+        # oxidized-web list items arrive with their own trailing newlines, so
+        # a plain "\n".join doubled every blank line (issue #12); CRLF bodies
+        # produced the same doubling on the string-shaped branches
+        return text.replace("\r\n", "\n")
+
     if isinstance(data, str):
-        return data
+        return clean(data)
     if isinstance(data, list):
-        return "\n".join(str(x) for x in data)
+        return clean("".join(x if str(x).endswith("\n") else f"{x}\n" for x in map(str, data)))
     if isinstance(data, dict):
         for k in ("output", "config", "data", "blob", "text"):
             if isinstance(data.get(k), str):
-                return data[k]
+                return clean(data[k])
     raise RuntimeError(f"unexpected version/view response shape: {type(data).__name__}")
 
 
