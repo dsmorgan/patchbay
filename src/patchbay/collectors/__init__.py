@@ -63,7 +63,7 @@ def _discover_entry_points() -> None:
 
 def all_collectors() -> dict[str, Collector]:
     # import here so registration side effects run exactly once, lazily
-    from . import librenms, opnsense, oxidized, phpipam, unifi, vsphere  # noqa: F401
+    from . import librenms, opnsense, oxidized, pfsense, phpipam, unifi, vsphere  # noqa: F401
 
     global _discovered
     if not _discovered:

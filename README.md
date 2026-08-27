@@ -123,7 +123,7 @@ patchbay does the aggregation, correlation, and visualization they can't:
 ```
 devices ──► LibreNMS  (SNMP metrics, LLDP links, graphs, alerting)
         ──► Oxidized  (config backup → git)
-        ──► native APIs (UniFi, OPNsense, vSphere, phpIPAM — richer than SNMP)
+        ──► native APIs (UniFi, OPNsense, pfSense, vSphere, phpIPAM — richer than SNMP)
                  │
                  ▼
          patchbay core (FastAPI + Jinja2 + SQLite)
@@ -143,7 +143,7 @@ deleted VM or an undeclared link leaves the map.
 ### Modularity
 
 Collection is a plugin interface. Each source — LibreNMS, Oxidized, UniFi,
-OPNsense, vSphere, phpIPAM — is a self-contained collector that maps its source
+OPNsense, pfSense, vSphere, phpIPAM — is a self-contained collector that maps its source
 into the shared model. Supporting new gear means writing one collector, not
 changing core. The reference deployment uses:
 
@@ -152,6 +152,7 @@ changing core. The reference deployment uses:
 | Netgear M4300 series | SNMPv3 + LLDP (LibreNMS) | Oxidized (SSH) |
 | Brocade/Ruckus ICX (FastIron) | SNMPv3 + LLDP (LibreNMS) | Oxidized (SSH, legacy KEX) |
 | OPNsense | SNMP + REST API | not yet — see the roadmap |
+| pfSense | REST API (pfrest package) | n/a |
 | UniFi APs | self-hosted Network app API | controller autobackup |
 | VMware vSphere / ESXi 7 | pyVmomi | n/a |
 | Unmanaged switches | inferred from MAC tables | n/a |
