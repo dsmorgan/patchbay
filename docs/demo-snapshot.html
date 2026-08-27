@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>patchbay snapshot — 2026-08-26 23:01 EDT</title>
+<title>patchbay snapshot — 2026-08-27 00:13 EDT</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
 <style>
   /* IBM Plex Sans, variable weight, Latin subset, self-hosted (SIL OFL 1.1 —
@@ -235,7 +235,7 @@
     <rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/>
   </g>
 </svg>patchbay snapshot</h1>
-  <nav class="muted">generated 2026-08-26 23:01 EDT · build 0.5.0</nav>
+  <nav class="muted">generated 2026-08-27 00:13 EDT · build 0.6.0</nav>
   <span class="ages">data age at generation: librenms -0.0m · opnsense -0.0m · oxidized -0.0m · phpipam -0.0m · unifi -0.0m · vsphere -0.0m</span>
 </header>
 <main>
@@ -370,6 +370,7 @@ from your own network.</p>
     <label><input type="checkbox" id="coreonly"> core only</label>
     <label><input type="checkbox" id="hosts"> wired hosts</label>
     <label><input type="checkbox" id="unmhosts"> behind unmanaged</label>
+    <label title="lanes own each node's vertical position; off = arrange freely, pins keep both axes"><input type="checkbox" id="tierbox"> tier lanes</label>
   </span>
   <span class="grp" id="loadgrp" hidden>
     <select id="loadmode">
@@ -429,7 +430,7 @@ from your own network.</p>
 
 <script>
 const SNAPSHOT = true;
-const graph = {"nodes": [{"name": "ap-attic", "label": "ap-attic", "w": 134.8, "sub": "1 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-attic", "vlans": [1], "px": null, "py": null}, {"name": "ap-den", "label": "ap-den", "w": 119.6, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-den", "vlans": [1], "px": null, "py": null}, {"name": "ap-garage", "label": "ap-garage", "w": 142.39999999999998, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-garage", "vlans": [1], "px": null, "py": null}, {"name": "core1", "label": "core1", "w": 180.0, "sub": "192.0.2.2", "status": "up", "role": "switch", "rank": 1, "title": "core1", "vlans": [1], "px": null, "py": null}, {"name": "edge1", "label": "edge1", "w": 180.0, "sub": "192.0.2.3", "status": "up", "role": "switch", "rank": 1, "title": "edge1", "vlans": [1], "px": null, "py": null}, {"name": "fw1", "label": "fw1", "w": 107.4, "sub": "192.0.2.1", "status": "up", "role": "firewall", "rank": 0, "title": "fw1", "vlans": [1, 20, 30], "px": null, "py": null}, {"name": "hyp1", "label": "hyp1", "w": 180.0, "sub": "192.0.2.10 \u00b7 4/4 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp1", "vlans": [1], "px": null, "py": null}, {"name": "hyp2", "label": "hyp2", "w": 180.0, "sub": "192.0.2.11 \u00b7 3/3 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp2", "vlans": [1], "px": null, "py": null}, {"name": "unmanaged@edge1:e1/0/8", "label": "unmanaged", "w": 142.39999999999998, "sub": "5 MACs", "status": "up", "role": "unmanaged-switch", "rank": 2, "title": "unmanaged@edge1:e1/0/8 \u00b7 ~5 MACs behind edge1 e1/0/8", "vlans": [30], "px": null, "py": null}, {"name": "internet", "role": "cloud", "rank": -1, "w": 127.60000000000001, "sub": "WAN_GW Online", "status": "up", "vlans": [], "px": null, "py": null}, {"name": "console", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "203.0.113.61", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "nas1", "role": "host", "rank": 2, "viaUn": false, "w": 114.0, "sub": "wired host", "status": "up", "vlans": [20], "px": null, "py": null}, {"name": "pi-hole", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.62", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "printer", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.61", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "shelly-plug", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.62", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "tv-basement", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.60", "status": "up", "vlans": [30], "px": null, "py": null}], "links": [{"source": "core1", "target": "hyp1", "alab": "1/0/1 [1]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.2, "putil": 33.6, "vlans": [1], "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/2 [2]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 0.7, "putil": 33.8, "vlans": [1], "note": null}, {"source": "core1", "target": "edge1", "alab": "1/0/3 [3]", "blab": "e1/0/1", "amode": "trunk", "bmode": "trunk", "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.5, "putil": 33.6, "vlans": [1], "note": null}, {"source": "ap-attic", "target": "edge1", "alab": "eth0", "blab": "e1/0/2", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 4.4, "putil": 33.1, "vlans": null, "note": null}, {"source": "ap-den", "target": "edge1", "alab": "eth0", "blab": "e1/0/3", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 9.4, "putil": 33.9, "vlans": null, "note": null}, {"source": "ap-garage", "target": "edge1", "alab": "eth0", "blab": "e1/0/4", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 10.3, "putil": 33.4, "vlans": null, "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/4", "blab": "vmnic1", "amode": null, "bmode": null, "cls": "vspherehint", "sw": 7.4, "speed": "10G", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "edge1", "target": "unmanaged@edge1:e1/0/8", "alab": "e1/0/8", "blab": "", "amode": "access", "bmode": null, "cls": "fdbinference", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "fw1", "target": "hyp1", "alab": "vm", "blab": "", "amode": null, "bmode": null, "cls": "virtualized", "sw": 2.5, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "internet", "alab": "WAN", "blab": "", "amode": null, "bmode": null, "cls": "wan", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "console", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "edge1", "target": "nas1", "alab": "e1/0/10", "blab": "lan1", "amode": "access", "bmode": null, "cls": "fdbhost", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [20], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "pi-hole", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "printer", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "shelly-plug", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "tv-basement", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}], "vlans": [{"vid": 1, "name": "mgmt"}, {"vid": 20, "name": "servers"}, {"vid": 30, "name": "iot"}]};
+const graph = {"nodes": [{"name": "ap-attic", "label": "ap-attic", "w": 134.8, "sub": "1 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-attic", "vlans": [1], "px": null, "py": null}, {"name": "ap-den", "label": "ap-den", "w": 119.6, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-den", "vlans": [1], "px": null, "py": null}, {"name": "ap-garage", "label": "ap-garage", "w": 142.39999999999998, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-garage", "vlans": [1], "px": null, "py": null}, {"name": "core1", "label": "core1", "w": 180.0, "sub": "192.0.2.2", "status": "up", "role": "switch", "rank": 1, "title": "core1", "vlans": [1], "px": null, "py": null}, {"name": "edge1", "label": "edge1", "w": 180.0, "sub": "192.0.2.3", "status": "up", "role": "switch", "rank": 1, "title": "edge1", "vlans": [1], "px": null, "py": null}, {"name": "fw1", "label": "fw1", "w": 107.4, "sub": "192.0.2.1", "status": "up", "role": "firewall", "rank": 0, "title": "fw1", "vlans": [1, 20, 30], "px": null, "py": null}, {"name": "hyp1", "label": "hyp1", "w": 180.0, "sub": "192.0.2.10 \u00b7 4/4 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp1", "vlans": [1], "px": null, "py": null}, {"name": "hyp2", "label": "hyp2", "w": 180.0, "sub": "192.0.2.11 \u00b7 3/3 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp2", "vlans": [1], "px": null, "py": null}, {"name": "unmanaged@edge1:e1/0/8", "label": "unmanaged", "w": 142.39999999999998, "sub": "5 MACs", "status": "up", "role": "unmanaged-switch", "rank": 2, "title": "unmanaged@edge1:e1/0/8 \u00b7 ~5 MACs behind edge1 e1/0/8", "vlans": [30], "px": null, "py": null}, {"name": "internet", "role": "cloud", "rank": -1, "w": 127.60000000000001, "sub": "WAN_GW Online", "status": "up", "vlans": [], "px": null, "py": null}, {"name": "console", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "203.0.113.61", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "nas1", "role": "host", "rank": 2, "viaUn": false, "w": 114.0, "sub": "wired host", "status": "up", "vlans": [20], "px": null, "py": null}, {"name": "pi-hole", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.62", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "printer", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.61", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "shelly-plug", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.62", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "tv-basement", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.60", "status": "up", "vlans": [30], "px": null, "py": null}], "links": [{"source": "core1", "target": "hyp1", "alab": "1/0/1 [1]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.2, "putil": 33.1, "vlans": [1], "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/2 [2]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 0.7, "putil": 33.8, "vlans": [1], "note": null}, {"source": "core1", "target": "edge1", "alab": "1/0/3 [3]", "blab": "e1/0/1", "amode": "trunk", "bmode": "trunk", "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.5, "putil": 33.5, "vlans": [1], "note": null}, {"source": "ap-attic", "target": "edge1", "alab": "eth0", "blab": "e1/0/2", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 4.4, "putil": 33.1, "vlans": null, "note": null}, {"source": "ap-den", "target": "edge1", "alab": "eth0", "blab": "e1/0/3", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 9.4, "putil": 33.9, "vlans": null, "note": null}, {"source": "ap-garage", "target": "edge1", "alab": "eth0", "blab": "e1/0/4", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 10.3, "putil": 33.8, "vlans": null, "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/4", "blab": "vmnic1", "amode": null, "bmode": null, "cls": "vspherehint", "sw": 7.4, "speed": "10G", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "edge1", "target": "unmanaged@edge1:e1/0/8", "alab": "e1/0/8", "blab": "", "amode": "access", "bmode": null, "cls": "fdbinference", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "fw1", "target": "hyp1", "alab": "vm", "blab": "", "amode": null, "bmode": null, "cls": "virtualized", "sw": 2.5, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "internet", "alab": "WAN", "blab": "", "amode": null, "bmode": null, "cls": "wan", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "console", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "edge1", "target": "nas1", "alab": "e1/0/10", "blab": "lan1", "amode": "access", "bmode": null, "cls": "fdbhost", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [20], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "pi-hole", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "printer", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "shelly-plug", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "tv-basement", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}], "vlans": [{"vid": 1, "name": "mgmt"}, {"vid": 20, "name": "servers"}, {"vid": 30, "name": "iot"}]};
 const svg = d3.select("#topo");
 let W, H;
 ({ width: W, height: H } = svg.node().getBoundingClientRect());
@@ -451,6 +452,16 @@ function bandCenter(rank) {
   const b = BANDS.find(b => b.rank === rank);
   return (b.y0 + b.y1) / 2 * H;
 }
+// layout=free (default): ranks are a soft force and pins are full XY — the
+// operator's arrangement wins. layout=tiers: the bands own every node's Y.
+// Read early — node seeding below runs long before the state model.
+const TIERS = (() => {
+  const p = new URLSearchParams(location.search);
+  if (location.hash.includes("=")) {
+    for (const [k, v] of new URLSearchParams(location.hash.slice(1))) p.set(k, v);
+  }
+  return p.get("layout") === "tiers";
+})();
 const CORE_ROLES = new Set(["cloud", "firewall", "switch", "hypervisor"]);
 const OFF_STATUS = new Set(["down", "notresponding", "disabled"]);
 
@@ -499,8 +510,16 @@ function assignSlots(nodes) {
 assignSlots(graph.nodes);
 graph.nodes.forEach(n => {
   n.x = n.px ?? n.sx;
-  n.y = n.fy = bandCenter(n.rank);   // Y is owned by the tier, always — no exceptions
-  if (n.px != null) n.fx = n.px;     // pins are X-only; py is ignored on load
+  if (TIERS) {
+    n.y = n.fy = bandCenter(n.rank);   // the tier owns Y; pins are X-only
+    if (n.px != null) n.fx = n.px;
+  } else {
+    n.y = n.py ?? bandCenter(n.rank);  // free: saved Y wins, rank only seeds
+    if (n.px != null) {
+      n.fx = n.px;
+      if (n.py != null) n.fy = n.py;   // a full XY pin restores exactly
+    }
+  }
 });
 
 const link = gContent.append("g").selectAll("line").data(graph.links).join("line")
@@ -544,7 +563,8 @@ node.append("title").text(d => d.title ?? d.name);
 node.on("click", (e, d) => {
   if (e.defaultPrevented) return;      // this was the tail of a drag
   if (e.shiftKey && !SNAPSHOT) {       // shift-click unpins (plain click navigates)
-    d.fx = null;                       // Y stays owned by the tier — only the X pin clears
+    d.fx = null;                       // in tiers the band keeps owning Y
+    if (!TIERS) d.fy = null;
     savePos(d.name, null, null);
     d3.select(node.nodes()[graph.nodes.indexOf(d)]).classed("pinned", false);
     sim.alpha(0.3).restart();
@@ -583,6 +603,7 @@ function placePortLabel(sel, d, from, dx, dy) {
 // A band renders only for a rank with >=1 visible node; its width spans that
 // rank's visible nodes' X extent + 400px each side, recomputed at each settle.
 function updateBands() {
+  if (!TIERS) { gBands.selectAll("g.band").remove(); return; }
   const byRank = {};
   graph.nodes.forEach(n => { if (nodeVisible(n)) (byRank[n.rank] = byRank[n.rank] || []).push(n); });
   // fit() only ever shows gContent's bbox (+28px pad) — a band whose rank
@@ -673,6 +694,7 @@ const sim = d3.forceSimulation(graph.nodes)
     .force("charge", d3.forceManyBody().strength(-900))
     .force("x", d3.forceX(d => d.sx).strength(0.08))
     .force("collide", d3.forceCollide(d => d.w / 2 + 26))
+    .force("y", TIERS ? null : d3.forceY(d => bandCenter(d.rank)).strength(0.08))
     .on("tick", ticked)
     .on("end", () => afterSettle(true));
 // the simulation's first tick is async (next animation frame); paint the
@@ -691,7 +713,7 @@ vlansel.append(new Option("all", ""));
 // --- state model -------------------------------------------------------
 // the map's whole state lives in the URL; `view` is a mode, not a checkbox.
 // See docs/adr/0001-page-shell-and-map-modes.md Decision 1 for the contract.
-const DEFAULTS = { view: "wiring", load: "now", vlan: null, focus: null,
+const DEFAULTS = { view: "wiring", load: "now", vlan: null, focus: null, layout: "free",
                     hideoff: true, coreonly: false, hosts: false, unmhosts: false };
 const VIEWS = ["wiring", "load", "vlan", "evidence"];
 const STATE_KEYS = Object.keys(DEFAULTS);
@@ -713,6 +735,7 @@ function readState() {
   s.vlan = (vnum != null && !Number.isNaN(vnum) &&
             (graph.vlans || []).some(v => v.vid === vnum)) ? vnum : null;
   s.focus = params.get("focus") || null;
+  s.layout = params.get("layout") === "tiers" ? "tiers" : "free";
   for (const k of ["hideoff", "coreonly", "hosts", "unmhosts"]) {
     const raw = params.get(k);
     s[k] = raw == null ? DEFAULTS[k] : raw === "1";
@@ -726,20 +749,25 @@ function readState() {
   return s;
 }
 
-function writeState() {
-  if (SNAPSHOT) return;  // the file IS the state; replaceState also throws
-                          // on file:// in Chrome (opaque origin)
+function buildParams() {
   const params = new URLSearchParams();
   if (state.view !== DEFAULTS.view) params.set("view", state.view);
   if (state.load !== DEFAULTS.load) params.set("load", state.load);
   if (state.vlan != null) params.set("vlan", state.vlan);
   if (state.focus) params.set("focus", state.focus);
+  if (state.layout !== DEFAULTS.layout) params.set("layout", state.layout);
   if (state.hideoff !== DEFAULTS.hideoff) params.set("hideoff", state.hideoff ? "1" : "0");
   if (state.coreonly !== DEFAULTS.coreonly) params.set("coreonly", state.coreonly ? "1" : "0");
   if (state.hosts !== DEFAULTS.hosts) params.set("hosts", state.hosts ? "1" : "0");
   if (state.unmhosts !== DEFAULTS.unmhosts) params.set("unmhosts", state.unmhosts ? "1" : "0");
   for (const k in (state._extra || {})) params.set(k, state._extra[k]);
-  const qs = params.toString();
+  return params;
+}
+
+function writeState() {
+  if (SNAPSHOT) return;  // the file IS the state; replaceState also throws
+                          // on file:// in Chrome (opaque origin)
+  const qs = buildParams().toString();
   history.replaceState(null, "", location.pathname + (qs ? "?" + qs : ""));
 }
 
@@ -919,6 +947,7 @@ function applyControls() {
   document.getElementById("coreonly").checked = state.coreonly;
   document.getElementById("hosts").checked = state.hosts;
   document.getElementById("unmhosts").checked = state.unmhosts;
+  document.getElementById("tierbox").checked = state.layout === "tiers";
   document.getElementById("view-" + state.view).checked = true;
   document.getElementById("loadmode").value = state.load;
   vlansel.value = state.vlan == null ? "" : String(state.vlan);
@@ -947,6 +976,19 @@ window.addEventListener("popstate", () => { Object.assign(state, readState()); r
 
 document.getElementById("fitbtn").addEventListener("click", () => fit(true));
 
+// switching layout re-seeds node positions, pins, and forces — a reload with
+// the state in the URL (or, in a snapshot, the hash) is the honest re-init
+document.getElementById("tierbox").addEventListener("change", e => {
+  state.layout = e.target.checked ? "tiers" : "free";
+  if (SNAPSHOT) {
+    location.hash = buildParams().toString();  // whole state survives the toggle
+    location.reload();
+    return;
+  }
+  writeState();
+  location.reload();
+});
+
 // a resize (not just a filter change) moves the map: recompute band centres
 // and every node's Y, then re-fit — debounced so a window drag-resize doesn't
 // thrash the simulation
@@ -955,7 +997,7 @@ new ResizeObserver(() => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     ({ width: W, height: H } = svg.node().getBoundingClientRect());
-    graph.nodes.forEach(n => { n.fy = n.y = bandCenter(n.rank); });
+    if (TIERS) graph.nodes.forEach(n => { n.fy = n.y = bandCenter(n.rank); });
     ticked();
     afterSettle(false);
   }, 150);
@@ -974,8 +1016,9 @@ function savePos(name, x, y) {
 node.call(d3.drag()
     // Y is owned by the tier (d.fy is always its band centre and is never
     // touched here) — drag only ever sets d.fx, so a node slides along its lane
-    .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.25).restart(); d.fx = d.x; })
-    .on("drag", (e, d) => { d.fx = e.x; })
+    .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.25).restart();
+                             d.fx = d.x; if (!TIERS) d.fy = d.y; })
+    .on("drag", (e, d) => { d.fx = e.x; if (!TIERS) d.fy = e.y; })
     .on("end", (e, d) => {
       if (!e.active) sim.alphaTarget(0);
       savePos(d.name, d.fx, d.fy);

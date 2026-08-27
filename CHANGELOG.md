@@ -6,7 +6,7 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.6.0] — 2026-08-27
 
 ### Added
 
@@ -307,6 +307,7 @@ token server-side and recolors graphs in transit.
   work for topology, load, and status, but their per-port VLAN membership
   falls back to SNMP and declarations.
 
+[0.6.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.6.0
 [0.5.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.5.0
 [0.4.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.4.0
 [0.3.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.3.0
