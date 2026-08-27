@@ -74,6 +74,20 @@ Test a first poll against an empty database on its own, too. Anything ordered
 after a step that should precede it looks correct forever afterward, because
 every later poll finds the previous poll's output already on disk.
 
+## What a good PR shows
+
+Evidence, not claims. A PR is easy to merge when it carries:
+
+- the test run's tail (`pytest` — green, including the tests the change adds);
+- for anything visual, a screenshot of each touched page, taken from the
+  running server — markup that returns 200 can still render nothing;
+- a sentence on what was verified by hand and how (the degradation scenarios
+  above, where they apply);
+- a diff clean of real network data (the blocking check in the ground rules).
+
+How you produce the change — editor, AI agents, or both — is your business;
+the PR is judged on what it shows.
+
 ## Style
 
 Match the surrounding code. Comments explain constraints the code can't show,
