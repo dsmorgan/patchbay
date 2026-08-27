@@ -331,10 +331,14 @@ class PfClient:
         if url.endswith("status/system"):
             return PfResponse({"pfsense_version": "2.8.0"})
         if url.endswith("status/interfaces"):
+            # pfrest v2 keys the physical name as "hwif", not "if" (PR #15)
             return PfResponse([
-                {"if": "igc0", "status": "up", "macaddr": "02:d3:00:00:99:01",
-                 "media": "1000baseT <full-duplex>", "ipaddr": "203.0.113.9"},
-                {"if": "igc1.20", "status": "up", "macaddr": "02:d3:00:00:99:02"},
+                {"hwif": "igc0", "name": "wan", "status": "up",
+                 "macaddr": "02:d3:00:00:99:01",
+                 "media": "1000baseT <full-duplex>", "ipaddr": "203.0.113.9",
+                 "ipaddrv6": "2001:db8::9"},
+                {"hwif": "igc1.20", "name": "opt1", "status": "up",
+                 "macaddr": "02:d3:00:00:99:02"},
             ])
         if url.endswith("/interfaces"):
             return PfResponse(self.interfaces)
@@ -381,6 +385,9 @@ def test_pfsense_poll_maps_the_model(conn, clean_env, monkeypatch):
     assert wan["speed_bps"] == 1_000_000_000     # from the media string
     assert wan["ip"] == "203.0.113.9"            # dhcp resolved from live status
     assert wan["mac"] == "02:d3:00:00:99:01"
+    assert wan["ip6"] == "2001:db8::9"               # ipaddrv6 propagates (PR #15)
+    assert dev["mgmt_ip"] == "fw2.example.net"       # the configured host, not '?'
+
 
     assert conn.execute("SELECT vid FROM port_vlans WHERE device='fw2' "
                         "AND interface='igc1.20'").fetchone()[0] == 20

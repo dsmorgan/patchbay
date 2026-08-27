@@ -6,6 +6,21 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [0.6.1] — 2026-08-27
+
+### Fixed
+
+- **pfSense live status actually joins.** pfrest v2's status endpoint names
+  the physical interface `hwif`, not `if`, so 0.6.0's collector never
+  matched live status — oper state, speed, and MAC silently stayed empty.
+  Found and fixed by [@slmingol](https://github.com/slmingol) running it on
+  real hardware ([#15](https://github.com/dsmorgan/patchbay/pull/15)); the
+  fixture test now uses the real `hwif` shape so the join is locked in.
+  The same PR fills the overview card's management address from the
+  configured host on both firewall collectors (a polled IP from LibreNMS
+  still wins the merge) and propagates IPv6 addresses on pfSense
+  interfaces.
+
 ## [0.6.0] — 2026-08-27
 
 ### Added
@@ -307,6 +322,7 @@ token server-side and recolors graphs in transit.
   work for topology, load, and status, but their per-port VLAN membership
   falls back to SNMP and declarations.
 
+[0.6.1]: https://github.com/dsmorgan/patchbay/releases/tag/v0.6.1
 [0.6.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.6.0
 [0.5.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.5.0
 [0.4.0]: https://github.com/dsmorgan/patchbay/releases/tag/v0.4.0
