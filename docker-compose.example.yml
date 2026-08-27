@@ -27,8 +27,19 @@ services:
     #   context: .
     #   args:
     #     GIT_SHA: "${GIT_SHA:-dev}"
+
+    # Default: bridge networking with an explicit port mapping.
     ports:
       - "8013:8080"
+
+    # Alternative (Linux only): host networking. Use when patchbay needs to
+    # reach devices on your LAN that the Docker bridge cannot route to (e.g.
+    # OPNsense, UniFi controllers, LibreNMS on a private VLAN). With host
+    # networking the ports: block above is ignored; the app binds directly to
+    # the host. Override the listen port via the command below if 8080 conflicts.
+    #
+    # network_mode: host
+    # command: patchbay web --host 0.0.0.0 --port 8013
     environment:
       # Not cosmetic: PATCHBAY_SNAPSHOT_AT is compared against the container's
       # local time, so without this a nightly "03:30" fires at 03:30 UTC.
@@ -44,6 +55,9 @@ services:
     #   args:
     #     GIT_SHA: "${GIT_SHA:-dev}"
     command: sh -c 'while true; do patchbay poll; sleep "${PATCHBAY_POLL_INTERVAL:-300}"; done'
+
+    # network_mode: host   # uncomment alongside the web service if using host networking
+
     environment:
       - TZ=${TZ:-UTC}
     volumes:
