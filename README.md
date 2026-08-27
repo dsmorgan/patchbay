@@ -50,6 +50,24 @@ polling; without one you still get snapshots on demand, from the CLI or the
 ops page. Use a checkout to evaluate patchbay or write a collector, and the
 container for anything you intend to keep running.
 
+### Common operations (Makefile)
+
+A `Makefile` is included for day-to-day container and development tasks. Run
+`make` with no arguments to see all targets and the detected runtime:
+
+```sh
+make          # show help + detected runtime (docker/podman)
+make poll     # run one collector poll cycle
+make logs     # follow combined container log output
+make pull     # pull latest image and restart
+make snapshot # write a self-contained HTML snapshot
+make show     # print devices, links, subnets, VLANs, endpoints
+make test     # run the test suite (no network, hermetic)
+```
+
+The runtime is auto-detected (`podman compose` > `docker compose` >
+`docker-compose`). Override with `make COMPOSE="docker compose" poll`.
+
 ### Try it without a network
 
 `patchbay demo` writes a fictional network — two switches, a firewall,
