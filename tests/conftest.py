@@ -29,7 +29,7 @@ def clean_env(tmp_path, monkeypatch):
     PATCHBAY_*/source variable cleared so ambient shell state can't leak in."""
     for var in list(os.environ):
         if var.startswith(("PATCHBAY_", "LIBRENMS_", "IPAM_", "UNIFI_",
-                           "OPNSENSE_", "VSPHERE_", "OXIDIZED_")):
+                           "OPNSENSE_", "PFSENSE_", "VSPHERE_", "OXIDIZED_")):
             monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("PATCHBAY_ENV", os.devnull)
     monkeypatch.setenv("PATCHBAY_DB", str(tmp_path / "test.db"))

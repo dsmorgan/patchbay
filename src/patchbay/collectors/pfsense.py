@@ -1,6 +1,6 @@
 """pfSense collector: interfaces, gateway health, DHCP static mappings.
 
-Auth: x-api-key header (Client-Secret from pfSense REST API package).
+Auth: x-api-key header (the API key from the pfSense REST API package).
 A 403 on any endpoint is logged and skipped; partial grants degrade
 gracefully rather than failing the whole poll.
 """
@@ -62,13 +62,13 @@ class PfsenseCollector:
     name = NAME
 
     def configured(self, settings: Settings) -> bool:
-        return bool(settings.pfsense_host and settings.pfsense_api_secret)
+        return bool(settings.pfsense_host and settings.pfsense_api_key)
 
     def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
         host = settings.pfsense_host
         base = host.rstrip("/") if "://" in host else f"https://{host}"
         headers = {
-            "x-api-key": settings.pfsense_api_secret,
+            "x-api-key": settings.pfsense_api_key,
             "Content-Type": "application/json",
         }
         notes: list[str] = []
@@ -79,6 +79,9 @@ class PfsenseCollector:
                 notes.append(f"{path}: 403")
                 return None
             if r.status_code == 404:
+                # absent endpoint usually means the pfrest package is missing
+                # or too old — say so instead of a healthy-looking zero
+                notes.append(f"{path}: 404 (pfrest package missing or outdated?)")
                 return None
             r.raise_for_status()
             data = r.json()
@@ -119,6 +122,7 @@ class PfsenseCollector:
 
             # Collect tunnel interface ids so we can skip their gateways too
             tunnel_iface_ids: set[str] = set()
+            vlan_rows: list[tuple] = []
 
             iface_cfg = get("api/v2/interfaces") or []
             n_ifaces = 0
@@ -170,16 +174,20 @@ class PfsenseCollector:
                 # igc0.20 → vid=20 untagged (the firewall strips the tag outbound).
                 if "." in iface_id:
                     try:
-                        vid = int(iface_id.rsplit(".", 1)[-1])
-                        conn.execute(
-                            "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
-                            "VALUES (?, ?, ?, 0, ?) "
-                            "ON CONFLICT(device, interface, vid) DO NOTHING",
-                            (dev_name, iface_id, vid, NAME),
-                        )
+                        vlan_rows.append((dev_name, iface_id, int(iface_id.rsplit(".", 1)[-1]), NAME))
                     except ValueError:
                         pass
                 n_ifaces += 1
+
+            # This collector owns its port_vlans rows: delete-then-insert, so a
+            # VLAN sub-interface removed from pfSense leaves the model too
+            # (upsert-only stores rot — see CONTRIBUTING).
+            conn.execute("DELETE FROM port_vlans WHERE source = ? AND device = ?",
+                         (NAME, dev_name))
+            conn.executemany(
+                "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                "VALUES (?, ?, ?, 0, ?) ON CONFLICT(device, interface, vid) DO NOTHING",
+                vlan_rows)
 
             # Purge tunnel interfaces and their port_vlans rows written before the
             # filter was in place. interfaces has no source column, so target by prefix.

@@ -152,7 +152,6 @@ changing core. The reference deployment uses:
 | Netgear M4300 series | SNMPv3 + LLDP (LibreNMS) | Oxidized (SSH) |
 | Brocade/Ruckus ICX (FastIron) | SNMPv3 + LLDP (LibreNMS) | Oxidized (SSH, legacy KEX) |
 | OPNsense | SNMP + REST API | not yet — see the roadmap |
-| pfSense | REST API (pfrest package) | n/a |
 | UniFi APs | self-hosted Network app API | controller autobackup |
 | VMware vSphere / ESXi 7 | pyVmomi | n/a |
 | Unmanaged switches | inferred from MAC tables | n/a |

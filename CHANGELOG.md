@@ -6,6 +6,19 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+
+- **pfSense collector.** Interfaces (config merged with live status: MAC,
+  oper state, speed parsed from the media string, DHCP/PPPoE addresses
+  resolved), gateway health (VPN gateways filtered out), VLAN
+  sub-interfaces onto the 802.1Q column, and DHCP static mappings as
+  endpoints. Needs the [pfrest](https://github.com/pfrest/pfsense-restapi)
+  REST API package; one key in `PFSENSE_API_KEY`, sent as `x-api-key`.
+  From [@slmingol](https://github.com/slmingol)
+  ([#9](https://github.com/dsmorgan/patchbay/pull/9)).
+
 ## [0.5.0] — 2026-08-27
 
 ### Added

@@ -119,10 +119,9 @@ class Settings:
     opnsense_host: str | None
     opnsense_api_key: str | None
     opnsense_api_secret: str | None
-    # pfSense (pfSense REST API package — pfrest)
+    # pfSense (pfSense REST API package — pfrest; one key, sent as x-api-key)
     pfsense_host: str | None
     pfsense_api_key: str | None
-    pfsense_api_secret: str | None
     # vSphere
     vsphere_host: str | None
     vsphere_user: str | None
@@ -351,8 +350,9 @@ def load_settings() -> Settings:
         opnsense_api_key=env("OPNSENSE_API_KEY"),
         opnsense_api_secret=env("OPNSENSE_API_SECRET"),
         pfsense_host=env("PFSENSE_HOST"),
-        pfsense_api_key=env("PFSENSE_API_KEY"),
-        pfsense_api_secret=env("PFSENSE_API_SECRET"),
+        # accept the older name from the PR's first round so a working env
+        # doesn't break on upgrade; PFSENSE_API_KEY is the documented one
+        pfsense_api_key=env("PFSENSE_API_KEY") or env("PFSENSE_API_SECRET"),
         vsphere_host=env("VSPHERE_HOST"),
         vsphere_user=env("VSPHERE_USER"),
         vsphere_pass=env("VSPHERE_PASS"),

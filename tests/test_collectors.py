@@ -287,3 +287,138 @@ def test_opnsense_host_accepts_scheme_and_bare_hostname():
     assert base_and_name("http://fw1.example.net") == ("http://fw1.example.net/api", "fw1")
     assert base_and_name("https://fw1.example.net:8443/") == ("https://fw1.example.net:8443/api", "fw1")
     assert base_and_name("http://192.0.2.1") == ("http://192.0.2.1/api", "192")
+
+
+# --- pfSense (PR #9) ---
+
+class PfResponse:
+    def __init__(self, data, status=200):
+        self._data, self.status_code = data, status
+
+    def raise_for_status(self):
+        assert self.status_code < 400
+
+    def json(self):
+        return {"code": self.status_code, "data": self._data}
+
+
+class PfClient:
+    """Sanitized pfrest v2 shapes: one physical WAN, one VLAN sub-interface,
+    one OpenVPN tunnel (skipped), gateways incl. a VPN one (skipped) and an
+    'unknown' one (passed through), and a DHCP static map. Class-level so a
+    test can shrink the interface list between polls."""
+
+    interfaces = [
+        {"if": "igc0", "id": "wan", "descr": "WAN", "type": "dhcp",
+         "ipaddr": "dhcp", "enable": True},
+        {"if": "igc1.20", "id": "opt1", "descr": "servers",
+         "ipaddr": "192.0.2.1", "enable": True},
+        {"if": "ovpnc1", "id": "opt2", "descr": "vpn out", "type": "openvpn",
+         "ipaddr": "198.51.100.77", "enable": True},
+    ]
+    fail_gateways = False
+
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, url, **kw):
+        if url.endswith("status/system"):
+            return PfResponse({"pfsense_version": "2.8.0"})
+        if url.endswith("status/interfaces"):
+            return PfResponse([
+                {"if": "igc0", "status": "up", "macaddr": "02:d3:00:00:99:01",
+                 "media": "1000baseT <full-duplex>", "ipaddr": "203.0.113.9"},
+                {"if": "igc1.20", "status": "up", "macaddr": "02:d3:00:00:99:02"},
+            ])
+        if url.endswith("/interfaces"):
+            return PfResponse(self.interfaces)
+        if url.endswith("status/gateways"):
+            if self.fail_gateways:
+                return PfResponse(None, status=403)
+            return PfResponse([
+                {"name": "WAN_DHCP", "interface": "igc0", "status": "online",
+                 "monitorip": "203.0.113.1", "loss": "0.0", "stddev": "1.2"},
+                {"name": "HOME_VPNV4", "interface": "ovpnc1", "status": "online"},
+                {"name": "WAN6_DHCP6", "interface": "igc0", "status": "unknown"},
+            ])
+        if url.endswith("services/dhcp_servers"):
+            return PfResponse([{"interface": "opt1", "staticmap": [
+                {"mac": "02:D3:00:00:99:10", "ipaddr": "192.0.2.40",
+                 "hostname": "printer"}]}])
+        return PfResponse(None, status=404)
+
+
+def _pf_settings(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("PFSENSE_HOST", "https://fw2.example.net")
+    clean_env.setenv("PFSENSE_API_KEY", "k")
+    return load_settings()
+
+
+def test_pfsense_poll_maps_the_model(conn, clean_env, monkeypatch):
+    from patchbay.collectors.pfsense import PfsenseCollector
+
+    monkeypatch.setattr(httpx, "Client", PfClient)
+    summary = PfsenseCollector().collect(_pf_settings(clean_env), conn)
+    assert "2 interfaces" in summary
+
+    dev = conn.execute("SELECT * FROM devices WHERE name='fw2'").fetchone()
+    assert dev["role"] == "firewall" and dev["os"] == "pfsense 2.8.0"
+
+    names = {r[0] for r in conn.execute(
+        "SELECT i.name FROM interfaces i JOIN devices d ON d.id=i.device_id "
+        "WHERE d.name='fw2'")}
+    assert names == {"igc0", "igc1.20"}          # the tunnel never lands
+    wan = conn.execute(
+        "SELECT * FROM interfaces i JOIN devices d ON d.id=i.device_id "
+        "WHERE d.name='fw2' AND i.name='igc0'").fetchone()
+    assert wan["speed_bps"] == 1_000_000_000     # from the media string
+    assert wan["ip"] == "203.0.113.9"            # dhcp resolved from live status
+    assert wan["mac"] == "02:d3:00:00:99:01"
+
+    assert conn.execute("SELECT vid FROM port_vlans WHERE device='fw2' "
+                        "AND interface='igc1.20'").fetchone()[0] == 20
+
+    gws = {r["name"]: r["status"] for r in
+           conn.execute("SELECT * FROM gateways WHERE source='pfsense'")}
+    assert gws == {"WAN_DHCP": "up", "WAN6_DHCP6": "unknown"}  # VPN gw skipped
+
+    ep = conn.execute("SELECT * FROM endpoints WHERE mac='02:d3:00:00:99:10'").fetchone()
+    assert ep["ip"] == "192.0.2.40" and ep["hostname"] == "printer"
+
+
+def test_pfsense_retracts_a_removed_vlan_subinterface(conn, clean_env, monkeypatch):
+    from patchbay.collectors.pfsense import PfsenseCollector
+
+    monkeypatch.setattr(httpx, "Client", PfClient)
+    s = _pf_settings(clean_env)
+    PfsenseCollector().collect(s, conn)
+    assert conn.execute("SELECT COUNT(*) FROM port_vlans WHERE device='fw2'").fetchone()[0] == 1
+    monkeypatch.setattr(PfClient, "interfaces", PfClient.interfaces[:1])  # subif deleted
+    PfsenseCollector().collect(s, conn)
+    assert conn.execute("SELECT COUNT(*) FROM port_vlans WHERE device='fw2'").fetchone()[0] == 0
+
+
+def test_pfsense_403_degrades_and_is_named(conn, clean_env, monkeypatch):
+    from patchbay.collectors.pfsense import PfsenseCollector
+
+    monkeypatch.setattr(httpx, "Client", PfClient)
+    monkeypatch.setattr(PfClient, "fail_gateways", True)
+    summary = PfsenseCollector().collect(_pf_settings(clean_env), conn)
+    assert "403" in summary                       # named, not fatal
+    assert "2 interfaces" in summary              # the rest still polled
+
+
+def test_pfsense_accepts_the_first_round_env_name(clean_env):
+    from patchbay.collectors.pfsense import PfsenseCollector
+    from patchbay.config import load_settings
+    clean_env.setenv("PFSENSE_HOST", "https://fw2.example.net")
+    clean_env.setenv("PFSENSE_API_SECRET", "legacy")
+    s = load_settings()
+    assert PfsenseCollector().configured(s) and s.pfsense_api_key == "legacy"
