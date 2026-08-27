@@ -28,25 +28,34 @@
     /* the rail is one width and a handful of switches, so its collapsed
        state — html.rail-collapsed, or any viewport too narrow for labels —
        is the same rail with different values, not a second set of rules */
-    --rail-w: 172px; --rail-label: block; --when-wide: block; --when-narrow: none;
+    --rail-w: 172px; --when-wide: block; --when-narrow: none;
+    /* labels animate (issue #21): width/opacity/visibility instead of
+       display, so the collapse can slide rather than snap */
+    --rail-label-max: 12rem; --rail-label-o: 1; --rail-label-vis: visible;
+    --rail-gap: 0.55rem;
     --rail-heading-pad: 0.3rem 0.5rem 0.25rem; --rail-heading-h: auto;
     --rail-tab-pad: 0.36rem 0.6rem 0.36rem 0.5rem; --rail-tab-justify: flex-start;
     --rail-indent: 6px; --rail-top-justify: flex-end;
   }
   html.rail-collapsed {
-    --rail-w: 54px; --rail-label: none; --when-wide: none; --when-narrow: block;
+    --rail-w: 54px; --when-wide: none; --when-narrow: block;
+    --rail-label-max: 0px; --rail-label-o: 0; --rail-label-vis: hidden;
+    --rail-gap: 0;
     --rail-heading-pad: 0; --rail-heading-h: 6px;
     --rail-tab-pad: 0.42rem 0; --rail-tab-justify: center;
     --rail-indent: 0; --rail-top-justify: center;
   }
   @media (max-width: 640px) {
     :root {
-      --rail-w: 54px; --rail-label: none; --when-wide: none; --when-narrow: block;
+      --rail-w: 54px; --when-wide: none; --when-narrow: block;
+      --rail-label-max: 0px; --rail-label-o: 0; --rail-label-vis: hidden;
+      --rail-gap: 0;
       --rail-heading-pad: 0; --rail-heading-h: 6px;
       --rail-tab-pad: 0.42rem 0; --rail-tab-justify: center;
       --rail-indent: 0; --rail-top-justify: center;
     }
     .rail .rail-toggle { display: none; }  /* nothing to toggle: too narrow for labels */
+    .rail .rail-pin { display: none; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink);
@@ -109,13 +118,15 @@
   .rail-heading { padding: var(--rail-heading-pad); height: var(--rail-heading-h);
                   overflow: hidden; color: var(--ink2); font-size: 0.64rem;
                   font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
-  .rail-heading-text { display: var(--rail-label); }
+  .rail-heading-text { display: block; overflow: hidden; white-space: nowrap;
+                       max-width: var(--rail-label-max);
+                       opacity: var(--rail-label-o); visibility: var(--rail-label-vis); }
   .rail-group, .rail-foot { display: flex; flex-direction: column; gap: 1px; }
   .rail-group + .rail-group, .rail-foot { margin-top: 8px; padding-top: 8px;
                                          border-top: 1px solid var(--grid); }
   .rail-group .rail-tab { margin-left: var(--rail-indent); }
   .rail-tab { display: flex; align-items: center; justify-content: var(--rail-tab-justify);
-              gap: 0.55rem; padding: var(--rail-tab-pad);
+              gap: var(--rail-gap); padding: var(--rail-tab-pad);
               border: 0; border-left: 2px solid transparent; border-radius: 6px;
               background: none; color: var(--muted); font: 600 0.8rem/1.3 var(--font-ui);
               text-align: left; white-space: nowrap; overflow: hidden; cursor: pointer; }
@@ -125,9 +136,22 @@
      column of words; the selected one comes up with the rest of the row */
   .rail-icon { flex: none; width: 16px; height: 16px; opacity: 0.85; }
   .rail-tab.on .rail-icon, .rail-tab:hover .rail-icon, .rail-chevron .rail-icon { opacity: 1; }
-  .rail-label { display: var(--rail-label); overflow: hidden; text-overflow: ellipsis; }
+  .rail-label { display: block; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; max-width: var(--rail-label-max);
+                opacity: var(--rail-label-o); visibility: var(--rail-label-vis); }
+  /* pin only exists while there are labels to keep; pinned = accent */
+  html.rail-collapsed .rail-pin { display: none; }
+  .rail-pin[aria-pressed="true"] { color: var(--accent); }
   .when-wide { display: var(--when-wide); }
   .when-narrow { display: var(--when-narrow); }
+  /* the collapse slides instead of snapping — skipped, not slowed, when the
+     viewer prefers reduced motion */
+  @media (prefers-reduced-motion: no-preference) {
+    body.shell { transition: grid-template-columns 0.18s ease; }
+    .rail-tab { transition: gap 0.18s ease; }
+    .rail-label, .rail-heading-text {
+      transition: max-width 0.18s ease, opacity 0.12s ease, visibility 0.18s; }
+  }
   main { padding: 1.2rem 1.4rem 3rem; max-width: 1200px; margin: 0 auto; }
   /* ---- page header: the question this page answers, and its controls. Title
      and purpose come from NAV (web.py), so the rail tooltip and the page say

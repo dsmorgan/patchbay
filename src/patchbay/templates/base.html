@@ -7,9 +7,13 @@
 <title>{% block title %}patchbay{% endblock %}</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
 {% include "_style.html" %}
-{# the rail's collapsed/expanded preference goes on <html> before first
-   paint, so a page never draws wide and then snaps narrow #}
-<script>try{if(localStorage.getItem("patchbay.rail")==="collapsed")document.documentElement.classList.add("rail-collapsed")}catch(e){}</script>
+{# the rail preference goes on <html> before first paint, so a page never
+   draws wide and then snaps narrow. Three states (issue #21): "pinned"
+   stays expanded across pages; anything else — "auto", the default — means
+   the rail's job ended with the last navigation, so each page renders
+   collapsed and an expand lasts only until the next page. Legacy
+   "expanded" (the old two-state value) reads as pinned. #}
+<script>try{var v=localStorage.getItem("patchbay.rail");if(v!=="pinned"&&v!=="expanded")document.documentElement.classList.add("rail-collapsed")}catch(e){}</script>
 </head>
 {# `bare` (set by a page, e.g. login) drops the rail and the shell grid #}
 <body class="{{ 'bare' if bare else 'shell' }}">
@@ -32,6 +36,9 @@
 {% set signed_in = request.state.auth and request.state.auth != "-" %}
 <nav class="rail" aria-label="Pages"><div class="rail-stick">
   <div class="rail-top">
+    <button type="button" class="rail-chevron rail-pin" aria-pressed="false"
+            title="Pin the rail open across pages"
+            aria-label="Pin the rail open across pages">{{ ui.nicon("pin") }}</button>
     <button type="button" class="rail-chevron rail-toggle" title="Collapse the rail to icons"
             aria-label="Collapse the rail to icons" aria-expanded="true">
       {{ ui.nicon("chevrons-left", "when-wide") }}{{ ui.nicon("chevrons-right", "when-narrow") }}</button>
@@ -93,10 +100,17 @@
 {% block main %}{% endblock %}</main>
 {% if not bare %}
 <script>
-// the rail's one preference: wide (icons and names) or narrow (icons, names
-// in the hover title). Stored per browser; applied before paint in <head>.
+// The rail's preference (issue #21): "pinned" keeps it expanded across
+// pages; "auto" (default) means every page renders collapsed and an expand
+// is transient — the rail's job ends with the navigation it enabled. The
+// <head> script applied the stored state before paint; this wires the
+// toggles, the pin, and the hover titles.
 (() => {
   const root = document.documentElement;
+  const KEY = "patchbay.rail";
+  const stored = () => { try { return localStorage.getItem(KEY); } catch (e) { return null; } };
+  const save = v => { try { localStorage.setItem(KEY, v); } catch (e) {} };
+  const pinned = () => ["pinned", "expanded"].includes(stored());  // legacy value = pinned
   const apply = () => {
     const narrow = root.classList.contains("rail-collapsed");
     document.querySelectorAll(".rail-tab[data-name]").forEach(a => {
@@ -107,10 +121,20 @@
       b.setAttribute("aria-label", b.title);
       b.setAttribute("aria-expanded", String(!narrow));
     });
+    document.querySelectorAll(".rail-pin").forEach(b => {
+      b.title = pinned() ? "Unpin: the rail collapses again after you pick a page"
+                         : "Pin the rail open across pages";
+      b.setAttribute("aria-label", b.title);
+      b.setAttribute("aria-pressed", String(pinned()));
+    });
   };
   document.querySelectorAll(".rail-toggle").forEach(b => b.addEventListener("click", () => {
     const narrow = root.classList.toggle("rail-collapsed");
-    try { localStorage.setItem("patchbay.rail", narrow ? "collapsed" : "expanded"); } catch (e) {}
+    if (narrow) save("auto");   // collapsing by hand also unpins;
+    apply();                    // expanding is transient and saves nothing
+  }));
+  document.querySelectorAll(".rail-pin").forEach(b => b.addEventListener("click", () => {
+    save(pinned() ? "auto" : "pinned");
     apply();
   }));
   apply();

@@ -30,6 +30,24 @@ put.
   query params are never remembered, and the snapshot keeps its
   hash-state behavior untouched.
 
+- **The rail gets out of the way**
+  ([#21](https://github.com/dsmorgan/patchbay/issues/21)). By default the
+  nav rail now collapses back to icons after you pick a page — its job
+  ended with the navigation. A pin button (shown while expanded) locks it
+  open across pages, restoring the old behavior; collapsing by hand also
+  unpins. The collapse slides instead of snapping (~180 ms; skipped
+  entirely under `prefers-reduced-motion`). The stored preference migrates:
+  a previously chosen "expanded" reads as pinned.
+
+- **Actions reflect their own results**
+  ([#19](https://github.com/dsmorgan/patchbay/issues/19)). Taking a
+  snapshot now puts the new file in the kept list without a reload, and the
+  same mechanism covers every action: on completion, the page re-fetches
+  itself and swaps its marked live regions in place — /snapshots' latest
+  link and kept list; /ops' last-poll report, declaration conflicts, export
+  lines, and effective-config table (including after a declaration save).
+  Output on screen and half-typed fields are never disturbed.
+
 - **Declarations explain themselves on /ops**
   ([#20](https://github.com/dsmorgan/patchbay/issues/20)). Every declaration
   field carries a "?" toggle with one sentence on what it does, the syntax,

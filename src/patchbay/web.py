@@ -172,6 +172,7 @@ NAV_ICONS = {
     "expand": "M2 3h14v12H2z M7 3v12 M10.5 7l2 2-2 2",
     "chevrons-left": "M10 4L5.5 9 10 14 M15 4l-4.5 5 4.5 5",
     "chevrons-right": "M8 4l4.5 5L8 14 M3 4l4.5 5L3 14",
+    "pin": "M6 2h6 M9 2v4 M7 6h4l2 4H5z M9 10v6",
 }
 templates.env.globals["NAV_ICONS"] = NAV_ICONS
 
