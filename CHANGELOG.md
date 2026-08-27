@@ -20,6 +20,14 @@ put.
   a Fabric card of its own, still folded in under its hypervisor. No
   collector emits the role yet — this makes the UI ready for one that does.
 
+### Fixed
+
+- **Patch panel size no longer reads as part of the title**
+  ([#18](https://github.com/dsmorgan/patchbay/issues/18)). The declared
+  "N positions" moved from the header's controls slot — where the
+  pages-and-map milestone had left it sitting beside the page title — to
+  the muted purpose line, where data belongs.
+
 ## [0.6.1] — 2026-08-27
 
 ### Fixed
