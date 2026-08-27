@@ -24,6 +24,81 @@ DECLARATION_VARS = (
     "PATCHBAY_EXPECT",
 )
 
+# Inline help for /ops (issue #20): what each declaration does, its syntax,
+# and one realistic example — the single source of truth for in-product help.
+# docs/configuration.md stays the deep reference; this is the sentence that
+# saves the context switch. Examples use the documentation network's names
+# and RFC 5737 addresses only. Keys must match DECLARATION_VARS (tested).
+DECLARATION_HELP = {
+    "PATCHBAY_ALIASES": {
+        "what": "Maps a chassis serial or an FQDN some source reports onto "
+                "the canonical device name, so one box stops appearing as two.",
+        "syntax": "reported=canonical, comma-separated",
+        "example": "ABC123456=core1,core1.example.internal=core1",
+    },
+    "PATCHBAY_UNMANAGED": {
+        "what": "Ports you know feed an unmanaged switch, shown even when "
+                "too few MACs are live for patchbay to infer one.",
+        "syntax": "device:interface, comma-separated",
+        "example": "core1:1/0/8,sw1:e1/1/5",
+    },
+    "PATCHBAY_LINKS": {
+        "what": "Cabling nothing can discover: a port to a dumb device, a "
+                "quiet bond member, or a mirror destination. The far side "
+                "may be a bare name when its own port is unknowable. "
+                "Removing an entry removes the link.",
+        "syntax": "device:interface=device:interface (or =name), "
+                  "comma-separated",
+        "example": "core1:1/0/3=hyp1:vmnic6,sw1:e1/1/24=basement-tv",
+    },
+    "PATCHBAY_RELATED": {
+        "what": "Out-of-band ties — a BMC/iDRAC/CIMC and the server it "
+                "manages.",
+        "syntax": "bmc=server, comma-separated",
+        "example": "bmc1=hyp1",
+    },
+    "PATCHBAY_VLAN_FILTER": {
+        "what": "Trunks with a restricted VLAN list. Trunks are otherwise "
+                "assumed to carry every VLAN, since allowed-lists aren't "
+                "readable over SNMP.",
+        "syntax": "device:interface=vid+vid+vid, comma-separated",
+        "example": "core1:1/0/11=1+24+73",
+    },
+    "PATCHBAY_CAPACITY": {
+        "what": "Real service capacity where it is below the port speed — a "
+                "10G port carrying a 3G circuit. Load math divides by this; "
+                "the map shows \"10G (3G)\".",
+        "syntax": "device:interface=capacity, comma-separated",
+        "example": "core1:1/0/16=3G",
+    },
+    "PATCHBAY_PANELS": {
+        "what": "Patch panels. The regex's first capture group is the panel "
+                "position a port description claims. Size 0 sizes the panel "
+                "by the highest position seen.",
+        "syntax": "name:size=regex, comma-separated",
+        "example": "Basement:12=\\[(\\d+)\\]",
+    },
+    "PATCHBAY_WAN_NAME": {
+        "what": "Internet providers, paired by position with "
+                "PATCHBAY_WAN_PORT. One name with several ports is "
+                "redundant circuits to one provider.",
+        "syntax": "provider name, comma-separated",
+        "example": "Example Fiber",
+    },
+    "PATCHBAY_WAN_PORT": {
+        "what": "Where each internet provider physically lands.",
+        "syntax": "device:interface, comma-separated",
+        "example": "core1:1/0/16",
+    },
+    "PATCHBAY_EXPECT": {
+        "what": "Expected conditions, silenced on the Overview's attention "
+                "list: a port whose link is legitimately slow, or a whole "
+                "device (bare name) to quiet every item naming it.",
+        "syntax": "device:interface or device, comma-separated",
+        "example": "core1:1/0/16,esxi1",
+    },
+}
+
 
 class DeclarationReadError(Exception):
     """The DB exists but its declarations couldn't be read (locked, corrupt).

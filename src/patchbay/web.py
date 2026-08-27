@@ -1226,16 +1226,22 @@ def ops(request: Request):
     import os
 
     from .collectors import available
-    from .config import DECLARATION_VARS, _db_declarations
+    from .config import DECLARATION_HELP, DECLARATION_VARS, _db_declarations
 
     settings = load_settings()
     stored = _db_declarations(settings.db_path)
+    # a field's own parse warnings render beside the field, where the syntax
+    # help is; only warnings that name no declaration stay in the top box
     decls = []
     for var in DECLARATION_VARS:
         src = settings.declaration_sources.get(var)
         decls.append({"var": var, "source": src, "editable": src != "env",
                       "value": (os.environ.get(var) if src == "env"
-                                else stored.get(var)) or ""})
+                                else stored.get(var)) or "",
+                      "help": DECLARATION_HELP[var],
+                      "warnings": [w for w in settings.parse_warnings
+                                   if w.startswith(f"{var}:")]})
+    fielded = {w for d in decls for w in d["warnings"]}
     conn = _conn()
     try:
         db.init(conn)
@@ -1253,7 +1259,8 @@ def ops(request: Request):
         return templates.TemplateResponse(request, "ops.html", {
             "sources": sorted(available(settings)), "ages": _age(conn),
             "config": _effective_config(settings),
-            "warnings": settings.parse_warnings,
+            "warnings": [w for w in settings.parse_warnings
+                         if w not in fielded],
             "decls": decls,
             "export": "\n".join(f'{v}="{stored[v]}"' for v in DECLARATION_VARS
                                 if stored.get(v)),

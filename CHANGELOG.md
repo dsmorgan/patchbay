@@ -20,6 +20,16 @@ put.
   a Fabric card of its own, still folded in under its hypervisor. No
   collector emits the role yet — this makes the UI ready for one that does.
 
+- **Declarations explain themselves on /ops**
+  ([#20](https://github.com/dsmorgan/patchbay/issues/20)). Every declaration
+  field carries a "?" toggle with one sentence on what it does, the syntax,
+  and a realistic example — sourced from a single `DECLARATION_HELP`
+  structure beside `DECLARATION_VARS` in config.py, not hand-duplicated in
+  the template. A malformed entry's warning now renders beside its own
+  field (opening the help, so syntax and error meet in one place) instead
+  of in a page-top box; the box remains only for warnings that name no
+  declaration, like an unreadable database.
+
 ### Fixed
 
 - **Patch panel size no longer reads as part of the title**

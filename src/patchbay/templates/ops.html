@@ -68,10 +68,27 @@ poll.</p>
   the precedence rule working, not a missing feature. To manage one from this page,
   remove its line from the env file and restart.</p>
 {% endif %}
+<style>
+  /* inline declaration help (issue #20): a per-field ? toggle. The help and
+     any parse warning share one block under the field, so syntax and error
+     meet in one place. */
+  .dclq { flex: 0 0 auto; width: 1.15rem; height: 1.15rem; border-radius: 50%;
+          border: 1px solid var(--line); background: none; color: var(--muted);
+          font-size: 0.7rem; line-height: 1; cursor: pointer; }
+  .dclq[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+  .dclhelp { margin: -0.15rem 0 0.55rem 212px; max-width: 62ch;
+             font-size: 0.78rem; color: var(--muted); }
+  .dclhelp .syn { margin-top: 0.15rem; }
+  .dclhelp .syn b { color: var(--ink2); font-weight: 600; }
+  .dclwarn { margin: -0.15rem 0 0.55rem 212px; max-width: 62ch;
+             font-size: 0.78rem; color: var(--warn); }
+</style>
 <div style="max-width: 940px">
 {% for d in decls %}
   <div style="display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.45rem">
-    <span class="mono muted" style="flex: 0 0 200px; font-size: 0.78rem">{{ d.var }}</span>
+    <span class="mono muted" style="flex: 0 0 176px; font-size: 0.78rem">{{ d.var }}</span>
+    <button class="dclq" data-var="{{ d.var }}" aria-expanded="false"
+            aria-label="What {{ d.var }} does" title="What this does">?</button>
     {% if d.editable %}
     <input class="dcl mono" data-var="{{ d.var }}" value="{{ d.value }}"
            placeholder="unset"
@@ -90,6 +107,14 @@ poll.</p>
     <span class="muted" style="flex: 0 0 66px; font-size: 0.72rem"
           title="set in the env file — edit it there">env file</span>
     {% endif %}
+  </div>
+  <div class="dclhelp" id="help-{{ d.var }}" hidden>
+    {{ d.help.what }}
+    <div class="syn"><b>Syntax</b> <span class="mono">{{ d.help.syntax }}</span></div>
+    <div class="syn"><b>Example</b> <span class="mono">{{ d.help.example }}</span></div>
+  </div>
+  <div class="dclwarn" data-var="{{ d.var }}" {% if not d.warnings %}hidden{% endif %}>
+    {% for w in d.warnings %}<div class="mono">⚠ {{ w }}</div>{% endfor %}
   </div>
 {% endfor %}
 </div>
@@ -119,9 +144,16 @@ Nothing on this page writes to that file.</p>
 </div>
 
 <script>
+document.querySelectorAll(".dclq").forEach(q => q.addEventListener("click", () => {
+  const help = document.getElementById(`help-${q.dataset.var}`);
+  help.hidden = !help.hidden;
+  q.setAttribute("aria-expanded", String(!help.hidden));
+}));
+
 document.querySelectorAll(".dclsave").forEach(a => a.addEventListener("click", async e => {
   e.preventDefault();
   const input = document.querySelector(`input.dcl[data-var="${a.dataset.var}"]`);
+  const warn = document.querySelector(`.dclwarn[data-var="${a.dataset.var}"]`);
   a.textContent = "…";
   try {
     const r = await fetch("/ops/config", {method: "POST",
@@ -129,8 +161,23 @@ document.querySelectorAll(".dclsave").forEach(a => a.addEventListener("click", a
       body: JSON.stringify({var: a.dataset.var, value: input.value})});
     const body = await r.json();
     if (!r.ok) { a.textContent = "save"; alert(body.detail || r.statusText); return; }
-    a.textContent = (body.warnings || []).length ? "⚠ saved" : "saved";
-    if ((body.warnings || []).length) input.title = body.warnings.join("\n");
+    const warnings = body.warnings || [];
+    a.textContent = warnings.length ? "⚠ saved" : "saved";
+    // a rejected entry lands beside the field, where the syntax help is —
+    // and the help opens so the fix is on screen with the error. The warning
+    // echoes the typed value, so build with textContent, never innerHTML.
+    warn.replaceChildren(...warnings.map(w => {
+      const d = document.createElement("div");
+      d.className = "mono"; d.textContent = `⚠ ${w}`;
+      return d;
+    }));
+    warn.hidden = !warnings.length;
+    if (warnings.length) {
+      const help = document.getElementById(`help-${a.dataset.var}`);
+      help.hidden = false;
+      document.querySelector(`.dclq[data-var="${a.dataset.var}"]`)
+        .setAttribute("aria-expanded", "true");
+    }
     setTimeout(() => { a.textContent = "save"; }, 2500);
   } catch (err) { a.textContent = "save"; alert(err); }
 }));

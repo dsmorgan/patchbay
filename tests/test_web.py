@@ -143,6 +143,33 @@ def test_ops_declaration_editing(clean_env, client):
     assert r.status_code == 400
 
 
+def test_declaration_help_covers_every_var(clean_env, client):
+    # issue #20: DECLARATION_HELP in config.py is the single source of truth
+    # and must not drift from DECLARATION_VARS; /ops renders all of it
+    from patchbay.config import DECLARATION_HELP, DECLARATION_VARS
+
+    assert set(DECLARATION_HELP) == set(DECLARATION_VARS)
+    for var, h in DECLARATION_HELP.items():
+        assert h["what"] and h["syntax"] and h["example"], var
+    body = client.get("/ops").text
+    for var in DECLARATION_VARS:
+        assert f'id="help-{var}"' in body, var
+        assert f'class="dclq" data-var="{var}"' in body, var
+
+
+def test_declaration_warning_sits_beside_its_field(clean_env, client):
+    # issue #20: a malformed entry's warning renders in the field's own
+    # warning block, not (only) in the page-top box
+    clean_env.setenv("PATCHBAY_LINKS", "notapair")
+    body = client.get("/ops").text
+    field = body.split('class="dclwarn" data-var="PATCHBAY_LINKS"', 1)[1]
+    head, warn_block = field.split(">", 1)
+    assert "hidden" not in head
+    assert "skipped malformed entry" in warn_block.split("</div>\n", 1)[0]
+    # ...and the top box is gone once every warning has a field to live on
+    assert "Skipped configuration entries" not in body
+
+
 def _graph(client, tmp_path):
     import json
     import re
