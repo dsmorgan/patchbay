@@ -31,7 +31,6 @@ IMAGE = "ghcr.io/dsmorgan/patchbay:latest"
 LOCAL_TAG = "patchbay:local"
 NAME = "patchbay-demo"
 PORT = 8013           # the compose example's port, so the URL is the familiar one
-LABEL = "patchbay.launcher"
 
 # The container seeds its own data on start: the image ships `patchbay demo`,
 # /data is an anonymous volume (the Dockerfile's VOLUME) removed with the
@@ -96,6 +95,13 @@ def remove_container(name: str) -> bool:
     return True
 
 
+def container_port(name: str) -> int | None:
+    """Host port `name` publishes for the UI, or None."""
+    r = docker("port", name, "8080", check=False)
+    m = re.search(r":(\d+)", (r.stdout or "").strip())
+    return int(m.group(1)) if m else None
+
+
 def published_ports() -> set[int]:
     """Host ports docker already publishes, whatever the container. A bind
     probe alone misses these on Linux hosts running without docker-proxy,
@@ -127,24 +133,12 @@ def pick_port(preferred: int, fixed: bool = False) -> int:
     return port
 
 
-def launch(image: str, name: str, port: int, bind: str = "127.0.0.1",
-           labels: dict[str, str] | None = None,
-           data_dir: Path | None = None, command: list[str] | None = None) -> str:
-    """Run `image` detached as `name` and return the URL to reach it. With
-    no `data_dir` the container seeds demo data; with one, /data is that
-    directory (your .env + patchbay.db) and the image's own command runs."""
+def launch(image: str, name: str, port: int, bind: str = "127.0.0.1") -> str:
+    """Run the demo detached as `name` and return the URL to reach it."""
     remove_container(name)
     url = f"http://127.0.0.1:{port}/"
-    args = ["run", "-d", "--name", name, "-p", f"{bind}:{port}:8080",
-            "--label", f"patchbay.url={url}"]
-    for k, v in (labels or {}).items():
-        args += ["--label", f"{k}={v}"]
-    if data_dir:
-        args += ["-v", f"{data_dir.resolve()}:/data"]
-        cmd = command or []
-    else:
-        cmd = command or DEMO_CMD
-    docker(*args, image, *cmd)
+    docker("run", "-d", "--name", name, "-p", f"{bind}:{port}:8080",
+           image, *DEMO_CMD)
     return url
 
 
@@ -163,7 +157,7 @@ def wait_ready(url: str, name: str, timeout: float = 90) -> None:
                 if r.status < 500:
                     return
         except urllib.error.HTTPError as e:
-            if e.code < 500:      # 401/403 from a password-protected data dir is still "up"
+            if e.code < 500:      # any non-5xx answer means the server is up
                 return
         except (urllib.error.URLError, OSError):
             pass
@@ -261,12 +255,20 @@ def main(argv: list[str] | None = None) -> int:
         image = args.image
         pull(image)
 
-    remove_container(NAME)          # before choosing a port, so a rerun keeps its port
-    port = pick_port(args.port or PORT, fixed=bool(args.port))
+    # remove any previous demo before choosing a port, so a rerun keeps its
+    # port. When the old demo held the wanted port, hand it straight to
+    # docker: Docker Desktop (macOS) keeps a removed container's published
+    # port bound for up to ~30s, so a bind probe would report it busy and
+    # drift every rerun up one port — but docker rebinds its own
+    # just-released port immediately.
+    old_port = container_port(NAME)
+    remove_container(NAME)
+    want = args.port or PORT
+    port = want if want == old_port else pick_port(want, fixed=bool(args.port))
     if port != PORT and not args.port:
         say("port", f"{PORT} is busy - using {port}")
     say("run", f"{NAME} from {image}")
-    url = launch(image, NAME, port, args.bind, {LABEL: "demo"})
+    url = launch(image, NAME, port, args.bind)
     if args.bind != "127.0.0.1":
         say("warn", f"published on {args.bind}:{port} - the demo has no login")
     say("wait", f"seeding the demo network and starting the UI at {url}")
