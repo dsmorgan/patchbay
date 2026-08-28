@@ -8,6 +8,13 @@ put.
 
 ## [Unreleased]
 
+### Added
+
+- **One command to see it running.** `scripts/demo.py` pulls the published
+  image, seeds the demo network inside the container, waits for the UI, and
+  opens it in your browser; Ctrl-C removes it, and nothing touches the host.
+  `--build` does the same for the checkout you're in.
+
 ### Changed
 
 - **A source edit rebuilds the image in seconds.** The Dockerfile installs

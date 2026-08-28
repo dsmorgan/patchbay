@@ -63,6 +63,18 @@ PATCHBAY_DB=demo.db patchbay web              # dashboard on :8080
 PATCHBAY_DB=demo.db patchbay snapshot         # one self-contained HTML file
 ```
 
+With Docker and nothing else installed, one command does the same in a
+container and opens it in your browser; Ctrl-C tears it down, and nothing is
+written to disk:
+
+```sh
+./scripts/demo.py                             # python scripts\demo.py on Windows
+```
+
+It pulls the published image, runs `patchbay demo` inside it, waits for the UI
+on http://127.0.0.1:8013, and opens it. `--build` runs this checkout's code
+instead of the published image; `-d` leaves it running, and `--stop` removes it.
+
 For zero installation at all, **[open the live demo](https://dsmorgan.github.io/patchbay/demo-snapshot.html)** —
 it's a break-glass snapshot of the demo network: the interactive topology
 map, every device and port, VLANs, and endpoints, in one self-contained HTML
