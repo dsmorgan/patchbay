@@ -10,6 +10,15 @@ put.
 
 ### Added
 
+- **Auto-refresh is a visible switch, not a hidden rule.** The header's
+  "last polled" readout gains an **auto-refresh** pill: green-dotted while
+  the page will reload on the next poll, hollow when you've parked it —
+  per browser, honored on every page. It replaces the topology map's
+  first-touch-holds-forever behavior, which could quietly leave a browser
+  showing 16-hour-old data after one wheel scroll. Ages now read in human
+  units everywhere ("16 h", not "967 min"), in the header, its per-source
+  tooltip, and the stale-sources attention item alike.
+
 - **One command to see it running.** `scripts/demo.py` pulls the published
   image, seeds the demo network inside the container, waits for the UI, and
   opens it in your browser; Ctrl-C removes it, and nothing touches the host.

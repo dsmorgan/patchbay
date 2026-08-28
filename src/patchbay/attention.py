@@ -34,6 +34,19 @@ def human_speed(bps) -> str:
     return f"{bps / 1e9:g}G" if bps >= 1_000_000_000 else f"{bps / 1e6:g}M"
 
 
+def human_age(mins) -> str:
+    """Data age: minutes while they're readable, then hours, then days —
+    "967 min ago" is arithmetic homework, "16 h ago" is a fact. The header,
+    the stale-source item, and base.html's client-side ticker all apply the
+    same breakpoints."""
+    m = round(mins)
+    if m < 60:
+        return f"{m} min"
+    if m < 2880:
+        return f"{m / 60:.0f} h"
+    return f"{m / 1440:.0f} d"
+
+
 def source_ages(conn: sqlite3.Connection) -> dict[str, float]:
     rows = conn.execute(
         "SELECT source, (strftime('%s','now') - MAX(fetched_at)) / 60.0 AS mins "
@@ -224,7 +237,7 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
         stale = sorted(((s, m) for s, m in ages.items() if m > STALE_MIN),
                        key=lambda x: -x[1])
         if stale:
-            named = ", ".join(f"{s} ({m:.0f}m)" for s, m in stale)
+            named = ", ".join(f"{s} ({human_age(m)})" for s, m in stale)
             items.append({
                 "key": "source:stale",
                 "category": "source",

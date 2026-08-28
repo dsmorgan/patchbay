@@ -24,8 +24,10 @@
      a healthy one; per-source detail is in the tooltip and on /ops. #}
   <span class="ages">{%- if ages %}{% set oldest = ages.values() | max %}
     <span id="agespan" class="{{ 'stale' if oldest > STALE_MIN }}" data-mins="{{ oldest }}"
-          title="time since each source last returned data — {% for s, m in ages.items() %}{{ s }} {{ m | round | int }}m{{ ' · ' if not loop.last }}{% endfor %}"
-      >last polled <span id="agemin">{{ oldest | round | int }}</span> min ago</span>
+          title="time since each source last returned data — {% for s, m in ages.items() %}{{ s }} {{ m | age }}{{ ' · ' if not loop.last }}{% endfor %}"
+      >last polled <span id="agemin">{{ oldest | age }}</span> ago</span>
+    <button type="button" id="autoref" class="autoref" aria-pressed="true"
+            title="Reload this page automatically when a new poll lands">auto-refresh</button>
     {%- endif %}</span>
 </header>
 {% if not bare %}
@@ -151,12 +153,25 @@
    again, and defers while the page says it's busy — a page opts out of a
    moment by defining window.patchbayHold() returning true (device: an open
    graph; ops/snapshots: action output on screen; confignode: always). A
-   focused form control always holds, so typing is never reloaded away. The
-   header's "last polled N min ago" ticks client-side between refreshes so
-   it stays honest even while a reload is held. #}
+   focused form control always holds, so typing is never reloaded away.
+
+   The header's auto-refresh toggle is the operator's own hold: off means
+   "I'm studying this page — don't move it," stored per browser and honored
+   on every page. It replaced the topology map's first-touch-holds-forever
+   rule, which quietly left a browser showing 16-hour-old data. The age
+   ticks client-side either way, so what's on screen always says how old it
+   is — that number is the toggle's conscience. #}
 <script>
 (() => {
   const STALE = {{ STALE_MIN }};
+  const KEY = "patchbay.autorefresh";
+  const auto = () => { try { return localStorage.getItem(KEY) !== "off"; } catch (e) { return true; } };
+
+  // the same breakpoints as web.py's `age` filter, so the ticking value
+  // reads like the server-rendered one it replaces
+  const fmt = m => m < 60 ? `${Math.round(m)} min`
+                : m < 2880 ? `${Math.round(m / 60)} h`
+                : `${Math.round(m / 1440)} d`;
 
   // the header age keeps time on its own between reloads
   const span = document.getElementById("agespan");
@@ -164,7 +179,7 @@
     const base = parseFloat(span.dataset.mins), t0 = Date.now();
     setInterval(() => {
       const mins = base + (Date.now() - t0) / 60000;
-      document.getElementById("agemin").textContent = Math.round(mins);
+      document.getElementById("agemin").textContent = fmt(mins);
       span.classList.toggle("stale", mins > STALE);
     }, 30000);
   }
@@ -177,7 +192,7 @@
 
   let last, pending = false;
   async function check() {
-    if (document.hidden) return;
+    if (document.hidden || !auto()) return;
     if (pending && !held()) { location.reload(); return; }
     try {
       const r = await fetch("/api/freshness", {cache: "no-store"});
@@ -190,6 +205,18 @@
       }
     } catch (e) {}   // transient network trouble — next tick tries again
   }
+
+  const btn = document.getElementById("autoref");
+  if (btn) {
+    btn.setAttribute("aria-pressed", String(auto()));
+    btn.addEventListener("click", () => {
+      const on = !auto();
+      try { localStorage.setItem(KEY, on ? "on" : "off"); } catch (e) {}
+      btn.setAttribute("aria-pressed", String(on));
+      if (on) check();   // re-enabling catches up right away
+    });
+  }
+
   check();
   setInterval(check, 30000);
   document.addEventListener("visibilitychange", () => {

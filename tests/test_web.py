@@ -965,12 +965,37 @@ def test_pages_refresh_by_freshness_not_by_timer(client, tmp_path):
 
 def test_fragile_pages_hold_the_refresh(client, tmp_path):
     """Pages whose on-screen state a reload would destroy define the hold
-    hook; the plain dashboard does not (it reloads freely)."""
+    hook; the plain dashboard does not (it reloads freely). The topology
+    map no longer holds itself — its first-touch-holds-forever rule parked
+    a browser on 16-hour-old data; the header's auto-refresh toggle is the
+    explicit hold now."""
     seed(str(tmp_path / "test.db"))
-    for page in ("/topology", "/ops", "/snapshots"):
+    for page in ("/ops", "/snapshots"):
         assert "patchbayHold" in client.get(page).text, page
+    assert "_topoTouched" not in client.get("/topology").text
     body = client.get("/").text
     assert "window.patchbayHold = " not in body
+
+
+def test_auto_refresh_toggle_and_readable_age(clean_env, tmp_path, client):
+    # the header carries an explicit auto-refresh toggle (per-browser,
+    # default on) beside the age — and the age reads in human units
+    import patchbay.web as web
+
+    assert web.human_age(45) == "45 min"
+    assert web.human_age(967) == "16 h"
+    assert web.human_age(3000) == "2 d"
+
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    pdb.init(c)
+    pdb.save_raw(c, source="librenms", endpoint="devices", payload=[])
+    c.commit(); c.close()
+    body = client.get("/").text
+    assert 'id="autoref"' in body
+    assert 'aria-pressed' in body
+    assert '"patchbay.autorefresh"' in body
+    assert "0 min</span> ago" in body        # humanized server render
+    assert "min ago</span>" not in body      # the raw form is gone
 
 
 def test_port_graphs_carry_readable_captions(client, tmp_path):

@@ -5,15 +5,8 @@
 {% set snapshot = false %}
 {% include "_topomap.html" %}
 
-<script>
-// reload would rerun the simulation and drop zoom/pan — fine on an untouched
-// map, jarring mid-inspection. First pointer or wheel on the map holds it.
-(() => {
-  const topo = document.getElementById("topo");
-  const touch = () => { window._topoTouched = 1; };
-  topo?.addEventListener("pointerdown", touch);
-  topo?.addEventListener("wheel", touch, {passive: true});
-  window.patchbayHold = () => !!window._topoTouched;
-})();
-</script>
+{# No refresh hold here anymore: the first-touch-holds-forever rule meant one
+   wheel scroll silently parked the page on aging data (seen at 16 hours
+   stale). Studying the map is what the header's auto-refresh toggle is
+   for — an explicit, visible off. Pins and URL state survive a reload. #}
 {% endblock %}

@@ -97,8 +97,22 @@
      passing over rather than merging into the one beneath it */
   .mk-case { stroke: var(--bg); stroke-width: 4.3; }
   header .ages { margin-left: auto; color: var(--muted); font-size: 0.75rem;
-                 font-family: var(--font-mono); }
+                 font-family: var(--font-mono); display: flex;
+                 align-items: center; gap: 0.7rem; }
   header .ages .stale { color: var(--warn); }
+  /* the operator's own hold: a pill beside the age, green-dotted while it
+     will reload on the next poll, hollow when parked */
+  .autoref { font: 600 0.68rem var(--font-ui); letter-spacing: 0.04em;
+             color: var(--muted); background: none; cursor: pointer;
+             border: 1px solid var(--line); border-radius: 999px;
+             padding: 0.14rem 0.6rem 0.14rem 0.5rem;
+             display: inline-flex; align-items: center; gap: 0.4rem; }
+  .autoref::before { content: ""; width: 7px; height: 7px; border-radius: 50%;
+                     border: 1px solid var(--muted); }
+  .autoref[aria-pressed="true"] { color: var(--ink2); border-color: var(--line); }
+  .autoref[aria-pressed="true"]::before { background: var(--ok);
+                                          border-color: var(--ok); }
+  .autoref:hover { background: var(--hover); color: var(--ink); }
   /* ---- the rail: pages grouped by the question they answer (web.py NAV).
      Headings sit a level above their entries and look it — brighter, and set
      off by a rule rather than a gap. The selected marker is one edge, not an

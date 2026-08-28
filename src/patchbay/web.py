@@ -21,8 +21,8 @@ from fastapi.templating import Jinja2Templates
 
 from . import db
 from .attention import (CATEGORIES, STALE_MIN, attention_items, drift_report,
-                        human_speed, ip_sort_key, ipam_link, source_ages,
-                        speed_tier, stamp_first_seen)
+                        human_age, human_speed, ip_sort_key, ipam_link,
+                        source_ages, speed_tier, stamp_first_seen)
 from .config import load_settings
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -87,6 +87,7 @@ templates.env.globals["BUILD"] = BUILD
 
 
 templates.env.filters["speed"] = human_speed
+templates.env.filters["age"] = human_age
 
 
 def hardware(d) -> str:
