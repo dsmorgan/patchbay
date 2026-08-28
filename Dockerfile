@@ -8,8 +8,11 @@ WORKDIR /app
 # seconds instead of re-downloading fastapi, uvicorn, and pyvmomi every
 # time. hatchling needs a package to build, so a stub stands in for src
 # (and empty README/LICENSE satisfy the metadata) until the real tree lands.
+# The stub carries a placeholder __version__ because hatchling reads the
+# real version from this file; the force-reinstall below replaces it.
 COPY pyproject.toml ./
-RUN mkdir -p src/patchbay && touch src/patchbay/__init__.py README.md LICENSE \
+RUN mkdir -p src/patchbay && echo '__version__ = "0"' > src/patchbay/__init__.py \
+ && touch README.md LICENSE \
  && pip install --no-cache-dir '.[web]'
 COPY README.md LICENSE ./
 COPY src ./src
