@@ -18,6 +18,16 @@ from . import register
 
 NAME = "opnsense"
 
+_TUNNEL_PREFIXES = ("tun", "ovpn", "gif", "gre", "ipsec", "wg")
+
+
+def _parse_line_rate(stats: dict) -> int | None:
+    raw = stats.get("line rate", "")  # "1000000000 bit/s"
+    try:
+        return int(raw.split()[0]) if raw else None
+    except (ValueError, IndexError):
+        return None
+
 
 def base_and_name(host: str) -> tuple[str, str]:
     """API base and short device name from OPNSENSE_HOST, which is either a
@@ -60,22 +70,41 @@ class OpnsenseCollector:
                                       mgmt_ip=mgmt_hostname)
 
             ifaces = get("interfaces/overview/export")
+            vlan_rows: list[tuple] = []
+            n_ifaces = 0
             if ifaces is not None:
                 db.save_raw(conn, source=NAME, endpoint="interfaces/overview/export", payload=ifaces)
                 for i in ifaces if isinstance(ifaces, list) else []:
                     name = i.get("device") or i.get("identifier")
                     if not name:
                         continue
-                    addrs = i.get("addresses") or []
+                    if name.lower().startswith(_TUNNEL_PREFIXES):
+                        continue
+                    enabled = i.get("enabled")
+                    admin_status = ("up" if enabled else "down") if enabled is not None else None
+                    vlan_tag = i.get("vlan_tag")
+                    if vlan_tag is not None:
+                        try:
+                            vlan_rows.append((short_name, name, int(vlan_tag), NAME))
+                        except (ValueError, TypeError):
+                            pass
                     db.upsert_interface(
                         conn, device_id=dev_id, name=name,
                         oper_status="up" if i.get("status") == "up" else i.get("status"),
+                        admin_status=admin_status,
                         mac=(i.get("macaddr") or None),
                         description=i.get("description"),
                         ip=(i.get("addr4") or None),
                         ip6=(i.get("addr6") or None),
-                        speed_bps=None,
+                        speed_bps=_parse_line_rate(i.get("statistics") or {}),
                     )
+                    n_ifaces += 1
+            conn.execute("DELETE FROM port_vlans WHERE source = ? AND device = ?",
+                         (NAME, short_name))
+            conn.executemany(
+                "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                "VALUES (?, ?, ?, 0, ?) ON CONFLICT(device, interface, vid) DO NOTHING",
+                vlan_rows)
 
             gws = get("routes/gateway/status")
             if gws is not None:
@@ -147,7 +176,7 @@ class OpnsenseCollector:
                         db.upsert_endpoint(conn, mac=mac, source=NAME,
                                            ip=l.get("address"), hostname=(l.get("hostname") or None))
 
-        summary = "interfaces/gateways/arp/leases polled"
+        summary = f"{n_ifaces} interfaces/gateways/arp/leases polled"
         if notes:
             summary += f" ({'; '.join(notes)})"
         return summary
