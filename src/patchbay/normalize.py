@@ -281,7 +281,7 @@ def _monitor_ports(conn: sqlite3.Connection) -> set[tuple[str, str]]:
 
 
 def _place_endpoints_and_infer(conn: sqlite3.Connection,
-                               declared: list[tuple[str, str]] | None = None) -> int:
+                               declared: list[tuple[str | None, str, str]] | None = None) -> int:
     """FDB placement, in evidence order:
     1. a port carrying a MAC that belongs to a known device's interface links
        to that device on that interface (catches hypervisor multi-uplinks that
@@ -364,9 +364,31 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
                  conn.execute("SELECT name, parent FROM devices").fetchall()}
 
     inferred = 0
-    declared_set = set(declared or [])
+    declared_set = {(dev, iface) for _, dev, iface in (declared or [])}
+    declared_names = {(dev, iface): label for label, dev, iface in (declared or [])}
+    # Prune stale unmanaged nodes. upsert_link sorts ends, so '?' may be on
+    # either side. Two cases:
+    #   declared node  whose port left  declared_set → no longer authoritative
+    #   inference node whose port joined declared_set → declared entry wins
+    for r in conn.execute(
+            "SELECT l.id AS lid, d.source AS dsrc, "
+            "  CASE WHEN l.a_interface='?' THEN l.b_device ELSE l.a_device END AS dev, "
+            "  CASE WHEN l.a_interface='?' THEN l.b_interface ELSE l.a_interface END AS iface, "
+            "  CASE WHEN l.a_interface='?' THEN l.a_device ELSE l.b_device END AS node "
+            "FROM links l "
+            "JOIN devices d ON d.name = CASE WHEN l.a_interface='?' THEN l.a_device ELSE l.b_device END "
+            "WHERE l.source='fdb-inference' AND (l.a_interface='?' OR l.b_interface='?') "
+            "AND d.role='unmanaged-switch'").fetchall():
+        port = (r["dev"], r["iface"])
+        stale = (r["dsrc"] == "declared" and port not in declared_set) or \
+                (r["dsrc"] == "inference" and port in declared_set)
+        if stale:
+            conn.execute("DELETE FROM links WHERE id = ?", (r["lid"],))
+            conn.execute("DELETE FROM devices WHERE name = ?", (r["node"],))
+            conn.execute("DELETE FROM endpoints WHERE device = ?", (r["node"],))
     for dev, iface in declared_set:
-        name = f"unmanaged@{dev}:{iface}"
+        label = declared_names.get((dev, iface))
+        name = label if label else f"unmanaged@{dev}:{iface}"
         macs = per_port.get((dev, iface), set())
         db.upsert_device(conn, name=name, source="declared",
                          role="unmanaged-switch", status="up",
@@ -737,7 +759,7 @@ def _check_declarations(conn: sqlite3.Connection,
 
 
 def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = None,
-              declared_unmanaged: list[tuple[str, str]] | None = None,
+              declared_unmanaged: list[tuple[str | None, str, str]] | None = None,
               declared_links: list[tuple[str, str, str, str]] | None = None,
               vlan_filters: dict[tuple[str, str], set[int]] | None = None,
               prune_declared: bool = True) -> str:
