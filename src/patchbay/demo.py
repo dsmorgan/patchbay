@@ -191,12 +191,12 @@ def seed(conn: sqlite3.Connection, *, rnd: random.Random | None = None) -> str:
     # unmanaged switch), wired NAS behind its declared port
     for i, vm in enumerate(VMS):
         port = "1/0/1" if i % 2 == 0 else "1/0/2"
-        conn.execute("INSERT OR REPLACE INTO fdb VALUES ('core1', ?, ?)",
+        conn.execute("INSERT OR REPLACE INTO fdb VALUES ('core1', ?, ?, 'demo')",
                      (port, mac_of[vm]))
     for host, _ip in BASEMENT:
-        conn.execute("INSERT OR REPLACE INTO fdb VALUES ('edge1', 'e1/0/8', ?)",
+        conn.execute("INSERT OR REPLACE INTO fdb VALUES ('edge1', 'e1/0/8', ?, 'demo')",
                      (mk_mac(host),))
-    conn.execute("INSERT OR REPLACE INTO fdb VALUES ('edge1', 'e1/0/10', ?)",
+    conn.execute("INSERT OR REPLACE INTO fdb VALUES ('edge1', 'e1/0/10', ?, 'demo')",
                  (mk_mac("nas1"),))
 
     # address books: live endpoints (ARP/leases/wifi) + the documented IPAM side
