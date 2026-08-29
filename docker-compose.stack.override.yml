@@ -1,0 +1,41 @@
+# Site-local overrides for docker-compose.stack.yml.
+# Usage: docker compose -f docker-compose.stack.yml -f docker-compose.stack.override.yml <cmd>
+# Or via: make (Makefile defaults to this file pair)
+#
+# All images routed through Nexus proxy at nexus.bub.lan:8087:
+#   Docker Hub images: nexus.bub.lan:8087/<image>
+#   GHCR images:       nexus.bub.lan:8087/ghcr.io/<image>
+
+services:
+  db:
+    image: nexus.bub.lan:8087/mariadb:10.11
+
+  redis:
+    image: nexus.bub.lan:8087/redis:7-alpine
+
+  librenms:
+    image: nexus.bub.lan:8087/librenms/librenms:latest
+    ports:
+      - "4040:8000"
+    environment:
+      LIBRENMS_BASE_URL: https://librenms.svcs.lamolabs.com
+    volumes:
+      - ./config/trustedproxy.php:/opt/librenms/config/trustedproxy.php:ro
+
+  dispatcher:
+    image: nexus.bub.lan:8087/librenms/librenms:latest
+    environment:
+      LIBRENMS_BASE_URL: https://librenms.svcs.lamolabs.com
+
+  oxidized:
+    image: nexus.bub.lan:8087/oxidized/oxidized:latest
+    ports:
+      - "4200:8888"
+
+  patchbay:
+    image: nexus.bub.lan:8087/ghcr.io/slmingol/patchbay:dev
+    ports:
+      - "5000:8080"
+
+  patchbay-poller:
+    image: nexus.bub.lan:8087/ghcr.io/slmingol/patchbay:dev
