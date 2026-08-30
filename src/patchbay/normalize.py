@@ -299,6 +299,17 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
             "WHERE source NOT IN ('fdb-inference', 'fdb-uplink')"):
         linked.add((r["a_device"], r["a_interface"]))
         linked.add((r["b_device"], r["b_interface"]))
+    # LLDP links store the port by its ifAlias description (the user-visible
+    # name); FDB entries use the SNMP ifName. Bridge the gap: if a description
+    # is in linked, also mark the corresponding ifName as linked so FDB
+    # inference doesn't fire on an inter-switch uplink just because the two
+    # sources use different identifiers for the same physical port.
+    for r in conn.execute(
+            "SELECT d.name AS dev, i.name AS ifname, i.description AS desc "
+            "FROM interfaces i JOIN devices d ON d.id = i.device_id "
+            "WHERE i.description IS NOT NULL AND i.description != ''"):
+        if (r["dev"], r["desc"]) in linked:
+            linked.add((r["dev"], r["ifname"]))
     # interface MAC -> (owner device, interface name)
     if_by_mac: dict[str, tuple[str, str]] = {}
     self_macs: set[str] = set()

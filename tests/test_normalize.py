@@ -558,3 +558,26 @@ def test_retiring_a_device_takes_its_interfaces_with_it(conn):
         "SELECT name FROM interfaces WHERE device_id NOT IN (SELECT id FROM devices)")]
     assert left == [], left
     assert [r[0] for r in conn.execute("SELECT name FROM interfaces")] == ["1/0/1"]
+
+
+def test_fdb_inference_skipped_on_uplink_port_with_alias_mismatch(conn):
+    # LLDP stores the local port by its ifAlias description; FDB uses ifName.
+    # When these differ, the uplink port must still be excluded from unmanaged
+    # inference — the FDB MACs crossing it belong to the far switch, not a
+    # phantom switch on this side.
+    sw_a = dev(conn, "sw-a", "librenms", last_seen=NOW, role="switch")
+    dev(conn, "sw-b", "librenms", last_seen=NOW, role="switch")
+    # port 0/11 is the uplink; its ifAlias is what LLDP stores in the link
+    pdb.upsert_interface(conn, device_id=sw_a, name="0/11",
+                         description="SFP+1 - sw-b - uplink")
+    # LLDP link uses the description (as stored by the librenms collector)
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="SFP+1 - sw-b - uplink",
+                    b_device="sw-b", b_interface="0/1", source="lldp")
+    # FDB records remote MACs on the ifName (0/11), not the description
+    conn.execute("INSERT INTO fdb (device, interface, mac) VALUES ('sw-a', '0/11', ?)",
+                 ("aa:bb:cc:dd:ee:01",))
+    conn.execute("INSERT INTO fdb (device, interface, mac) VALUES ('sw-a', '0/11', ?)",
+                 ("aa:bb:cc:dd:ee:02",))
+    normalize(conn)
+    # no phantom unmanaged switch should appear on the uplink port
+    assert get_dev(conn, "unmanaged@sw-a:0/11") is None
