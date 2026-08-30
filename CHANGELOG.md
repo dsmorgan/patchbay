@@ -24,6 +24,16 @@ put.
   opens it in your browser; Ctrl-C removes it, and nothing touches the host.
   `--build` does the same for the checkout you're in.
 
+### Fixed
+
+- **No more phantom switches on inter-switch uplinks**
+  ([#34](https://github.com/dsmorgan/patchbay/issues/34), thanks
+  [@slmingol](https://github.com/slmingol)). LLDP links can record a port by
+  its ifAlias description while the FDB records it by ifName; the mismatch
+  let remote MACs crossing a known uplink grow an inferred unmanaged switch
+  that doesn't exist. Normalize now bridges descriptions to ifNames when
+  building the linked-port set, and existing phantoms age out on their own.
+
 ### Changed
 
 - **A source edit rebuilds the image in seconds.** The Dockerfile installs
