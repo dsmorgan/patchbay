@@ -719,3 +719,17 @@ def test_orientation_restore_keeps_fresher_timestamp_on_collision(conn):
     assert len(rows) == 1, [dict(r) for r in rows]
     assert (rows[0]["a_device"], rows[0]["b_device"]) == ("aa1", "bb1")
     assert rows[0]["last_seen"] > old + 6000, rows[0]["last_seen"]
+
+
+def test_merge_raw_model_code_yields_to_translated_name(conn):
+    """A raw UniFi model code stored by a prior poll must not outrank a
+    human-readable name written by the same source after MODEL_NAMES was added.
+    The merge treats all-caps-alphanumeric codes as junk so the gap-fill
+    logic can pick up the translated value from any source."""
+    # librenms row carries a stale raw code (as if merged from an old unifi row)
+    dev(conn, "ap1", "librenms", last_seen=NOW, vendor="UAP-AC-Pro", model="U7PG2")
+    # unifi row now carries the translated name
+    dev(conn, "ap1", "unifi", last_seen=NOW, vendor="Ubiquiti", model="AC Pro")
+    normalize(conn)
+    d = get_dev(conn, "ap1")
+    assert d["model"] == "AC Pro", d["model"]

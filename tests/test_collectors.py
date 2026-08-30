@@ -825,3 +825,69 @@ def test_opnsense_empty_export_keeps_port_vlans(conn, clean_env, monkeypatch):
     monkeypatch.setattr(httpx, "Client", _OnsClientEmptyExport)
     OpnsenseCollector().collect(_ons_settings(clean_env), conn)
     assert conn.execute("SELECT COUNT(*) FROM port_vlans WHERE device='fw1'").fetchone()[0] == 1
+
+
+# --- UniFi: MODEL_NAMES translation ------------------------------------------
+
+class _UnifiRawModel(_UnifiClient):
+    """Controller returning a known raw model code for the AP."""
+    def get(self, url, **kw):
+        r = super().get(url, **kw)
+        if "stat/device" in url:
+            ap = dict(_UAP, model="U7PG2")
+            class R:
+                status_code = 200
+                def raise_for_status(self_): pass
+                def json(self_): return {"data": [_USW, ap]}
+            return R()
+        return r
+
+
+def test_unifi_model_code_translated(conn, clean_env, monkeypatch):
+    """Raw UniFi model codes are translated to display names via MODEL_NAMES."""
+    from patchbay.collectors.unifi import UnifiCollector
+    monkeypatch.setattr(httpx, "Client", _UnifiRawModel)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    dev = conn.execute("SELECT model FROM devices WHERE name='ap-floor1'").fetchone()
+    assert dev is not None and dev["model"] == "AC Pro", dev
+
+
+# --- LibreNMS: HARDWARE_ALIASES correction ------------------------------------
+
+def _lnms_settings(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("LIBRENMS_URL", "http://librenms.example.net")
+    clean_env.setenv("LIBRENMS_TOKEN", "testtoken")
+    return load_settings()
+
+
+class _LnmsClient:
+    """LibreNMS API stub: one device with UAP-AC-Pro-Gen2 as hardware."""
+    def __init__(self, *a, **k): pass
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+    def get(self, url, **kw):
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_):
+                if url.endswith("/devices"):
+                    return {"devices": [{"device_id": 1, "sysName": "ap1",
+                                         "hardware": "UAP-AC-Pro-Gen2",
+                                         "os": "unifi", "status": 1,
+                                         "disabled": 0, "serial": None,
+                                         "ip": "192.0.2.20", "overwrite_ip": None}]}
+                if "/ports" in url:
+                    return {"ports": []}
+                return {"links": [], "vlans": [], "ports_fdb": []}
+        return R()
+
+
+def test_librenms_hardware_alias_corrected(conn, clean_env, monkeypatch):
+    """HARDWARE_ALIASES maps wrong sysDescr values to correct product names."""
+    from patchbay.collectors.librenms import LibreNmsCollector
+    monkeypatch.setattr(httpx, "Client", _LnmsClient)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    dev = conn.execute("SELECT vendor FROM devices WHERE name='ap1'").fetchone()
+    assert dev is not None and dev["vendor"] == "UAP-AC-Pro", dev
