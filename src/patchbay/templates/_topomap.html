@@ -77,6 +77,8 @@
   /* the mode-specific groups toggle the `hidden` attribute; an author
      display rule outranks the browser default for [hidden], so say it here */
   .toolbar .grp[hidden] { display: none; }
+  /* filter chips are pills already — no outer pill around the row */
+  .toolbar .grp.filters { border: none; background: none; padding: 0; gap: 0.4rem; }
   /* segmented view control: radios are visually hidden but stay focusable,
      the adjacent label carries the pill styling and the checked/focus state */
   .toolbar .grp.modes { padding: 0.22rem; gap: 0; }
@@ -129,12 +131,12 @@
     <input type="radio" name="view" id="view-evidence" value="evidence">
     <label for="view-evidence">Evidence</label>
   </span>
-  <span class="grp">
-    <label><input type="checkbox" id="hideoff"> hide offline &amp; unlinked</label>
-    <label><input type="checkbox" id="coreonly"> core only</label>
-    <label><input type="checkbox" id="hosts"> wired hosts</label>
-    <label><input type="checkbox" id="unmhosts"> behind unmanaged</label>
-    <label title="lanes own each node's vertical position; off = arrange freely, pins keep both axes"><input type="checkbox" id="tierbox"> tier lanes</label>
+  <span class="grp filters">
+    <button type="button" class="fchip" id="hideoff" aria-pressed="false">hide offline &amp; unlinked</button>
+    <button type="button" class="fchip" id="coreonly" aria-pressed="false">core only</button>
+    <button type="button" class="fchip" id="hosts" aria-pressed="false">wired hosts</button>
+    <button type="button" class="fchip" id="unmhosts" aria-pressed="false">behind unmanaged</button>
+    <button type="button" class="fchip" id="tierbox" aria-pressed="false" title="lanes own each node's vertical position; off = arrange freely, pins keep both axes">tier lanes</button>
   </span>
   <span class="grp" id="loadgrp" hidden>
     <select id="loadmode">
@@ -730,12 +732,18 @@ function renderChips() {
   if (state.load === "peak" && state.view !== "load")
     chips.append(chip("peak", () => set({ load: "now" })));
 }
+// filter chips carry their state as .on + aria-pressed (see _style.html)
+function setChip(id, on) {
+  const el = document.getElementById(id);
+  el.classList.toggle("on", on);
+  el.setAttribute("aria-pressed", String(on));
+}
 function applyControls() {
-  document.getElementById("hideoff").checked = state.hideoff;
-  document.getElementById("coreonly").checked = state.coreonly;
-  document.getElementById("hosts").checked = state.hosts;
-  document.getElementById("unmhosts").checked = state.unmhosts;
-  document.getElementById("tierbox").checked = state.layout === "tiers";
+  setChip("hideoff", state.hideoff);
+  setChip("coreonly", state.coreonly);
+  setChip("hosts", state.hosts);
+  setChip("unmhosts", state.unmhosts);
+  setChip("tierbox", state.layout === "tiers");
   document.getElementById("view-" + state.view).checked = true;
   document.getElementById("loadmode").value = state.load;
   vlansel.value = state.vlan == null ? "" : String(state.vlan);
@@ -753,7 +761,7 @@ function render() {
 }
 
 ["hideoff", "coreonly", "hosts", "unmhosts"].forEach(id => {
-  document.getElementById(id).addEventListener("change", e => set({ [id]: e.target.checked }));
+  document.getElementById(id).addEventListener("click", () => set({ [id]: !state[id] }));
 });
 document.querySelectorAll('input[name="view"]').forEach(r =>
     r.addEventListener("change", () => set({ view: r.value })));
@@ -766,8 +774,8 @@ document.getElementById("fitbtn").addEventListener("click", () => fit(true));
 
 // switching layout re-seeds node positions, pins, and forces — a reload with
 // the state in the URL (or, in a snapshot, the hash) is the honest re-init
-document.getElementById("tierbox").addEventListener("change", e => {
-  state.layout = e.target.checked ? "tiers" : "free";
+document.getElementById("tierbox").addEventListener("click", () => {
+  state.layout = state.layout === "tiers" ? "free" : "tiers";
   if (SNAPSHOT) {
     location.hash = buildParams().toString();  // whole state survives the toggle
     location.reload();

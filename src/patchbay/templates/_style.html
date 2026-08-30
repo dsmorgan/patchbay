@@ -173,9 +173,19 @@
              margin: 0 0 1rem; }
   .fgroup { display: inline-flex; gap: 0.4rem; margin-left: 0.6rem;
             padding-left: 1rem; border-left: 1px solid var(--grid); }
+  /* ---- filter chips: THE boolean display toggle (#36). An <a class="fchip">
+     where the state lives in the URL (alerts, aggregate pages); a
+     <button class="fchip" aria-pressed> where it lives in client state (the
+     maps). `.on` marks active; crit/warn tint by severity. The header's
+     .autoref pill is the action-chip cousin — it triggers rather than
+     filters, and keeps its status dot. Mutually exclusive modes stay a
+     segmented control (.grp.modes radios), not chips. ---- */
   .fchip { font-size: 0.78rem; padding: 0.12rem 0.7rem; border-radius: 999px;
            border: 1px solid var(--line); color: var(--muted); }
+  button.fchip { background: none; cursor: pointer;
+                 font: inherit; font-size: 0.78rem; }
   .fchip:hover { text-decoration: none; background: var(--hover); }
+  .fchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .fchip.on { color: var(--ink); border-color: var(--accent); }
   .fchip.crit { color: var(--crit); }
   .fchip.warn { color: var(--warn); }

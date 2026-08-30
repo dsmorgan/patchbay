@@ -8,6 +8,18 @@ put.
 
 ## [Unreleased]
 
+### Changed
+
+- **One toggle vocabulary: filter chips**
+  ([#36](https://github.com/dsmorgan/patchbay/issues/36)). The topology
+  toolbar's display filters (hide offline & unlinked, core only, wired
+  hosts, behind unmanaged, tier lanes) are now the same pill chips the
+  alerts and aggregate pages use, with a shared documented style —
+  focusable, toggling on Enter/Space, state in `aria-pressed`. URL and
+  remembered-state behavior are unchanged, and the snapshot's map gets
+  the same toolbar. Segmented controls keep the view modes; the header's
+  auto-refresh pill stays the action-chip variant.
+
 ### Fixed
 
 - **A link reported under an alias no longer expires while alive**
