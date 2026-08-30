@@ -149,19 +149,28 @@ def _rename_refs(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE OR IGNORE positions SET name=? WHERE name=?", (canon, alias))
         conn.execute("DELETE FROM positions WHERE name=?", (alias,))
     # renames can flip a row out of upsert_link's sorted orientation, hiding
-    # it from the UNIQUE constraint and from pair-keyed deletes — restore it
+    # it from the UNIQUE constraint and from pair-keyed deletes — restore it.
+    # A collision with an already-sorted twin merges timestamps (same rule
+    # as _rewrite_link_field below): the flipped row is the FRESH sighting,
+    # re-reported every poll under the alias, and discarding its last_seen
+    # left the twin frozen until the TTL expired a live link (#37).
     for r in conn.execute("SELECT * FROM links").fetchall():
         a = (r["a_device"], r["a_interface"])
         b = (r["b_device"], r["b_interface"])
         if a > b:
-            conn.execute(
-                "UPDATE OR IGNORE links SET a_device=?, a_interface=?, "
-                "b_device=?, b_interface=? WHERE id=?", (*b, *a, r["id"]))
-            # if the sorted twin already exists the UPDATE was ignored —
-            # this row is a duplicate
-            conn.execute(
-                "DELETE FROM links WHERE id=? AND a_device=? AND a_interface=?",
-                (r["id"], *a))
+            twin = conn.execute(
+                "SELECT id FROM links WHERE a_device=? AND a_interface=? "
+                "AND b_device=? AND b_interface=? AND source=? AND id != ?",
+                (*b, *a, r["source"], r["id"])).fetchone()
+            if twin:
+                conn.execute(
+                    "UPDATE links SET last_seen = MAX(COALESCE(last_seen, 0), ?) "
+                    "WHERE id = ?", (r["last_seen"] or 0, twin["id"]))
+                conn.execute("DELETE FROM links WHERE id = ?", (r["id"],))
+            else:
+                conn.execute(
+                    "UPDATE links SET a_device=?, a_interface=?, "
+                    "b_device=?, b_interface=? WHERE id=?", (*b, *a, r["id"]))
 
 
 def _rewrite_link_field(conn: sqlite3.Connection, link_id: int,

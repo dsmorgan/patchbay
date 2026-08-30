@@ -6,6 +6,18 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Fixed
+
+- **A link reported under an alias no longer expires while alive**
+  ([#37](https://github.com/dsmorgan/patchbay/issues/37)). When a rename
+  flipped a link out of sorted orientation and it collided with its
+  canonical twin, the fresh sighting's timestamp was discarded — the
+  surviving row sat frozen until the evidence TTL expired a cable that
+  was being reported every poll. The collision now merges timestamps,
+  the same rule the per-field rewrite already used.
+
 ## [0.9.0] — 2026-08-29
 
 ### Added

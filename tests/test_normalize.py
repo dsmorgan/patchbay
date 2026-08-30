@@ -696,3 +696,26 @@ def test_unifi_link_supersedes_fdb_uplink(conn):
     normalize(conn)
     srcs = {r["source"] for r in conn.execute("SELECT source FROM links")}
     assert srcs == {"unifi"}
+
+
+def test_orientation_restore_keeps_fresher_timestamp_on_collision(conn):
+    # a source that names a device by its alias re-reports the link every
+    # poll; the rename flips it out of sorted order and it collides with
+    # the canonical twin. The survivor must inherit the fresh last_seen or
+    # a live link expires at the TTL (#37)
+    dev(conn, "aa1", "librenms", last_seen=NOW, role="ap")
+    dev(conn, "bb1", "librenms", last_seen=NOW, role="switch")
+    pdb.upsert_link(conn, a_device="aa1", a_interface="p1",
+                    b_device="bb1", b_interface="p2", source="lldp")
+    old = NOW - 7000  # stale enough that the TTL would expire it
+    conn.execute("UPDATE links SET last_seen = ? WHERE a_device='aa1'", (old,))
+    # the fresh sighting arrives under the alias (sorts after bb1, so the
+    # row lands flipped relative to the canonical twin)
+    pdb.upsert_link(conn, a_device="zz1", a_interface="p1",
+                    b_device="bb1", b_interface="p2", source="lldp")
+    normalize(conn, seed_aliases={"zz1": "aa1"})
+    rows = conn.execute(
+        "SELECT * FROM links WHERE source='lldp'").fetchall()
+    assert len(rows) == 1, [dict(r) for r in rows]
+    assert (rows[0]["a_device"], rows[0]["b_device"]) == ("aa1", "bb1")
+    assert rows[0]["last_seen"] > old + 6000, rows[0]["last_seen"]
