@@ -19,6 +19,20 @@ from . import register
 NAME = "unifi"
 DEVICE_STATES = {0: "down", 1: "up", 4: "upgrading", 5: "provisioning", 6: "heartbeat_missed"}
 
+# UniFi API model codes → human-readable names.  The controller returns short
+# codes (e.g. "U7PG2") that don't map cleanly to the product names shown in
+# the UI; correct the ones we know about so patchbay displays useful labels.
+MODEL_NAMES: dict[str, str] = {
+    "U7PG2":   "AC Pro",       # UAP-AC-Pro / UAP-AC-Pro-Gen2 (same code)
+    "UAP6MP":  "U6 Pro",       # U6-Pro
+    "U7PROXG": "U7 Pro XGS",   # U7-Pro-XGS (alternate code)
+    "UAPA6A4": "U7 Pro XGS",   # U7-Pro-XGS (actual API code)
+    "USWED77": "USW-Pro-10-PoE",
+    "USPM16P": "USW-Pro-Max-16-PoE",
+    "US8P150": "US-8-150W",
+    "US8P60":  "US-8-60W",
+}
+
 
 class UnifiCollector:
     name = NAME
@@ -56,7 +70,8 @@ class UnifiCollector:
                 if dev_type == "usw":
                     sw_id = db.upsert_device(
                         conn, name=dev_name, source=NAME,
-                        mgmt_ip=d.get("ip"), vendor="Ubiquiti", model=d.get("model"),
+                        mgmt_ip=d.get("ip"), vendor="Ubiquiti",
+                        model=MODEL_NAMES.get(d.get("model"), d.get("model")),
                         os=f"unifi {d.get('version', '')}".strip(), role="switch",
                         status=status,
                     )
@@ -98,7 +113,8 @@ class UnifiCollector:
                 ap_by_mac[d["mac"].lower()] = dev_name
                 dev_id = db.upsert_device(
                     conn, name=dev_name, source=NAME,
-                    mgmt_ip=d.get("ip"), vendor="Ubiquiti", model=d.get("model"),
+                    mgmt_ip=d.get("ip"), vendor="Ubiquiti",
+                    model=MODEL_NAMES.get(d.get("model"), d.get("model")),
                     os=f"unifi {d.get('version', '')}".strip(), role="ap",
                     status=status,
                 )

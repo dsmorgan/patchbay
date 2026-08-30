@@ -32,6 +32,12 @@ def _colon_mac(mac: str | None) -> str | None:
 
 OS_ROLE = {"ironware": "switch", "netgear": "switch", "freebsd": "firewall"}
 
+# SNMP sysDescr values that don't match the real product name.  LibreNMS stores
+# sysDescr as `hardware`; correct the known wrong values at ingestion.
+HARDWARE_ALIASES: dict[str, str] = {
+    "UAP-AC-Pro-Gen2": "UAP-AC-Pro",
+}
+
 # Netgear M4300 reports a factory string ("Unit: 1 Slot: 0 Port: 5 10G - Level")
 # as ifAlias when a port has no comment set — noise, not documentation.
 VENDOR_DEFAULT_DESCR = re.compile(r"^Unit: \d+ Slot: \d+ Port: \d+")
@@ -95,7 +101,8 @@ class LibreNmsCollector:
                 dev_id = db.upsert_device(
                     conn, name=name, source=NAME,
                     mgmt_ip=d.get("ip") or d.get("overwrite_ip"),
-                    vendor=d.get("hardware"), os=d.get("os"),
+                    vendor=HARDWARE_ALIASES.get(d.get("hardware"), d.get("hardware")),
+                    os=d.get("os"),
                     role=OS_ROLE.get(d.get("os")),
                     serial=(d.get("serial") or None),
                     status=status,
