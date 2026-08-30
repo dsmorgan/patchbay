@@ -24,6 +24,17 @@ put.
   opens it in your browser; Ctrl-C removes it, and nothing touches the host.
   `--build` does the same for the checkout you're in.
 
+- **Name your unmanaged switches**
+  ([#33](https://github.com/dsmorgan/patchbay/pull/33), thanks
+  [@slmingol](https://github.com/slmingol)). `PATCHBAY_UNMANAGED` accepts an
+  optional label — `closet-switch=sw1:1/0/8` — and the topology node shows
+  that name instead of `unmanaged@sw1:1/0/8`; the legacy form is unchanged.
+  Declaring a port that FDB inference already claimed replaces the inferred
+  node, and removing or renaming a declaration evicts the old node. A label
+  that collides with a real device's name falls back to the auto-generated
+  name rather than hijacking the device, and named nodes keep the VLAN
+  chips of their feeding port.
+
 - **OPNsense interfaces carry more of the model**
   ([#31](https://github.com/dsmorgan/patchbay/pull/31), thanks
   [@slmingol](https://github.com/slmingol)). The collector now records

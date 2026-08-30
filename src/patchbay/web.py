@@ -548,15 +548,22 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
 
     saved = {r["name"]: (r["x"], r["y"])
              for r in conn.execute("SELECT * FROM positions").fetchall()}
+    # custom-labeled unmanaged declarations: node name -> feeding port, so a
+    # named node keeps the auto-named form's VLAN chips (its name no longer
+    # encodes the port)
+    unm_feed = {label: (dev, iface)
+                for label, dev, iface in settings.unmanaged if label}
     def mk_node(d) -> dict:
         # unmanaged switches get a compact label; full identity in tooltip.
         # Custom-named nodes (no "@") show their actual name.
         label = (d["name"] if d["role"] != "unmanaged-switch"
                  or not d["name"].startswith("unmanaged@") else "unmanaged")
-        if d["role"] == "unmanaged-switch" and "@" in d["name"]:
+        if d["role"] == "unmanaged-switch" and \
+                ("@" in d["name"] or d["name"] in unm_feed):
             # a switch behind this port sees everything the port passes,
             # tagged included (e.g. a closet switch fed native 1 + tagged 22)
-            feed = tuple(d["name"].split("@", 1)[1].split(":", 1))
+            feed = (unm_feed.get(d["name"])
+                    or tuple(d["name"].split("@", 1)[1].split(":", 1)))
             vl = (settings.vlan_filters.get(feed) or pv_all.get(feed)
                   or unm_vlans.get(d["name"], set()))
         else:

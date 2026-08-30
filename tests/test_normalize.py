@@ -632,3 +632,39 @@ def test_declared_unmanaged_prune_evicts_inference_node_when_port_declared(conn)
     normalize(conn, declared_unmanaged=[("k8s-switch", "sw1", "1/0/5")])
     assert get_dev(conn, "unmanaged@sw1:1/0/5") is None
     assert get_dev(conn, "k8s-switch") is not None
+
+
+def test_declared_unmanaged_survives_unreadable_declarations(conn):
+    # prune_declared=False means "the declarations could not be read this
+    # run" — declared nodes must not be evicted on such a poll, or one bad
+    # .env read wipes every declared unmanaged switch
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    normalize(conn, declared_unmanaged=[("closet", "sw1", "1/0/5")])
+    assert get_dev(conn, "closet") is not None
+    normalize(conn, declared_unmanaged=[], prune_declared=False)
+    assert get_dev(conn, "closet") is not None
+    # a readable-but-empty declaration DOES evict
+    normalize(conn, declared_unmanaged=[])
+    assert get_dev(conn, "closet") is None
+
+
+def test_declared_unmanaged_label_rename_evicts_old_node(conn):
+    # declared nodes never age out, so a changed label must evict the node
+    # under the old name or both live forever
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    normalize(conn, declared_unmanaged=[("old-name", "sw1", "1/0/5")])
+    assert get_dev(conn, "old-name") is not None
+    normalize(conn, declared_unmanaged=[("new-name", "sw1", "1/0/5")])
+    assert get_dev(conn, "old-name") is None
+    assert get_dev(conn, "new-name") is not None
+
+
+def test_declared_unmanaged_label_collision_falls_back_to_auto_name(conn):
+    # a label naming a real device must not hijack it (upsert_device merges
+    # by name — "esxi1=sw1:1/0/5" would rewrite the hypervisor's role)
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    dev(conn, "hyp9", "vsphere", last_seen=NOW, role="hypervisor")
+    normalize(conn, declared_unmanaged=[("hyp9", "sw1", "1/0/5")])
+    hyp = get_dev(conn, "hyp9")
+    assert hyp["role"] == "hypervisor" and hyp["source"] == "vsphere"
+    assert get_dev(conn, "unmanaged@sw1:1/0/5") is not None

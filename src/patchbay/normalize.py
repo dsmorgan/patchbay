@@ -281,7 +281,8 @@ def _monitor_ports(conn: sqlite3.Connection) -> set[tuple[str, str]]:
 
 
 def _place_endpoints_and_infer(conn: sqlite3.Connection,
-                               declared: list[tuple[str | None, str, str]] | None = None) -> int:
+                               declared: list[tuple[str | None, str, str]] | None = None,
+                               prune_declared: bool = True) -> int:
     """FDB placement, in evidence order:
     1. a port carrying a MAC that belongs to a known device's interface links
        to that device on that interface (catches hypervisor multi-uplinks that
@@ -376,10 +377,23 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
 
     inferred = 0
     declared_set = {(dev, iface) for _, dev, iface in (declared or [])}
-    declared_names = {(dev, iface): label for label, dev, iface in (declared or [])}
+    declared_names: dict[tuple[str, str], str | None] = {}
+    for label, ddev, diface in (declared or []):
+        if label:
+            # a label naming a real device would hijack it — upsert_device
+            # merges by name, so "esxi1=sw1:1/0/5" would rewrite the
+            # hypervisor's role. Fall back to the auto name instead.
+            row = conn.execute("SELECT role FROM devices WHERE name = ?",
+                               (label,)).fetchone()
+            if row and row["role"] != "unmanaged-switch":
+                label = None
+        declared_names[(ddev, diface)] = label
     # Prune stale unmanaged nodes. upsert_link sorts ends, so '?' may be on
     # either side. Two cases:
-    #   declared node  whose port left  declared_set → no longer authoritative
+    #   declared node  whose port left declared_set (or whose label changed)
+    #     → no longer authoritative — but only when the declarations were
+    #     actually readable this run (prune_declared), or one bad poll with
+    #     an unreadable .env would wipe every declared node
     #   inference node whose port joined declared_set → declared entry wins
     for r in conn.execute(
             "SELECT l.id AS lid, d.source AS dsrc, "
@@ -391,7 +405,10 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
             "WHERE l.source='fdb-inference' AND (l.a_interface='?' OR l.b_interface='?') "
             "AND d.role='unmanaged-switch'").fetchall():
         port = (r["dev"], r["iface"])
-        stale = (r["dsrc"] == "declared" and port not in declared_set) or \
+        expected = (declared_names.get(port)
+                    or f"unmanaged@{port[0]}:{port[1]}")
+        stale = (prune_declared and r["dsrc"] == "declared"
+                 and (port not in declared_set or r["node"] != expected)) or \
                 (r["dsrc"] == "inference" and port in declared_set)
         if stale:
             conn.execute("DELETE FROM links WHERE id = ?", (r["lid"],))
@@ -796,7 +813,8 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
     # declarations already on disk and looked correct — so only a clean
     # install ever showed them.
     _apply_declared_links(conn, declared_links or [], prune=prune_declared)
-    inferred = _place_endpoints_and_infer(conn, declared_unmanaged)
+    inferred = _place_endpoints_and_infer(conn, declared_unmanaged,
+                                          prune_declared=prune_declared)
     _drop_flooded_neighbors(conn)
     _drop_superseded_inference(conn)
     conflicts = _check_declarations(conn, declared_links or [])

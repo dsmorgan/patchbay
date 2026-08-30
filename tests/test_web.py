@@ -1044,3 +1044,24 @@ def test_topology_layout_defaults_to_free(client, tmp_path):
     assert 'layout: "free"' in body                      # the default in DEFAULTS
     assert "if (!TIERS) { gBands.selectAll" in body      # no bands drawn in free
     assert "if (!TIERS) d.fy = e.y" in body              # free pins both axes
+
+
+def test_labeled_unmanaged_node_keeps_vlan_chips(clean_env, tmp_path, client):
+    # a custom-labeled unmanaged node no longer encodes its feeding port in
+    # its name; the VLAN chips must come from the declaration instead
+    clean_env.setenv("PATCHBAY_UNMANAGED", "closet-switch=sw1:1/0/9")
+    db_path = str(tmp_path / "test.db")
+    seed(db_path)
+    c = sqlite3.connect(db_path)
+    c.row_factory = sqlite3.Row
+    c.execute("INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+              "VALUES ('sw1', '1/0/9', 24, 1, 'oxidized')")
+    from patchbay.config import load_settings
+    from patchbay.normalize import normalize
+    s = load_settings()
+    normalize(c, declared_unmanaged=s.unmanaged)
+    c.commit(); c.close()
+    g = _graph(client, tmp_path)
+    node = next(n for n in g["nodes"] if n["name"] == "closet-switch")
+    assert node["label"] == "closet-switch"
+    assert 24 in node["vlans"]
