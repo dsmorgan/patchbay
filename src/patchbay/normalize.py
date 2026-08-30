@@ -15,16 +15,19 @@ Merges are recorded in `aliases` so old names still resolve in the UI.
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 
 from . import db
 
-# Raw UniFi internal model codes (e.g. "U7PG2", "UAPA6A4") — all-caps
-# alphanumeric, no spaces — are not human-readable model names.  When the
-# collector translates them via MODEL_NAMES the translated value is the real
-# name; the raw code is junk and must not outrank it in a merge.
-_RAW_MODEL_CODE = re.compile(r"^[A-Z0-9]{4,12}$")
+
+def _is_raw_model_code(value: str | None) -> bool:
+    """A raw UniFi model code (e.g. "U7PG2") that MODEL_NAMES translates is
+    junk in a merge — a row persisted before the translation existed must
+    not outrank the translated name. Only EXACT known codes count: a shape
+    test (all-caps alphanumeric) also matches real model strings, so an
+    untranslated code stays visible as-is rather than being erased."""
+    from .collectors.unifi import MODEL_NAMES
+    return (value or "") in MODEL_NAMES
 
 # When duplicates merge, the record from the earliest-listed source wins a
 # field conflict; later sources only fill gaps. 'vm' role never overrides a
@@ -56,13 +59,13 @@ def _merge_group(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
     for field, junk in JUNK.items():
         if (merged.get(field) or "").lower() in junk:
             merged[field] = None
-    if _RAW_MODEL_CODE.match(merged.get("model") or ""):
+    if _is_raw_model_code(merged.get("model")):
         merged["model"] = None
     for r in rest:
         for field in ("mgmt_ip", "vendor", "model", "os", "parent", "serial", "status"):
             if (r[field] or "").lower() in JUNK.get(field, set()):
                 continue
-            if field == "model" and _RAW_MODEL_CODE.match(r[field] or ""):
+            if field == "model" and _is_raw_model_code(r[field]):
                 continue
             if not merged.get(field) and r[field]:
                 merged[field] = r[field]

@@ -733,3 +733,12 @@ def test_merge_raw_model_code_yields_to_translated_name(conn):
     normalize(conn)
     d = get_dev(conn, "ap1")
     assert d["model"] == "AC Pro", d["model"]
+
+
+def test_merge_keeps_untranslated_model_strings(conn):
+    # only EXACT known raw codes are junk — an untranslated code (or any
+    # real all-caps model string) must survive the merge, not be erased
+    dev(conn, "ap2", "librenms", last_seen=NOW, model="U7XYZ9")
+    dev(conn, "ap2", "unifi", last_seen=NOW, vendor="Ubiquiti")
+    normalize(conn)
+    assert get_dev(conn, "ap2")["model"] == "U7XYZ9"

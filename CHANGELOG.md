@@ -10,6 +10,14 @@ put.
 
 ### Changed
 
+- **UniFi devices show product names, not API codes**
+  ([#39](https://github.com/dsmorgan/patchbay/pull/39), thanks
+  [@slmingol](https://github.com/slmingol)). Known raw model codes
+  ("U7PG2") translate to display names ("AC Pro") at ingestion, a
+  known-misreported LibreNMS sysDescr is corrected, and stale raw codes
+  already stored yield to the translated name in the merge — exact known
+  codes only, so an untranslated code stays visible rather than erased.
+
 - **One toggle vocabulary: filter chips**
   ([#36](https://github.com/dsmorgan/patchbay/issues/36)). The topology
   toolbar's display filters (hide offline & unlinked, core only, wired

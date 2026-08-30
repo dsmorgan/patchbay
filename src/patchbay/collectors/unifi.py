@@ -24,6 +24,7 @@ DEVICE_STATES = {0: "down", 1: "up", 4: "upgrading", 5: "provisioning", 6: "hear
 # the UI; correct the ones we know about so patchbay displays useful labels.
 MODEL_NAMES: dict[str, str] = {
     "U7PG2":   "AC Pro",       # UAP-AC-Pro / UAP-AC-Pro-Gen2 (same code)
+    "U7PIW":   "AC In-Wall Pro",  # UAP-AC-IW-Pro
     "UAP6MP":  "U6 Pro",       # U6-Pro
     "U7PROXG": "U7 Pro XGS",   # U7-Pro-XGS (alternate code)
     "UAPA6A4": "U7 Pro XGS",   # U7-Pro-XGS (actual API code)
