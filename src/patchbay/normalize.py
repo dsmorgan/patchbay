@@ -569,7 +569,7 @@ def _drop_flooded_neighbors(conn: sqlite3.Connection) -> None:
         "SELECT name FROM devices WHERE role = 'switch'")}
     by_port: dict[tuple[str, str], list[sqlite3.Row]] = {}
     for r in conn.execute(
-            "SELECT * FROM links WHERE source IN ('lldp', 'vsphere-hint')").fetchall():
+            "SELECT * FROM links WHERE source IN ('lldp', 'unifi', 'vsphere-hint')").fetchall():
         by_port.setdefault((r["a_device"], r["a_interface"]), []).append(r)
         by_port.setdefault((r["b_device"], r["b_interface"]), []).append(r)
     for (dev, iface), group in by_port.items():
@@ -611,15 +611,19 @@ def _drop_superseded_inference(conn: sqlite3.Connection) -> None:
                     (r["b_device"], r["b_interface"]) in stronger):
                 conn.execute("DELETE FROM links WHERE id=?", (r["id"],))
 
-    drop_where("vsphere-hint", port_set(("lldp",)))
-    drop_where("fdb-uplink", port_set(("lldp", "vsphere-hint", "declared")))
+    # 'unifi' is the controller relaying its own LLDP discovery — stronger
+    # than a hypervisor's intermittent CDP hint, weaker than the device-level
+    # protocol (when LibreNMS hears the same cable over LLDP, one cable wins)
+    drop_where("unifi", port_set(("lldp",)))
+    drop_where("vsphere-hint", port_set(("lldp", "unifi")))
+    drop_where("fdb-uplink", port_set(("lldp", "unifi", "vsphere-hint", "declared")))
 
     # an INFERRED unmanaged switch can't share a port with a real link: once
     # lldp/hint/declared/uplink claims the port (e.g. a hypervisor came up and
     # its VM MACs, briefly ownerless, had spawned a ghost switch), retire the
     # inferred device and its link. Operator-declared unmanaged switches are
     # exempt — the .env is their authority.
-    real = port_set(("lldp", "vsphere-hint", "declared", "fdb-uplink"))
+    real = port_set(("lldp", "unifi", "vsphere-hint", "declared", "fdb-uplink"))
     for r in conn.execute(
             "SELECT * FROM links WHERE source = 'fdb-inference'").fetchall():
         a, b = (r["a_device"], r["a_interface"]), (r["b_device"], r["b_interface"])
@@ -729,7 +733,7 @@ def _apply_declared_links(conn: sqlite3.Connection,
             "DELETE FROM links WHERE a_device=? AND a_interface=? AND b_device=? "
             "AND b_interface=? AND source='declared' AND EXISTS (SELECT 1 FROM links l "
             "WHERE l.a_device=? AND l.a_interface=? AND l.b_device=? AND l.b_interface=? "
-            "AND l.source IN ('lldp', 'vsphere-hint'))", (*a, *b, *a, *b))
+            "AND l.source IN ('lldp', 'unifi', 'vsphere-hint'))", (*a, *b, *a, *b))
 
 
 def _check_declarations(conn: sqlite3.Connection,
@@ -749,7 +753,7 @@ def _check_declarations(conn: sqlite3.Connection,
     notes: list[str] = []
     observed: dict[tuple[str, str], tuple[str, str]] = {}
     for r in conn.execute(
-            "SELECT * FROM links WHERE source IN ('lldp', 'vsphere-hint')"):
+            "SELECT * FROM links WHERE source IN ('lldp', 'unifi', 'vsphere-hint')"):
         observed[(r["a_device"], r["a_interface"])] = (r["b_device"], r["b_interface"])
         observed[(r["b_device"], r["b_interface"])] = (r["a_device"], r["a_interface"])
     descr: dict[tuple[str, str], str] = {

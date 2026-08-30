@@ -19,6 +19,7 @@
   .edge.lldp, .edge.fdbuplink { stroke: var(--accent); }
   .edge.declared { stroke: var(--ink); }
   .edge.vspherehint { stroke: var(--r-hyp); }
+  .edge.unifi { stroke: var(--r-ap); }
   .edge.fdbuplink { stroke-dasharray: 7 3; }
   .edge.fdbinference { stroke-dasharray: 5 4; }
   .edge.virtualized { stroke-dasharray: 3 5; opacity: 0.65; stroke: var(--r-hyp); }
@@ -162,6 +163,7 @@
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--accent)" stroke-width="2"/></svg> LLDP/CDP-confirmed</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--accent)" stroke-width="2" stroke-dasharray="7 3"/></svg> switch MAC-table (inferred)</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-hyp)" stroke-width="2"/></svg> hypervisor-reported</span>
+  <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-ap)" stroke-width="2"/></svg> controller-reported</span>
   <span class="item" data-modes="wiring vlan evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-hyp)" stroke-width="2" stroke-dasharray="3 5"/></svg> VM on host</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--ink)" stroke-width="2"/></svg> declared (operator)</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--muted)" stroke-width="2" stroke-dasharray="5 4"/></svg> unmanaged feed</span>
@@ -633,7 +635,7 @@ function heat(u) {
 }
 // a "cable" is a physical link; virtualized/oob/wan aren't one. Of the
 // cables, fdb-derived ones are inferred (dashed in wiring/vlan), the rest
-// (lldp, declared, vsphere-hint) are confirmed (solid).
+// (lldp, declared, vsphere-hint, unifi) are confirmed (solid).
 const NON_CABLE = new Set(["virtualized", "oob", "wan"]);
 const INFERRED_CABLE = new Set(["fdbuplink", "fdbinference", "fdbhost"]);
 const edgeSourceCls = d => d.cls.split(" ")[0];

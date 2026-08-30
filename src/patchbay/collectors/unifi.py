@@ -44,6 +44,9 @@ class UnifiCollector:
             ap_by_mac: dict[str, str] = {}
             sw_mac_to_name: dict[str, str] = {}        # switch chassis MAC → device name
             sw_port_names: dict[str, dict[int, str]] = {}  # device name → {port_idx: port_name}
+            # uplinks buffered until every switch's port names are known:
+            # (device, local port name, upstream device, remote port index)
+            pending_links: list[tuple[str, str, str, int]] = []
             n_switches = 0
             for d in devices:
                 dev_type = d.get("type")
@@ -75,26 +78,18 @@ class UnifiCollector:
                             speed_bps=speed * 1_000_000 or None,
                         )
                     sw_port_names[dev_name] = port_idx_map
-                    # Switch-to-switch uplink link (same LLDP data as APs).
-                    # port_idx is the local uplink port; look up its name from
-                    # port_table so the link matches the stored interface name.
+                    # Switch-to-switch uplink (same LLDP data as APs). The
+                    # remote port name isn't knowable yet — the upstream
+                    # switch may come later in the device list — so buffer
+                    # the link and resolve names after the loop.
                     uplink = d.get("uplink") or {}
                     upstream = uplink.get("uplink_device_name")
                     upstream_port = uplink.get("uplink_remote_port")
                     local_idx = uplink.get("port_idx")
                     if upstream and upstream_port is not None and local_idx is not None:
-                        local_port = next(
-                            (p.get("name") or f"Port {local_idx}"
-                             for p in (d.get("port_table") or [])
-                             if p.get("port_idx") == local_idx),
-                            f"Port {local_idx}",
-                        )
-                        db.upsert_link(
-                            conn,
-                            a_device=dev_name, a_interface=local_port,
-                            b_device=upstream, b_interface=f"Port {upstream_port}",
-                            source=NAME,
-                        )
+                        local_port = port_idx_map.get(local_idx, f"Port {local_idx}")
+                        pending_links.append(
+                            (dev_name, local_port, upstream, upstream_port))
                     n_switches += 1
                     continue
 
@@ -118,19 +113,25 @@ class UnifiCollector:
                     mac=d.get("mac"),
                     description="uplink",
                 )
-                # Physical link to upstream switch via LLDP-discovered port.
-                # uplink_remote_port is the port index; "Port N" matches the
-                # switch's port_table name field for an unmodified USW.
+                # Physical link to the upstream switch via LLDP-discovered
+                # port. Buffered like the switch uplinks so a renamed port
+                # on the upstream switch resolves to its stored name.
                 upstream = uplink.get("uplink_device_name")
                 upstream_port = uplink.get("uplink_remote_port")
                 if upstream and upstream_port is not None:
-                    db.upsert_link(
-                        conn,
-                        a_device=dev_name, a_interface=iface_name,
-                        b_device=upstream, b_interface=f"Port {upstream_port}",
-                        source=NAME,
-                    )
+                    pending_links.append(
+                        (dev_name, iface_name, upstream, upstream_port))
                 n_aps += 1
+
+            # uplink_remote_port is a port index; resolve it through the
+            # upstream switch's port_table so a renamed port still matches
+            # the stored interface. "Port N" is the unmodified-USW fallback.
+            for a_dev, a_if, upstream, remote_idx in pending_links:
+                remote_port = sw_port_names.get(upstream, {}).get(
+                    remote_idx, f"Port {remote_idx}")
+                db.upsert_link(conn, a_device=a_dev, a_interface=a_if,
+                               b_device=upstream, b_interface=remote_port,
+                               source=NAME)
 
             cr = client.get(f"{base}/api/s/{site}/stat/sta")
             cr.raise_for_status()
@@ -161,11 +162,12 @@ class UnifiCollector:
                         port_name = sw_port_names.get(sw_name or "", {}).get(sw_port_idx)
                         if sw_name and port_name:
                             fdb_rows.append((sw_name, port_name, mac))
-            conn.execute("DELETE FROM fdb WHERE source = 'unifi'")
-            conn.executemany(
-                "INSERT OR IGNORE INTO fdb (device, interface, mac, source) VALUES (?, ?, ?, 'unifi')",
-                fdb_rows,
-            )
+            if clients:  # same empty-response guard as librenms fdb
+                conn.execute("DELETE FROM fdb WHERE source = 'unifi'")
+                conn.executemany(
+                    "INSERT OR IGNORE INTO fdb (device, interface, mac, source) VALUES (?, ?, ?, 'unifi')",
+                    fdb_rows,
+                )
         parts = []
         if n_switches:
             parts.append(f"{n_switches} switches")

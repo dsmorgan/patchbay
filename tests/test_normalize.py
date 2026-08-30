@@ -668,3 +668,31 @@ def test_declared_unmanaged_label_collision_falls_back_to_auto_name(conn):
     hyp = get_dev(conn, "hyp9")
     assert hyp["role"] == "hypervisor" and hyp["source"] == "vsphere"
     assert get_dev(conn, "unmanaged@sw1:1/0/5") is not None
+
+
+def test_lldp_supersedes_unifi_link_on_same_port(conn):
+    # the controller and LibreNMS LLDP report the same cable — one cable per
+    # port: the device-level protocol wins, the controller relay is dropped
+    dev(conn, "sw-a", "librenms", last_seen=NOW, role="switch")
+    dev(conn, "sw-b", "unifi", last_seen=NOW, role="switch")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="0/3",
+                    b_device="sw-b", b_interface="Port 1", source="unifi")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="0/3",
+                    b_device="sw-b", b_interface="Port 1", source="lldp")
+    normalize(conn)
+    rows = conn.execute(
+        "SELECT source FROM links WHERE a_interface != '?'").fetchall()
+    assert [r["source"] for r in rows] == ["lldp"]
+
+
+def test_unifi_link_supersedes_fdb_uplink(conn):
+    # a controller-reported cable outranks MAC-table inference for the port
+    dev(conn, "sw-a", "librenms", last_seen=NOW, role="switch")
+    dev(conn, "sw-b", "unifi", last_seen=NOW, role="switch")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="0/3",
+                    b_device="sw-b", b_interface="?", source="fdb-uplink")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="0/3",
+                    b_device="sw-b", b_interface="Port 1", source="unifi")
+    normalize(conn)
+    srcs = {r["source"] for r in conn.execute("SELECT source FROM links")}
+    assert srcs == {"unifi"}

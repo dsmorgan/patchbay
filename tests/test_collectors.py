@@ -698,3 +698,70 @@ def test_unifi_fdb_scoped_to_source(conn, clean_env, monkeypatch):
     UnifiCollector().collect(_unifi_settings(clean_env), conn)
     assert conn.execute(
         "SELECT COUNT(*) FROM fdb WHERE source='librenms'").fetchone()[0] == 1
+
+
+class _UnifiRenamedPorts(_UnifiClient):
+    """Controller where the upstream switch's ports carry custom names and
+    the upstream switch appears LATER in the device list than its downstream."""
+    def get(self, url, **kw):
+        core = {
+            "type": "usw", "mac": "02:00:00:00:02:99",
+            "name": "sw-core-01", "ip": "192.0.2.11",
+            "model": "US-24", "version": "6.5.59", "state": 1,
+            "port_table": [
+                {"port_idx": 1, "name": "to-ap-floor1", "up": True, "enable": True, "speed": 1000},
+                {"port_idx": 3, "name": "to-access-01", "up": True, "enable": True, "speed": 1000},
+            ],
+        }
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_):
+                if "stat/device" in url:
+                    return {"data": [_USW, core]}   # downstream first
+                if "stat/sta" in url:
+                    return {"data": []}
+                return {"data": []}
+        return R()
+
+
+def test_unifi_uplink_resolves_renamed_remote_port(conn, clean_env, monkeypatch):
+    """The remote end of an uplink must use the upstream switch's actual port
+    name, not an assumed 'Port N' — even when the upstream switch appears
+    later in the device list."""
+    from patchbay.collectors.unifi import UnifiCollector
+    monkeypatch.setattr(httpx, "Client", _UnifiRenamedPorts)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    row = conn.execute(
+        "SELECT * FROM links WHERE a_device='sw-access-01' OR b_device='sw-access-01'"
+    ).fetchone()
+    assert row is not None
+    ends = {(row["a_device"], row["a_interface"]), (row["b_device"], row["b_interface"])}
+    assert ("sw-core-01", "to-access-01") in ends, ends
+
+
+class _UnifiEmptyClients(_UnifiClient):
+    """Controller answering stat/sta with an empty list (transient hiccup)."""
+    def get(self, url, **kw):
+        r = super().get(url, **kw)
+        if "stat/sta" in url:
+            class R:
+                status_code = 200
+                def raise_for_status(self_): pass
+                def json(self_): return {"data": []}
+            return R()
+        return r
+
+
+def test_unifi_empty_client_list_keeps_fdb_rows(conn, clean_env, monkeypatch):
+    """An empty stat/sta response must not wipe unifi fdb rows — same
+    empty-response guard the librenms fdb path uses."""
+    from patchbay.collectors.unifi import UnifiCollector
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM fdb WHERE source='unifi'").fetchone()[0] == 1
+    monkeypatch.setattr(httpx, "Client", _UnifiEmptyClients)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM fdb WHERE source='unifi'").fetchone()[0] == 1

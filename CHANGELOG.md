@@ -24,6 +24,20 @@ put.
   opens it in your browser; Ctrl-C removes it, and nothing touches the host.
   `--build` does the same for the checkout you're in.
 
+- **UniFi switches join the map**
+  ([#32](https://github.com/dsmorgan/patchbay/pull/32), thanks
+  [@slmingol](https://github.com/slmingol)). The UniFi collector now
+  collects USW switches with their full port tables, writes the
+  controller's LLDP-discovered uplinks as links (switch-to-switch and
+  AP-to-switch, drawn in the AP color and labeled "controller-reported"
+  in the evidence view), and feeds wired clients' learned switch ports
+  into the MAC table so they place like any other FDB evidence. The
+  `fdb` table gains a `source` column (existing rows migrate to
+  `librenms`) so each collector owns and refreshes only its own rows.
+  Controller-reported cables slot into the one-cable-per-port order:
+  device-level LLDP beats them, and they beat hypervisor hints and
+  MAC-table inference.
+
 - **Name your unmanaged switches**
   ([#33](https://github.com/dsmorgan/patchbay/pull/33), thanks
   [@slmingol](https://github.com/slmingol)). `PATCHBAY_UNMANAGED` accepts an
