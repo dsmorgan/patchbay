@@ -529,3 +529,41 @@ def test_opnsense_vlan_tag_written_to_port_vlans(conn, clean_env, monkeypatch):
         "SELECT vid FROM port_vlans WHERE device='fw1' AND interface='igc0.20'"
     ).fetchone()
     assert row is not None and row["vid"] == 20
+
+
+class _OnsClient403(_OnsClient):
+    """Same stub, but the interfaces export is denied (missing privilege)."""
+    def get(self, url, **kw):
+        r = super().get(url, **kw)
+        if "overview" in url:
+            r.status_code = 403
+        return r
+
+
+def test_opnsense_403_on_export_keeps_port_vlans(conn, clean_env, monkeypatch):
+    """A denied interfaces export must not wipe port_vlans rows that are
+    still true — only a successful export owns the delete-then-insert."""
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(httpx, "Client", _OnsClient)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert conn.execute("SELECT COUNT(*) FROM port_vlans WHERE device='fw1'").fetchone()[0] == 1
+    monkeypatch.setattr(httpx, "Client", _OnsClient403)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert conn.execute("SELECT COUNT(*) FROM port_vlans WHERE device='fw1'").fetchone()[0] == 1
+
+
+def test_opnsense_stale_tunnel_rows_purged(conn, clean_env, monkeypatch):
+    """Tunnel interface rows written before the filter existed are removed."""
+    from patchbay import db
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(httpx, "Client", _OnsClient)
+    dev_id = db.upsert_device(conn, name="fw1", source="opnsense",
+                              role="firewall", status="up")
+    db.upsert_interface(conn, device_id=dev_id, name="wg1")
+    db.upsert_interface(conn, device_id=dev_id, name="ipsec3")
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    names = {r[0] for r in conn.execute(
+        "SELECT i.name FROM interfaces i JOIN devices d ON d.id=i.device_id "
+        "WHERE d.name='fw1'")}
+    assert "wg1" not in names and "ipsec3" not in names
+    assert "igc0" in names

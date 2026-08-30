@@ -24,6 +24,15 @@ put.
   opens it in your browser; Ctrl-C removes it, and nothing touches the host.
   `--build` does the same for the checkout you're in.
 
+- **OPNsense interfaces carry more of the model**
+  ([#31](https://github.com/dsmorgan/patchbay/pull/31), thanks
+  [@slmingol](https://github.com/slmingol)). The collector now records
+  `admin_status` (from `enabled`), link speed (parsed from the statistics
+  line rate, so port-load views cover firewall interfaces), and 802.1Q
+  membership for VLAN sub-interfaces; tunnel interfaces (`tun`/`ovpn`/
+  `gif`/`gre`/`ipsec`/`wg`) are filtered out as virtual endpoints with no
+  cable, and rows written before the filter existed are purged.
+
 ### Fixed
 
 - **No more phantom switches on inter-switch uplinks**

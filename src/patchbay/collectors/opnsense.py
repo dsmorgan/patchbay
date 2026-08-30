@@ -99,12 +99,24 @@ class OpnsenseCollector:
                         speed_bps=_parse_line_rate(i.get("statistics") or {}),
                     )
                     n_ifaces += 1
-            conn.execute("DELETE FROM port_vlans WHERE source = ? AND device = ?",
-                         (NAME, short_name))
-            conn.executemany(
-                "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
-                "VALUES (?, ?, ?, 0, ?) ON CONFLICT(device, interface, vid) DO NOTHING",
-                vlan_rows)
+                # This collector owns its port_vlans rows: delete-then-insert,
+                # so a VLAN sub-interface removed from OPNsense leaves the
+                # model too. Only when the export succeeded — a 403 above must
+                # not wipe rows that are still true.
+                conn.execute("DELETE FROM port_vlans WHERE source = ? AND device = ?",
+                             (NAME, short_name))
+                conn.executemany(
+                    "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                    "VALUES (?, ?, ?, 0, ?) ON CONFLICT(device, interface, vid) DO NOTHING",
+                    vlan_rows)
+                # Purge tunnel interfaces written before the filter was in
+                # place. interfaces has no source column, so target by prefix.
+                conn.execute(
+                    "DELETE FROM interfaces WHERE device_id = ? AND ("
+                    "name LIKE 'tun%' OR name LIKE 'ovpn%' OR name LIKE 'gif%' "
+                    "OR name LIKE 'gre%' OR name LIKE 'ipsec%' OR name LIKE 'wg%')",
+                    (dev_id,),
+                )
 
             gws = get("routes/gateway/status")
             if gws is not None:
