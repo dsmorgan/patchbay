@@ -1065,3 +1065,24 @@ def test_labeled_unmanaged_node_keeps_vlan_chips(clean_env, tmp_path, client):
     node = next(n for n in g["nodes"] if n["name"] == "closet-switch")
     assert node["label"] == "closet-switch"
     assert 24 in node["vlans"]
+
+
+def test_labeled_unmanaged_node_gets_vlans_from_endpoint_ips(clean_env, tmp_path, client):
+    # the last-resort VLAN fallback (addresses of endpoints behind the
+    # switch) must find labeled nodes too, not only unmanaged@ names
+    clean_env.setenv("PATCHBAY_UNMANAGED", "closet-switch=sw1:1/0/9")
+    db_path = str(tmp_path / "test.db")
+    seed(db_path)
+    c = sqlite3.connect(db_path)
+    c.row_factory = sqlite3.Row
+    from patchbay.config import load_settings
+    from patchbay.normalize import normalize
+    s = load_settings()
+    normalize(c, declared_unmanaged=s.unmanaged)
+    # an endpoint behind the labeled switch with an address in VLAN 24's subnet
+    pdb.upsert_endpoint(c, mac="02:00:00:00:08:01", source="fdb",
+                        device="closet-switch", interface="?", ip="192.0.2.77")
+    c.commit(); c.close()
+    g = _graph(client, tmp_path)
+    node = next(n for n in g["nodes"] if n["name"] == "closet-switch")
+    assert 24 in node["vlans"]

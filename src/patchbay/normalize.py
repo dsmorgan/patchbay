@@ -365,7 +365,10 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
 
     edge: dict[str, list[tuple[str, str]]] = {}   # mac -> [(device, port)]
     per_port: dict[tuple[str, str], set[str]] = {}
-    for r in conn.execute("SELECT device, interface, mac FROM fdb"):
+    # DISTINCT: two sources can each own a row for the same triple, but one
+    # observation must not count twice (a doubled edge[] entry would break
+    # the uniquely-seen endpoint placement below)
+    for r in conn.execute("SELECT DISTINCT device, interface, mac FROM fdb"):
         if (r["device"], r["interface"]) in linked or \
                 (r["device"], r["interface"]) in down_ports:
             continue

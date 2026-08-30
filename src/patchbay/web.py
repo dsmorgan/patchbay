@@ -507,8 +507,9 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
     # behind them prove by their addresses
     unm_vlans: dict[str, set[int]] = {}
     for r in conn.execute(
-            "SELECT device, ip FROM endpoints "
-            "WHERE device LIKE 'unmanaged@%' AND ip IS NOT NULL"):
+            "SELECT e.device, e.ip FROM endpoints e "
+            "JOIN devices d ON d.name = e.device "
+            "WHERE d.role = 'unmanaged-switch' AND e.ip IS NOT NULL"):
         unm_vlans.setdefault(r["device"], set()).update(vlans_of_ip(r["ip"]))
     # a firewall is a member of every VLAN it holds an address in — the
     # routed view of membership (its NICs are untagged; tagging happens

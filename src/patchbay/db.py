@@ -91,7 +91,11 @@ CREATE TABLE IF NOT EXISTS fdb (
     interface TEXT NOT NULL,   -- port it was learned on
     mac TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'librenms',
-    PRIMARY KEY (device, interface, mac)
+    -- source is part of the key: two collectors legitimately see the same
+    -- MAC on the same port, and each must own (insert, refresh, delete) its
+    -- own row — otherwise the first reporter owns the triple forever and
+    -- its scoped delete kills a row the other source still reports
+    PRIMARY KEY (device, interface, mac, source)
 );
 CREATE TABLE IF NOT EXISTS device_vlans (
     device TEXT NOT NULL,      -- device carrying the VLAN (Q-BRIDGE evidence)
@@ -212,9 +216,22 @@ def init(conn: sqlite3.Connection) -> None:
     rcols = {r[1] for r in conn.execute("PRAGMA table_info(routes)")}
     if rcols and "flags" not in rcols:  # discard routes must not read as reach
         conn.execute("ALTER TABLE routes ADD COLUMN flags TEXT")
-    fdbcols = {r[1] for r in conn.execute("PRAGMA table_info(fdb)")}
-    if fdbcols and "source" not in fdbcols:
+    fdbpk = {r[1]: r[5] for r in conn.execute("PRAGMA table_info(fdb)")}
+    if fdbpk and "source" not in fdbpk:
         conn.execute("ALTER TABLE fdb ADD COLUMN source TEXT NOT NULL DEFAULT 'librenms'")
+        fdbpk["source"] = 0
+    if fdbpk and not fdbpk["source"]:
+        # source must be part of the key (see the schema comment); SQLite
+        # can't alter a primary key, so rebuild the table in place
+        conn.executescript(
+            "CREATE TABLE fdb_migrate (device TEXT NOT NULL, "
+            "interface TEXT NOT NULL, mac TEXT NOT NULL, "
+            "source TEXT NOT NULL DEFAULT 'librenms', "
+            "PRIMARY KEY (device, interface, mac, source));"
+            "INSERT OR IGNORE INTO fdb_migrate "
+            "  SELECT device, interface, mac, source FROM fdb;"
+            "DROP TABLE fdb;"
+            "ALTER TABLE fdb_migrate RENAME TO fdb;")
 
 
 def now() -> float:

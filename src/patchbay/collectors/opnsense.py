@@ -72,7 +72,10 @@ class OpnsenseCollector:
             ifaces = get("interfaces/overview/export")
             vlan_rows: list[tuple] = []
             n_ifaces = 0
-            if ifaces is not None:
+            # truthiness, not `is not None`: a 200 with an empty body must
+            # not run the delete-then-insert or the tunnel purge below —
+            # same empty-response stance as the librenms/unifi fdb paths
+            if ifaces:
                 db.save_raw(conn, source=NAME, endpoint="interfaces/overview/export", payload=ifaces)
                 for i in ifaces if isinstance(ifaces, list) else []:
                     name = i.get("device") or i.get("identifier")

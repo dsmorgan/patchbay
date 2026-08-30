@@ -765,3 +765,63 @@ def test_unifi_empty_client_list_keeps_fdb_rows(conn, clean_env, monkeypatch):
     UnifiCollector().collect(_unifi_settings(clean_env), conn)
     assert conn.execute(
         "SELECT COUNT(*) FROM fdb WHERE source='unifi'").fetchone()[0] == 1
+
+
+def test_fdb_cross_source_rows_coexist_and_die_independently(conn):
+    """source is part of the fdb key: two collectors seeing the same MAC on
+    the same port each own a row, and one source dropping the MAC must not
+    delete the other source's still-true row."""
+    conn.execute("INSERT OR IGNORE INTO fdb (device, interface, mac, source) "
+                 "VALUES ('sw1', '1/0/2', '02:00:00:00:07:01', 'unifi')")
+    conn.execute("INSERT OR IGNORE INTO fdb (device, interface, mac, source) "
+                 "VALUES ('sw1', '1/0/2', '02:00:00:00:07:01', 'librenms')")
+    assert conn.execute("SELECT COUNT(*) FROM fdb").fetchone()[0] == 2
+    conn.execute("DELETE FROM fdb WHERE source = 'unifi'")
+    left = conn.execute("SELECT source FROM fdb").fetchall()
+    assert [r["source"] for r in left] == ["librenms"]
+
+
+def test_fdb_pk_migration_rebuilds_old_table(tmp_path):
+    """A database whose fdb PRIMARY KEY predates the source column (or has
+    source outside the key) is rebuilt in place, keeping its rows."""
+    import sqlite3 as s3
+    from patchbay import db as pdb
+    p = str(tmp_path / "old.db")
+    c = s3.connect(p)
+    c.execute("CREATE TABLE fdb (device TEXT NOT NULL, interface TEXT NOT NULL, "
+              "mac TEXT NOT NULL, PRIMARY KEY (device, interface, mac))")
+    c.execute("INSERT INTO fdb VALUES ('sw1', '1/0/2', '02:00:00:00:07:01')")
+    c.commit()
+    pdb.init(c)
+    pk = {r[1]: r[5] for r in c.execute("PRAGMA table_info(fdb)")}
+    assert pk["source"] > 0, pk
+    row = c.execute("SELECT * FROM fdb").fetchone()
+    assert row == ("sw1", "1/0/2", "02:00:00:00:07:01", "librenms")
+    pdb.init(c)  # idempotent
+    assert c.execute("SELECT COUNT(*) FROM fdb").fetchone()[0] == 1
+
+
+class _OnsClientEmptyExport(_OnsClient):
+    """interfaces export answers 200 with an empty list."""
+    def get(self, url, **kw):
+        r = super().get(url, **kw)
+        if "overview" in url:
+            outer = self
+            class E:
+                status_code = 200
+                def raise_for_status(self_): pass
+                def json(self_): return []
+            return E()
+        return r
+
+
+def test_opnsense_empty_export_keeps_port_vlans(conn, clean_env, monkeypatch):
+    """A 200-with-empty-list interfaces export must not wipe port_vlans or
+    run the tunnel purge — same stance as a denied export."""
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(httpx, "Client", _OnsClient)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert conn.execute("SELECT COUNT(*) FROM port_vlans WHERE device='fw1'").fetchone()[0] == 1
+    monkeypatch.setattr(httpx, "Client", _OnsClientEmptyExport)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert conn.execute("SELECT COUNT(*) FROM port_vlans WHERE device='fw1'").fetchone()[0] == 1
