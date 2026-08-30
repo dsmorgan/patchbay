@@ -39,3 +39,4 @@ docker-compose.yaml
 
 # screenshot harness output (evidence lives in worktrees / PR descriptions)
 artifacts/
+CLAUDE.md
