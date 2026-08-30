@@ -440,3 +440,92 @@ def test_librenms_interface_macs_are_colon_delimited():
     assert _colon_mac("28:80:88:73:42:54") == "28:80:88:73:42:54"  # passthrough
     assert _colon_mac("") is None and _colon_mac(None) is None
     assert _colon_mac("not-a-mac") == "not-a-mac"  # never invent structure
+
+
+# --- opnsense: tunnel skip, admin_status, speed, VLAN tag --------------------
+
+def test_parse_line_rate():
+    from patchbay.collectors.opnsense import _parse_line_rate
+    assert _parse_line_rate({"line rate": "1000000000 bit/s"}) == 1_000_000_000
+    assert _parse_line_rate({"line rate": "100000000 bit/s"}) == 100_000_000
+    assert _parse_line_rate({}) is None
+    assert _parse_line_rate({"line rate": ""}) is None
+    assert _parse_line_rate({"line rate": "not a number bit/s"}) is None
+
+
+class _OnsClient:
+    """OPNsense API stub: one physical iface, one VLAN sub, two tunnel ifaces."""
+    def __init__(self, *a, **k): pass
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+    def get(self, url, **kw):
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_):
+                if "firmware" in url:
+                    return {"product_version": "24.7"}
+                if "overview" in url:
+                    return [
+                        {"device": "igc0", "status": "up", "enabled": True,
+                         "macaddr": "02:00:00:00:01:01",
+                         "statistics": {"line rate": "1000000000 bit/s"}},
+                        {"device": "igc0.20", "status": "up", "enabled": True,
+                         "vlan_tag": "20", "statistics": {}},
+                        {"device": "tun0",   "status": "up", "enabled": True},
+                        {"device": "ovpnc1", "status": "up", "enabled": True},
+                    ]
+                if "gateway" in url:
+                    return {"items": []}
+                if "get_arp" in url or "getArp" in url:
+                    return []
+                if "get_routes" in url:
+                    return []
+                if "searchLease" in url:
+                    return {"rows": []}
+                return None
+        return R()
+
+
+def _ons_settings(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("OPNSENSE_HOST", "https://fw1.example.net")
+    clean_env.setenv("OPNSENSE_API_KEY", "k")
+    clean_env.setenv("OPNSENSE_API_SECRET", "s")
+    return load_settings()
+
+
+def test_opnsense_tunnel_interfaces_skipped(conn, clean_env, monkeypatch):
+    """tun/ovpn/gif/gre/ipsec/wg interfaces must never land as interface rows."""
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(httpx, "Client", _OnsClient)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    names = {r[0] for r in conn.execute(
+        "SELECT i.name FROM interfaces i JOIN devices d ON d.id=i.device_id "
+        "WHERE d.name='fw1'")}
+    assert "tun0" not in names and "ovpnc1" not in names
+    assert "igc0" in names and "igc0.20" in names
+
+
+def test_opnsense_admin_status_and_speed(conn, clean_env, monkeypatch):
+    """enabled=True → admin_status='up'; statistics line rate → speed_bps."""
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(httpx, "Client", _OnsClient)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    iface = conn.execute(
+        "SELECT i.* FROM interfaces i JOIN devices d ON d.id=i.device_id "
+        "WHERE d.name='fw1' AND i.name='igc0'").fetchone()
+    assert iface["admin_status"] == "up"
+    assert iface["speed_bps"] == 1_000_000_000
+
+
+def test_opnsense_vlan_tag_written_to_port_vlans(conn, clean_env, monkeypatch):
+    """A VLAN sub-interface writes its vlan_tag to port_vlans."""
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(httpx, "Client", _OnsClient)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    row = conn.execute(
+        "SELECT vid FROM port_vlans WHERE device='fw1' AND interface='igc0.20'"
+    ).fetchone()
+    assert row is not None and row["vid"] == 20
