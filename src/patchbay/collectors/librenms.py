@@ -189,7 +189,7 @@ class LibreNmsCollector:
 
             fdb = self._get(client, settings, "resources/fdb").get("ports_fdb", [])
             if fdb:  # same empty-response guard as device_vlans above
-                conn.execute("DELETE FROM fdb")
+                conn.execute("DELETE FROM fdb WHERE source = 'librenms'")
             n_fdb = 0
             for e in fdb:
                 where = port_map.get(e.get("port_id"))
@@ -198,7 +198,7 @@ class LibreNmsCollector:
                     continue
                 mac = ":".join(mac[i:i + 2] for i in range(0, 12, 2)).lower()
                 conn.execute(
-                    "INSERT OR IGNORE INTO fdb (device, interface, mac) VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO fdb (device, interface, mac, source) VALUES (?, ?, ?, 'librenms')",
                     (*where, mac),
                 )
                 n_fdb += 1

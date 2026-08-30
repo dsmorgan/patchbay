@@ -567,3 +567,134 @@ def test_opnsense_stale_tunnel_rows_purged(conn, clean_env, monkeypatch):
         "WHERE d.name='fw1'")}
     assert "wg1" not in names and "ipsec3" not in names
     assert "igc0" in names
+
+
+# --- UniFi: USW collection, uplink links, wired-client FDB -------------------
+
+_USW = {
+    "type": "usw", "mac": "02:00:00:00:02:01",
+    "name": "sw-access-01", "ip": "192.0.2.10",
+    "model": "US-8-150W", "version": "6.5.59", "state": 1,
+    "port_table": [
+        {"port_idx": 1, "name": "Port 1", "up": True,  "enable": True, "speed": 1000},
+        {"port_idx": 2, "name": "Port 2", "up": False, "enable": True, "speed": 0},
+        {"port_idx": 9, "name": "SFP",    "up": True,  "enable": True, "speed": 1000},
+    ],
+    "uplink": {"uplink_device_name": "sw-core-01", "uplink_remote_port": 3, "port_idx": 9},
+}
+
+_UAP = {
+    "type": "uap", "mac": "02:00:00:00:03:01",
+    "name": "ap-floor1", "ip": "192.0.2.20",
+    "model": "UAP-AC-PRO", "version": "6.3.4", "state": 1,
+    "uplink": {
+        "name": "eth0", "ifname": "eth0", "up": True, "speed": 1000,
+        "uplink_device_name": "sw-access-01", "uplink_remote_port": 1,
+    },
+}
+
+_WIRED_CLIENT = {
+    "mac": "02:00:00:00:04:01", "ip": "192.0.2.50",
+    "hostname": "workstation", "is_wired": True,
+    "sw_mac": "02:00:00:00:02:01", "sw_port": 2,
+}
+
+_WIRELESS_CLIENT = {
+    "mac": "02:00:00:00:04:02", "ap_mac": "02:00:00:00:03:01",
+    "essid": "corp-wifi", "is_wired": False,
+}
+
+
+class _UnifiClient:
+    """UniFi Network API stub: one USW, one AP, one wired and one wireless client."""
+    def __init__(self, *a, **k): pass
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+    def post(self, url, **kw):
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_): return {"data": [], "meta": {"rc": "ok"}}
+        return R()
+
+    def get(self, url, **kw):
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_):
+                if "stat/device" in url:
+                    return {"data": [_USW, _UAP]}
+                if "stat/sta" in url:
+                    return {"data": [_WIRED_CLIENT, _WIRELESS_CLIENT]}
+                return {"data": []}
+        return R()
+
+
+def _unifi_settings(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("UNIFI_URL", "https://unifi.example.net:8443")
+    clean_env.setenv("UNIFI_USER", "admin")
+    clean_env.setenv("UNIFI_PASS", "secret")
+    return load_settings()
+
+
+def test_unifi_usw_collected_with_ports(conn, clean_env, monkeypatch):
+    """USW devices land as role=switch with all port_table interfaces."""
+    from patchbay.collectors.unifi import UnifiCollector
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    dev = conn.execute("SELECT * FROM devices WHERE name='sw-access-01'").fetchone()
+    assert dev is not None and dev["role"] == "switch"
+    port_names = {r[0] for r in conn.execute(
+        "SELECT i.name FROM interfaces i JOIN devices d ON d.id=i.device_id "
+        "WHERE d.name='sw-access-01'")}
+    assert port_names == {"Port 1", "Port 2", "SFP"}
+
+
+def test_unifi_switch_to_switch_uplink_link(conn, clean_env, monkeypatch):
+    """USW uplink data writes a link from the local SFP port to the upstream switch."""
+    from patchbay.collectors.unifi import UnifiCollector
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    row = conn.execute(
+        "SELECT * FROM links WHERE "
+        "(a_device='sw-access-01' AND a_interface='SFP') OR "
+        "(b_device='sw-access-01' AND b_interface='SFP')").fetchone()
+    assert row is not None
+
+
+def test_unifi_ap_uplink_link(conn, clean_env, monkeypatch):
+    """AP with uplink_device_name+uplink_remote_port writes a link to the switch."""
+    from patchbay.collectors.unifi import UnifiCollector
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    row = conn.execute(
+        "SELECT * FROM links WHERE "
+        "(a_device='ap-floor1' OR b_device='ap-floor1')").fetchone()
+    assert row is not None
+
+
+def test_unifi_wired_client_fdb_row(conn, clean_env, monkeypatch):
+    """Wired client with sw_mac+sw_port resolves to (switch, port_name) → fdb row."""
+    from patchbay.collectors.unifi import UnifiCollector
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    row = conn.execute(
+        "SELECT * FROM fdb WHERE mac='02:00:00:00:04:01'").fetchone()
+    assert row is not None
+    assert row["device"] == "sw-access-01"
+    assert row["interface"] == "Port 2"
+    assert row["source"] == "unifi"
+
+
+def test_unifi_fdb_scoped_to_source(conn, clean_env, monkeypatch):
+    """unifi poll replaces only its own fdb rows; librenms rows are untouched."""
+    from patchbay.collectors.unifi import UnifiCollector
+    conn.execute(
+        "INSERT INTO fdb (device, interface, mac, source) "
+        "VALUES ('sw-core-01', 'Port 5', '02:00:00:00:99:01', 'librenms')")
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM fdb WHERE source='librenms'").fetchone()[0] == 1

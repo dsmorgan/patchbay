@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS fdb (
     device TEXT NOT NULL,      -- switch that learned the MAC
     interface TEXT NOT NULL,   -- port it was learned on
     mac TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'librenms',
     PRIMARY KEY (device, interface, mac)
 );
 CREATE TABLE IF NOT EXISTS device_vlans (
@@ -211,6 +212,9 @@ def init(conn: sqlite3.Connection) -> None:
     rcols = {r[1] for r in conn.execute("PRAGMA table_info(routes)")}
     if rcols and "flags" not in rcols:  # discard routes must not read as reach
         conn.execute("ALTER TABLE routes ADD COLUMN flags TEXT")
+    fdbcols = {r[1] for r in conn.execute("PRAGMA table_info(fdb)")}
+    if fdbcols and "source" not in fdbcols:
+        conn.execute("ALTER TABLE fdb ADD COLUMN source TEXT NOT NULL DEFAULT 'librenms'")
 
 
 def now() -> float:
