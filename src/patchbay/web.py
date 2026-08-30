@@ -549,8 +549,10 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
     saved = {r["name"]: (r["x"], r["y"])
              for r in conn.execute("SELECT * FROM positions").fetchall()}
     def mk_node(d) -> dict:
-        # unmanaged switches get a compact label; full identity in tooltip
-        label = "unmanaged" if d["role"] == "unmanaged-switch" else d["name"]
+        # unmanaged switches get a compact label; full identity in tooltip.
+        # Custom-named nodes (no "@") show their actual name.
+        label = (d["name"] if d["role"] != "unmanaged-switch"
+                 or not d["name"].startswith("unmanaged@") else "unmanaged")
         if d["role"] == "unmanaged-switch" and "@" in d["name"]:
             # a switch behind this port sees everything the port passes,
             # tagged included (e.g. a closet switch fed native 1 + tagged 22)
@@ -1043,8 +1045,10 @@ def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
     def onoff(v) -> str:
         return "set" if v else "—"
 
-    def port(t: tuple[str, str]) -> str:
-        return f"{t[0]}:{t[1]}"
+    def port(t: tuple) -> str:
+        label, dev, iface = t if len(t) == 3 else (None, t[0], t[1])
+        prefix = f"{label}=" if label else ""
+        return f"{prefix}{dev}:{iface}"
 
     src = [("LibreNMS", s.librenms_url, s.librenms_token),
            ("Oxidized", s.oxidized_url, True),

@@ -147,7 +147,8 @@ class Settings:
     # Declared unmanaged switches (ports the operator knows feed one), shown
     # even when too few MACs are live to infer them:
     # PATCHBAY_UNMANAGED="core1:1/0/12,edge1:ethernet1/1/5"
-    unmanaged: list[tuple[str, str]]
+    # Optional custom label: "k8s-switch=core1:1/0/12"
+    unmanaged: list[tuple[str | None, str, str]]
     # Operator-declared cabling facts that no protocol reveals:
     # PATCHBAY_LINKS="edge1:ethernet1/2/2=vmhost2:vmnic3"
     links: list[tuple[str, str, str, str]]
@@ -335,10 +336,22 @@ def load_settings() -> Settings:
             expected.add(":".join(part.strip() for part in s.split(":", 1)))
     unmanaged = []
     for spec in (env("PATCHBAY_UNMANAGED") or "").split(","):
-        if ":" in spec:
-            dev, iface = spec.split(":", 1)
-            unmanaged.append((dev.strip(), iface.strip()))
-        elif spec.strip():
+        spec = spec.strip()
+        if not spec:
+            continue
+        label, _, port = spec.partition("=")
+        if port:
+            # "k8s-switch=core1:1/0/12" form
+            if ":" in port:
+                dev, iface = port.split(":", 1)
+                unmanaged.append((label.strip(), dev.strip(), iface.strip()))
+            else:
+                warn("PATCHBAY_UNMANAGED", spec)
+        elif ":" in label:
+            # legacy "dev:iface" form
+            dev, iface = label.split(":", 1)
+            unmanaged.append((None, dev.strip(), iface.strip()))
+        else:
             warn("PATCHBAY_UNMANAGED", spec)
     links = []
     for spec in (env("PATCHBAY_LINKS") or "").split(","):

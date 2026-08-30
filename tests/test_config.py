@@ -116,3 +116,29 @@ def test_wan_defaults_and_malformed_port(clean_env):
     assert s.wan_names == ("internet",) and s.wan_ports == ()
     assert s.wan_port is None
     assert any("PATCHBAY_WAN_PORT" in w for w in s.parse_warnings)
+
+
+def test_unmanaged_legacy_format(clean_env):
+    # "dev:iface" without a label produces (None, dev, iface) tuples
+    clean_env.setenv("PATCHBAY_UNMANAGED", "core1:1/0/12,edge1:ethernet1/1/5")
+    s = load_settings()
+    assert s.unmanaged == [(None, "core1", "1/0/12"), (None, "edge1", "ethernet1/1/5")]
+    assert s.parse_warnings == ()
+
+
+def test_unmanaged_label_format(clean_env):
+    # "label=dev:iface" form carries the custom label through
+    clean_env.setenv("PATCHBAY_UNMANAGED", "k8s-switch=core1:1/0/8,basement-switch=sw1:e1/1/5")
+    s = load_settings()
+    assert s.unmanaged == [("k8s-switch", "core1", "1/0/8"),
+                           ("basement-switch", "sw1", "e1/1/5")]
+    assert s.parse_warnings == ()
+
+
+def test_unmanaged_mixed_and_malformed(clean_env):
+    # legacy and labeled entries can coexist; a spec with no colon is skipped
+    clean_env.setenv("PATCHBAY_UNMANAGED", "core1:1/0/8,k8s=sw1:e1/5,badentry")
+    s = load_settings()
+    assert s.unmanaged == [(None, "core1", "1/0/8"), ("k8s", "sw1", "e1/5")]
+    assert len(s.parse_warnings) == 1
+    assert "PATCHBAY_UNMANAGED" in s.parse_warnings[0]

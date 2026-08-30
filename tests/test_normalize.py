@@ -200,11 +200,11 @@ def test_declared_unmanaged_survives_real_link_on_port(conn):
     # an operator-DECLARED unmanaged switch is authoritative — a real link on
     # the port must not retire it
     dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
-    normalize(conn, declared_unmanaged=[("sw1", "1/0/5")])
+    normalize(conn, declared_unmanaged=[(None, "sw1", "1/0/5")])
     assert get_dev(conn, "unmanaged@sw1:1/0/5") is not None
     pdb.upsert_link(conn, a_device="sw1", a_interface="1/0/5", b_device="host",
                     b_interface="eth0", source="lldp")
-    normalize(conn, declared_unmanaged=[("sw1", "1/0/5")])
+    normalize(conn, declared_unmanaged=[(None, "sw1", "1/0/5")])
     assert get_dev(conn, "unmanaged@sw1:1/0/5") is not None  # declared, kept
 
 
@@ -583,3 +583,52 @@ def test_fdb_inference_skipped_on_uplink_port_with_alias_mismatch(conn):
     normalize(conn)
     # no phantom unmanaged switch should appear on the uplink port
     assert get_dev(conn, "unmanaged@sw-a:0/11") is None
+
+# ---------------------------------------------------------------------------
+# PATCHBAY_UNMANAGED label format
+# ---------------------------------------------------------------------------
+
+def test_declared_unmanaged_label_creates_named_device(conn):
+    # "label=dev:iface" format: the node takes the custom label, not "unmanaged@"
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    normalize(conn, declared_unmanaged=[("basement-switch", "sw1", "1/0/5")])
+    assert get_dev(conn, "basement-switch") is not None
+    assert get_dev(conn, "unmanaged@sw1:1/0/5") is None
+
+
+def test_declared_unmanaged_legacy_format_still_works(conn):
+    # legacy "(None, dev, iface)" tuple: node falls back to "unmanaged@dev:iface"
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    normalize(conn, declared_unmanaged=[(None, "sw1", "1/0/8")])
+    assert get_dev(conn, "unmanaged@sw1:1/0/8") is not None
+
+
+def test_declared_unmanaged_prune_removes_declared_node_on_undeclare(conn):
+    # when a port is removed from PATCHBAY_UNMANAGED, its declared node and
+    # link must be deleted so the topology doesn't accumulate phantom switches
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    # first poll — port declared, node created
+    normalize(conn, declared_unmanaged=[(None, "sw1", "1/0/5")])
+    assert get_dev(conn, "unmanaged@sw1:1/0/5") is not None
+    # second poll — port removed from declaration
+    normalize(conn, declared_unmanaged=[])
+    assert get_dev(conn, "unmanaged@sw1:1/0/5") is None
+    assert conn.execute(
+        "SELECT COUNT(*) FROM links WHERE source='fdb-inference'").fetchone()[0] == 0
+
+
+def test_declared_unmanaged_prune_evicts_inference_node_when_port_declared(conn):
+    # when FDB inference has already created an unmanaged node for a port, and
+    # the operator then adds it to PATCHBAY_UNMANAGED, the inferred node must
+    # be replaced by the declared one (not coexist)
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    # seed an inference-sourced unmanaged node as FDB inference would write it
+    pdb.upsert_device(conn, name="unmanaged@sw1:1/0/5",
+                      source="inference", role="unmanaged-switch", status="up")
+    pdb.upsert_link(conn, a_device="sw1", a_interface="1/0/5",
+                    b_device="unmanaged@sw1:1/0/5", b_interface="?",
+                    source="fdb-inference")
+    # operator now declares the port
+    normalize(conn, declared_unmanaged=[("k8s-switch", "sw1", "1/0/5")])
+    assert get_dev(conn, "unmanaged@sw1:1/0/5") is None
+    assert get_dev(conn, "k8s-switch") is not None
