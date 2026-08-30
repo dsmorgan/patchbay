@@ -578,6 +578,8 @@ def test_fdb_inference_skipped_on_uplink_port_with_alias_mismatch(conn):
                  ("aa:bb:cc:dd:ee:01",))
     conn.execute("INSERT INTO fdb (device, interface, mac) VALUES ('sw-a', '0/11', ?)",
                  ("aa:bb:cc:dd:ee:02",))
+    conn.execute("INSERT INTO fdb (device, interface, mac) VALUES ('sw-a', '0/11', ?)",
+                 ("aa:bb:cc:dd:ee:03",))
     normalize(conn)
     # no phantom unmanaged switch should appear on the uplink port
     assert get_dev(conn, "unmanaged@sw-a:0/11") is None
