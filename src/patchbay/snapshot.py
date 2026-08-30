@@ -122,7 +122,9 @@ def generate(settings: Settings) -> str:
                 {"iface": iface, "uri": _data_uri(*got)})
 
     # latest configs via Oxidized, scrubbed; an unreachable Oxidized means a
-    # snapshot without configs, never no snapshot
+    # snapshot without configs, never no snapshot. Firewall config history
+    # (config_revisions, #23) is deliberately NOT embedded — even redacted,
+    # that class of config stays off cloud-synced storage.
     configs: list[dict] = []
     if settings.oxidized_url:
         try:

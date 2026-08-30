@@ -7,6 +7,8 @@ whole poll, so partial grants degrade gracefully.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import sqlite3
 from typing import Any
 
@@ -15,6 +17,67 @@ import httpx
 from ..config import Settings
 from .. import db
 from . import register
+
+# --- firewall config history (#23) ------------------------------------------
+# config.xml is pulled over the same API key as everything else (grant the
+# firewall's backup page privilege). It carries live private keys, so the raw
+# document is redacted BEFORE anything touches the database: the content of
+# every secret-bearing element is replaced with a short hash of itself —
+# a rotated key still shows as a change, but no secret is ever stored.
+# Overzealous by design, same stance as the snapshot scrubber.
+_SECRET_TAGS = ("prv", "crt", "password", "pass", "secret", "psk",
+                "pre-shared-key", "private-key", "privatekey", "privkey",
+                "sharedkey", "authorizedkeys")
+_SECRET_RE = re.compile(
+    r"<(" + "|".join(re.escape(t) for t in _SECRET_TAGS) + r")>([^<]+)</\1>")
+# the <revision> block updates on every save — its description/username are
+# the change's metadata (lifted onto the revision row); its timestamp churn
+# must not read as a config change or clutter the diffs
+_REVISION_RE = re.compile(r"\s*<revision>.*?</revision>", re.S)
+
+CONFIG_REVISIONS_KEEP = 50   # per device; history beyond this is trimmed
+
+
+def _digest(m: re.Match) -> str:
+    tag, content = m.group(1), m.group(2)
+    stamp = hashlib.sha256(content.encode()).hexdigest()[:8]
+    return f"<{tag}>redacted:{stamp}</{tag}>"
+
+
+def prepare_config(raw: str) -> tuple[str, str | None, str | None]:
+    """Redact secrets and strip revision noise from a raw config.xml.
+    Returns (stored text, change description, change author)."""
+    msg = auth = None
+    rev = _REVISION_RE.search(raw)
+    if rev:  # only trust description/username found inside the revision block
+        msg_m = re.search(r"<description>([^<]*)</description>", rev.group(0))
+        auth_m = re.search(r"<username>([^<]*)</username>", rev.group(0))
+        msg = (msg_m.group(1).strip() or None) if msg_m else None
+        auth = (auth_m.group(1).strip() or None) if auth_m else None
+    text = _REVISION_RE.sub("", raw)
+    text = _SECRET_RE.sub(_digest, text)
+    return text, msg, auth
+
+
+def save_config_revision(conn: sqlite3.Connection, device: str, raw: str) -> bool:
+    """Store a new redacted revision if the config actually changed.
+    Returns True when a new revision was written."""
+    text, msg, auth = prepare_config(raw)
+    sha = hashlib.sha256(text.encode()).hexdigest()
+    last = conn.execute(
+        "SELECT sha FROM config_revisions WHERE device = ? "
+        "ORDER BY fetched_at DESC, id DESC LIMIT 1", (device,)).fetchone()
+    if last and last["sha"] == sha:
+        return False
+    conn.execute(
+        "INSERT INTO config_revisions (device, fetched_at, sha, message, author, text) "
+        "VALUES (?, ?, ?, ?, ?, ?)", (device, db.now(), sha, msg, auth, text))
+    conn.execute(
+        "DELETE FROM config_revisions WHERE device = ? AND id NOT IN "
+        "(SELECT id FROM config_revisions WHERE device = ? "
+        " ORDER BY fetched_at DESC, id DESC LIMIT ?)",
+        (device, device, CONFIG_REVISIONS_KEEP))
+    return True
 
 NAME = "opnsense"
 
@@ -57,6 +120,14 @@ class OpnsenseCollector:
                 return None
             r.raise_for_status()
             return r.json()
+
+        def get_text(path: str) -> str | None:
+            r = client.get(f"{base}/{path}", auth=auth)
+            if r.status_code == 403:
+                notes.append(f"{path}: 403 (grant the matching page privilege)")
+                return None
+            r.raise_for_status()
+            return r.text
 
         with httpx.Client(verify=settings.tls_verify, timeout=20) as client:
             # the firewall knows what it is — SNMP only sees "FreeBSD/amd64"
@@ -191,7 +262,17 @@ class OpnsenseCollector:
                         db.upsert_endpoint(conn, mac=mac, source=NAME,
                                            ip=l.get("address"), hostname=(l.get("hostname") or None))
 
+            # firewall config history (#23): the raw XML is redacted and
+            # noise-stripped by save_config_revision before storage; the raw
+            # document itself is discarded here and never saved to raw_payloads
+            cfg = get_text("core/backup/download/this")
+            new_rev = False
+            if cfg and cfg.lstrip().startswith("<"):
+                new_rev = save_config_revision(conn, short_name, cfg)
+
         summary = f"{n_ifaces} interfaces/gateways/arp/leases polled"
+        if new_rev:
+            summary += ", new config revision"
         if notes:
             summary += f" ({'; '.join(notes)})"
         return summary

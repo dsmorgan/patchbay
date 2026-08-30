@@ -123,6 +123,15 @@ CREATE TABLE IF NOT EXISTS port_vlans (
     source TEXT NOT NULL,
     PRIMARY KEY (device, interface, vid)
 );
+CREATE TABLE IF NOT EXISTS config_revisions (
+    id INTEGER PRIMARY KEY,    -- firewall config history pulled over the
+    device TEXT NOT NULL,      -- device API (#23). `text` is REDACTED before
+    fetched_at REAL NOT NULL,  -- it gets here — secret-bearing elements are
+    sha TEXT NOT NULL,         -- replaced with content hashes, so a change
+    message TEXT,              -- stays diffable but no key/password is ever
+    author TEXT,               -- stored. sha covers the noise-stripped text:
+    text TEXT NOT NULL         -- a save that changed nothing real is no rev.
+);
 CREATE TABLE IF NOT EXISTS port_roles (
     device TEXT NOT NULL,      -- special-purpose ports parsed from configs:
     interface TEXT NOT NULL,   -- 'monitor-dst' (SPAN/mirror destination) and

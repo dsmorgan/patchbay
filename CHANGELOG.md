@@ -8,6 +8,19 @@ put.
 
 ## [Unreleased]
 
+### Added
+
+- **The firewall joins config history**
+  ([#23](https://github.com/dsmorgan/patchbay/issues/23)). Grant the
+  OPNsense API key the backup page privilege and every poll pulls
+  config.xml, redacts secret-bearing elements down to content hashes (a
+  rotated key still reads as a change; no secret is ever stored), strips
+  the revision-block noise, and keeps a revision only when something real
+  changed — with the change's description and author lifted onto the
+  timeline. /configs lists the firewall beside the Oxidized nodes with
+  the same view and diff pages, and works with or without Oxidized
+  configured. Snapshots deliberately embed none of it.
+
 ### Changed
 
 - **UniFi devices show product names, not API codes**

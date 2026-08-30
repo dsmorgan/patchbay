@@ -462,6 +462,7 @@ class _OnsClient:
     def get(self, url, **kw):
         class R:
             status_code = 200
+            text = ""
             def raise_for_status(self_): pass
             def json(self_):
                 if "firmware" in url:
@@ -891,3 +892,98 @@ def test_librenms_hardware_alias_corrected(conn, clean_env, monkeypatch):
     LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
     dev = conn.execute("SELECT vendor FROM devices WHERE name='ap1'").fetchone()
     assert dev is not None and dev["vendor"] == "UAP-AC-Pro", dev
+
+
+# --- opnsense: firewall config history (#23) ---------------------------------
+
+_CFG_XML = """<?xml version="1.0"?>
+<opnsense>
+  <revision>
+    <username>root@192.0.2.9</username>
+    <time>1756500000.1</time>
+    <description>/firewall_rules.php made changes</description>
+  </revision>
+  <system><hostname>fw1</hostname></system>
+  <cert><crt>FAKECERTB64</crt><prv>FAKEKEYB64</prv></cert>
+  <user><password>$2y$10$fakehash</password><authorizedkeys>ssh-ed25519 FAKE</authorizedkeys></user>
+  <filter><rule><descr>allow lan</descr></rule></filter>
+</opnsense>
+"""
+
+
+def test_prepare_config_redacts_and_lifts_revision_meta():
+    from patchbay.collectors.opnsense import prepare_config
+    text, msg, author = prepare_config(_CFG_XML)
+    for secret in ("FAKEKEYB64", "FAKECERTB64", "$2y$10$fakehash", "ssh-ed25519 FAKE"):
+        assert secret not in text
+    assert "redacted:" in text
+    assert "<revision>" not in text
+    assert "allow lan" in text                      # real content survives
+    assert msg == "/firewall_rules.php made changes"
+    assert author == "root@192.0.2.9"
+
+
+def test_config_revision_noop_save_is_no_revision(conn):
+    from patchbay.collectors.opnsense import save_config_revision
+    assert save_config_revision(conn, "fw1", _CFG_XML) is True
+    resaved = _CFG_XML.replace("1756500000.1", "1756500999.9").replace(
+        "/firewall_rules.php made changes", "no-op save")
+    assert save_config_revision(conn, "fw1", resaved) is False
+    assert conn.execute("SELECT COUNT(*) FROM config_revisions").fetchone()[0] == 1
+
+
+def test_config_revision_real_change_is_recorded(conn):
+    from patchbay.collectors.opnsense import save_config_revision
+    save_config_revision(conn, "fw1", _CFG_XML)
+    changed = _CFG_XML.replace("allow lan", "allow lan and dmz").replace(
+        "/firewall_rules.php made changes", "rule edited")
+    assert save_config_revision(conn, "fw1", changed) is True
+    rows = conn.execute("SELECT message FROM config_revisions "
+                        "ORDER BY fetched_at DESC, id DESC").fetchall()
+    assert len(rows) == 2 and rows[0]["message"] == "rule edited"
+
+
+def test_config_revision_rotated_key_still_reads_as_change(conn):
+    # a rotated private key must register as a change without being stored
+    from patchbay.collectors.opnsense import save_config_revision
+    save_config_revision(conn, "fw1", _CFG_XML)
+    rotated = _CFG_XML.replace("FAKEKEYB64", "NEWFAKEKEY")
+    assert save_config_revision(conn, "fw1", rotated) is True
+    for r in conn.execute("SELECT text FROM config_revisions"):
+        assert "FAKEKEYB64" not in r["text"] and "NEWFAKEKEY" not in r["text"]
+
+
+def test_config_revisions_pruned_to_keep(conn, monkeypatch):
+    from patchbay.collectors import opnsense as ons
+    monkeypatch.setattr(ons, "CONFIG_REVISIONS_KEEP", 3)
+    for i in range(5):
+        ons.save_config_revision(conn, "fw1", _CFG_XML.replace("allow lan", f"rule {i}"))
+    assert conn.execute("SELECT COUNT(*) FROM config_revisions").fetchone()[0] == 3
+    kept = [r["text"] for r in conn.execute(
+        "SELECT text FROM config_revisions ORDER BY fetched_at, id")]
+    assert "rule 4" in kept[-1]
+
+
+class _OnsClientWithConfig(_OnsClient):
+    """Adds a config.xml response on the backup endpoint."""
+    def get(self, url, **kw):
+        r = super().get(url, **kw)
+        if "backup/download" in url:
+            class C:
+                status_code = 200
+                text = _CFG_XML
+                def raise_for_status(self_): pass
+            return C()
+        return r
+
+
+def test_opnsense_collect_stores_config_revision(conn, clean_env, monkeypatch):
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(httpx, "Client", _OnsClientWithConfig)
+    summary = OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert "new config revision" in summary
+    row = conn.execute("SELECT * FROM config_revisions WHERE device='fw1'").fetchone()
+    assert row is not None and "FAKEKEYB64" not in row["text"]
+    # raw config.xml must never land in raw_payloads
+    for r in conn.execute("SELECT payload FROM raw_payloads"):
+        assert "FAKEKEYB64" not in r["payload"]

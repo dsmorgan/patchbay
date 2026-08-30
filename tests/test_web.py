@@ -1086,3 +1086,40 @@ def test_labeled_unmanaged_node_gets_vlans_from_endpoint_ips(clean_env, tmp_path
     g = _graph(client, tmp_path)
     node = next(n for n in g["nodes"] if n["name"] == "closet-switch")
     assert 24 in node["vlans"]
+
+
+# --- /configs: patchbay-held firewall history (#23) --------------------------
+
+def _seed_fw_history(db_path):
+    from patchbay.collectors.opnsense import save_config_revision
+    from tests.test_collectors import _CFG_XML
+    c = sqlite3.connect(db_path)
+    c.row_factory = sqlite3.Row
+    pdb.init(c)
+    save_config_revision(c, "fw1", _CFG_XML)
+    changed = _CFG_XML.replace("allow lan", "allow lan and dmz").replace(
+        "/firewall_rules.php made changes", "rule edited")
+    save_config_revision(c, "fw1", changed)
+    ids = [r[0] for r in c.execute(
+        "SELECT id FROM config_revisions ORDER BY fetched_at, id")]
+    c.commit(); c.close()
+    return ids
+
+
+def test_configs_lists_firewall_history_without_oxidized(clean_env, tmp_path, client):
+    _seed_fw_history(str(tmp_path / "test.db"))
+    r = client.get("/configs")
+    assert r.status_code == 200
+    assert "fw1" in r.text
+    assert "rule edited" in r.text          # timeline carries the description
+
+
+def test_confignode_shows_firewall_revision_and_diff(clean_env, tmp_path, client):
+    old_id, new_id = _seed_fw_history(str(tmp_path / "test.db"))
+    r = client.get(f"/configs/fw1?v={new_id}")
+    assert r.status_code == 200
+    assert "allow lan and dmz" in r.text
+    assert "FAKEKEYB64" not in r.text
+    d = client.get(f"/configs/fw1?v={new_id}&prev={old_id}")
+    assert d.status_code == 200
+    assert "allow lan and dmz" in d.text    # the diff shows the real change

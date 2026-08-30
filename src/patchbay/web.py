@@ -143,7 +143,7 @@ NAV = [
         ("/drift", "Drift", "drift",
          "IPAM against what the network actually shows"),
         ("/configs", "Configs", "configs",
-         "Device configuration history and diffs, from Oxidized"),
+         "Device configuration history and diffs"),
         ("/snapshots", "Snapshots", "snapshots",
          "Break-glass copies of the whole picture: what is kept, and where it is delivered"),
     ]),
@@ -1647,14 +1647,63 @@ def _ox_version_text(client: httpx.Client, node: str, v: dict, num: int) -> str:
     raise RuntimeError(f"unexpected version/view response shape: {type(data).__name__}")
 
 
+# --- patchbay-held config history (#23): firewall config.xml pulled over the
+# device API by the opnsense collector, redacted before storage. These nodes
+# merge into the same /configs page and timeline as the Oxidized ones; the
+# snapshot deliberately embeds neither raw nor redacted firewall configs.
+
+def _db_config_devices(conn: sqlite3.Connection) -> list[str]:
+    return [r["device"] for r in conn.execute(
+        "SELECT DISTINCT device FROM config_revisions ORDER BY device")]
+
+
+def _db_config_versions(conn: sqlite3.Connection, device: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT id, fetched_at, message, author FROM config_revisions "
+        "WHERE device = ? ORDER BY fetched_at DESC, id DESC", (device,)).fetchall()
+    return [{
+        "oid": str(r["id"]), "num": i + 1,
+        "date": datetime.fromtimestamp(r["fetched_at"]).strftime("%Y-%m-%d %H:%M:%S"),
+        "ts": r["fetched_at"],
+        "message": r["message"] or "", "author": r["author"],
+        "prev": str(rows[i + 1]["id"]) if i + 1 < len(rows) else None,
+    } for i, r in enumerate(rows)]
+
+
+def _db_config_timeline(conn: sqlite3.Connection) -> list[dict]:
+    from urllib.parse import quote
+    entries = []
+    for device in _db_config_devices(conn):
+        for v in _db_config_versions(conn, device)[:OX_TIMELINE_PER_NODE]:
+            href = f"/configs/{quote(device, safe='')}?v={v['oid']}"
+            if v["prev"]:
+                href += f"&prev={v['prev']}"
+            entries.append({"node": device, "oid": v["oid"], "prev": v["prev"],
+                            "date": v["date"], "ts": v["ts"],
+                            "message": v["message"], "author": v["author"],
+                            "href": href})
+    return entries
+
+
 @app.get("/configs", response_class=HTMLResponse)
 def configs(request: Request):
     settings = load_settings()
     nodes, error = [], None
     entries, problems, truncated = [], [], False
-    if not settings.oxidized_url:
+    conn = _conn()
+    db.init(conn)
+    for device in _db_config_devices(conn):
+        latest = conn.execute(
+            "SELECT MAX(fetched_at) AS t FROM config_revisions WHERE device = ?",
+            (device,)).fetchone()
+        nodes.append({"name": device, "ip": None, "model": "config.xml",
+                      "group": "api", "status": "success",
+                      "time": datetime.fromtimestamp(latest["t"]).strftime(
+                          "%Y-%m-%d %H:%M:%S") if latest and latest["t"] else None})
+    entries.extend(_db_config_timeline(conn))
+    if not settings.oxidized_url and not nodes:
         error = "unconfigured"
-    else:
+    elif settings.oxidized_url:
         try:
             with _ox_client(settings) as client:
                 raw_nodes = _ox_nodes(client)
@@ -1666,16 +1715,30 @@ def configs(request: Request):
                         "status": last.get("status") or n.get("status") or "never",
                         "time": last.get("end") or n.get("time") or n.get("mtime"),
                     })
-                entries, problems = _ox_timeline(client, raw_nodes)
-                if len(entries) > OX_TIMELINE_LIMIT:
-                    truncated = True
-                    entries = entries[:OX_TIMELINE_LIMIT]
+                ox_entries, problems = _ox_timeline(client, raw_nodes)
+                entries.extend(ox_entries)
         except Exception as exc:  # unreachable oxidized is a state, not a crash
             error = str(exc)
+    entries.sort(key=lambda e: e["ts"] or 0, reverse=True)
+    if len(entries) > OX_TIMELINE_LIMIT:
+        truncated = True
+        entries = entries[:OX_TIMELINE_LIMIT]
     return templates.TemplateResponse(request, "configs.html", {
         "nodes": nodes, "error": error, "oxidized_url": settings.oxidized_url,
         "entries": entries, "problems": problems, "truncated": truncated,
     })
+
+
+def _diff_lines(old: str, new: str, old_label: str, new_label: str) -> list[tuple[str, str]]:
+    import difflib
+    out = []
+    for ln in difflib.unified_diff(old.splitlines(), new.splitlines(),
+                                   fromfile=old_label, tofile=new_label, lineterm=""):
+        cls = ("add" if ln.startswith("+") and not ln.startswith("+++") else
+               "del" if ln.startswith("-") and not ln.startswith("---") else
+               "hunk" if ln.startswith("@@") else "ctx")
+        out.append((cls, ln))
+    return out
 
 
 @app.get("/configs/{node}", response_class=HTMLResponse)
@@ -1683,11 +1746,35 @@ def config_node(request: Request, node: str):
     import difflib
 
     settings = load_settings()
-    if not settings.oxidized_url:
-        raise HTTPException(503, "OXIDIZED_URL is not configured")
     want = request.query_params.get("v")        # oid to view ("current" = live)
     prev = request.query_params.get("prev")     # older oid => show a diff
     versions, text, diff_lines, error = [], None, None, None
+
+    # patchbay-held firewall history resolves first — it's local and cheap
+    conn = _conn()
+    db.init(conn)
+    if node in _db_config_devices(conn):
+        versions = _db_config_versions(conn, node)
+        by_oid = {v["oid"]: v for v in versions}
+        def rev_text(oid: str) -> str:
+            return conn.execute("SELECT text FROM config_revisions WHERE id = ?",
+                                (int(oid),)).fetchone()["text"]
+        if want == "current" and versions:
+            want = versions[0]["oid"]
+        if want and want in by_oid:
+            new = rev_text(want)
+            if prev and prev in by_oid:
+                diff_lines = _diff_lines(rev_text(prev), new,
+                                         f"rev {prev}", f"rev {want}")
+            else:
+                text = new
+        return templates.TemplateResponse(request, "confignode.html", {
+            "node": node, "versions": versions, "text": text,
+            "diff_lines": diff_lines, "want": want, "prev": prev, "error": None,
+        })
+
+    if not settings.oxidized_url:
+        raise HTTPException(503, "OXIDIZED_URL is not configured")
     try:
         with _ox_client(settings) as client:
             # resolve against oxidized's own node list — the path segment never
@@ -1718,14 +1805,7 @@ def config_node(request: Request, node: str):
                 new = _ox_version_text(client, node, by_oid[want], by_oid[want]["num"])
                 if prev and prev in by_oid:
                     old = _ox_version_text(client, node, by_oid[prev], by_oid[prev]["num"])
-                    diff_lines = []
-                    for ln in difflib.unified_diff(
-                            old.splitlines(), new.splitlines(),
-                            fromfile=prev[:10], tofile=want[:10], lineterm=""):
-                        cls = ("add" if ln.startswith("+") and not ln.startswith("+++") else
-                               "del" if ln.startswith("-") and not ln.startswith("---") else
-                               "hunk" if ln.startswith("@@") else "ctx")
-                        diff_lines.append((cls, ln))
+                    diff_lines = _diff_lines(old, new, prev[:10], want[:10])
                 else:
                     text = new
     except HTTPException:
