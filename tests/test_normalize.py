@@ -661,7 +661,7 @@ def test_declared_unmanaged_label_rename_evicts_old_node(conn):
 
 def test_declared_unmanaged_label_collision_falls_back_to_auto_name(conn):
     # a label naming a real device must not hijack it (upsert_device merges
-    # by name — "esxi1=sw1:1/0/5" would rewrite the hypervisor's role)
+    # by name — "hyp1=sw1:1/0/5" would rewrite the hypervisor's role)
     dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
     dev(conn, "hyp9", "vsphere", last_seen=NOW, role="hypervisor")
     normalize(conn, declared_unmanaged=[("hyp9", "sw1", "1/0/5")])

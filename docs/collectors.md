@@ -60,9 +60,14 @@ Use the `db` helpers — they upsert by natural key so repeated polls converge:
 | `db.save_raw(conn, source=…, endpoint=…, payload=…)` | — | raw API payload for debugging; auto-expires after 7 days |
 
 Link `source` values carry meaning in the UI (color = who reported, dash =
-stated vs inferred) and in supersede logic (`lldp` > `vsphere-hint` >
-`fdb-uplink`; `declared` is operator truth). A new discovery protocol should
-reuse an existing tier or discuss a new one.
+stated vs inferred) and in supersede logic (`lldp` > `unifi` >
+`vsphere-hint` > `fdb-uplink`; `declared` is operator truth). A new discovery
+protocol should reuse an existing tier or discuss a new one.
+
+The `fdb` table carries a `source` column: each collector that writes MAC-table
+rows owns them and refreshes with `DELETE FROM fdb WHERE source = '<name>'`
+followed by inserts — never an unscoped delete, and never when the fetch that
+feeds them failed or came back empty.
 
 ## Configuration
 

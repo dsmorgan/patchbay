@@ -381,7 +381,7 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
     for label, ddev, diface in (declared or []):
         if label:
             # a label naming a real device would hijack it — upsert_device
-            # merges by name, so "esxi1=sw1:1/0/5" would rewrite the
+            # merges by name, so "hyp1=sw1:1/0/5" would rewrite the
             # hypervisor's role. Fall back to the auto name instead.
             row = conn.execute("SELECT role FROM devices WHERE name = ?",
                                (label,)).fetchone()

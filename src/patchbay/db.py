@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS links (
     a_interface TEXT NOT NULL,
     b_device TEXT NOT NULL,
     b_interface TEXT NOT NULL,
-    source TEXT NOT NULL,      -- lldp | fdb-inference | vsphere-hint
+    source TEXT NOT NULL,      -- lldp | unifi | fdb-inference | vsphere-hint | …
     last_seen REAL,
     UNIQUE (a_device, a_interface, b_device, b_interface, source)
 );

@@ -25,7 +25,7 @@ site-specific leaked into code, tests, or docs.
   `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.patchbay.poll.plist`,
   and unload with `launchctl bootout gui/$UID/com.patchbay.poll`.
 - Quick verification without the server: FastAPI `TestClient` against the real site DB.
-- `pytest` (install `.[dev]`): 98 tests, no network, hermetic env via the
+- `pytest` (install `.[dev]`): 172 tests, no network, hermetic env via the
   `clean_env` fixture. Every normalizer bug family has a regression test —
   add one when fixing anything there.
 - Commits go straight to `main` (homelab repo, no PR flow). Small, single-topic commits.
@@ -78,7 +78,7 @@ site-specific leaked into code, tests, or docs.
   interfaces; MAC is the join between vCenter's "Network adapter 1" and the
   firewall's `vmx1`. Config-parsed membership always wins; this fills silence.
 - **Link evidence model**: `source` on a link records *who reported it* — `lldp` >
-  `vsphere-hint` > `fdb-uplink` supersede per port (one cable per port); `declared`
+  `unifi` > `vsphere-hint` > `fdb-uplink` supersede per port (one cable per port); `declared`
   comes from `PATCHBAY_LINKS` and is pruned when undeclared. The topology legend
   maps color = reporter, dash = stated vs inferred; the load view strips both.
   A flood guard drops discovery neighbors on ports that already have a discovery

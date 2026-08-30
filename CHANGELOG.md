@@ -60,6 +60,10 @@ put.
 
 ### Fixed
 
+- **`pip show patchbay` tells the truth.** The package version is now read
+  from `patchbay.__init__` at build time; installed metadata had been stuck
+  at 0.4.0 since the version moved out of `pyproject.toml`.
+
 - **No more phantom switches on inter-switch uplinks**
   ([#34](https://github.com/dsmorgan/patchbay/issues/34), thanks
   [@slmingol](https://github.com/slmingol)). LLDP links can record a port by
