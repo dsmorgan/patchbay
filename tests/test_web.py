@@ -1147,3 +1147,28 @@ def test_canonical_label_shortens_known_fqdn_only():
     assert _canonical_label("core1", canon) == "core1"
     # an FQDN whose first label is not a known device stays whole
     assert _canonical_label("mystery.example.internal", canon) == "mystery.example.internal"
+
+
+def test_routed_graph_json_is_script_safe(clean_env, tmp_path, client):
+    # a hostile VLAN name (IPAM free text, LLDP sysnames) must not be able
+    # to break out of the routed page's <script> element
+    path = str(tmp_path / "test.db")
+    seed(path)
+    import sqlite3
+
+    c = sqlite3.connect(path)
+    c.execute("INSERT OR REPLACE INTO vlans (vid, name, source) "
+              "VALUES (66, '</script><script>alert(1)', 'ipam')")
+    c.execute("INSERT INTO subnets (cidr, vlan, source) VALUES "
+              "('192.0.2.128/29', 66, 'ipam')")
+    # an attached host so the rail survives the participation filter
+    c.execute("INSERT INTO devices (name, source, role, status) "
+              "VALUES ('victim1', 'test', 'host', 'up')")
+    c.execute("INSERT INTO interfaces (device_id, name, ip) VALUES "
+              "((SELECT id FROM devices WHERE name='victim1'), "
+              "'eth0', '192.0.2.130/29')")
+    c.commit(); c.close()
+    r = client.get("/routed")
+    assert r.status_code == 200
+    assert "</script><script>alert" not in r.text
+    assert "\\u003c/script" in r.text     # the name reached the page, escaped

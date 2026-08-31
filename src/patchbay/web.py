@@ -768,11 +768,19 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
     vlan_opts = [{"vid": v, "name": vlan_names.get(v)} for v in present_vlans]
     # names/labels come from the network (LLDP sysnames, client names) —
     # escape script-breaking chars so a hostile advertisement can't XSS
-    graph_json = (json.dumps({"nodes": nodes, "links": edges, "vlans": vlan_opts})
-                  .replace("&", "\\u0026").replace("<", "\\u003c")
-                  .replace(">", "\\u003e")
-                  .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+    graph_json = _script_safe_json({"nodes": nodes, "links": edges,
+                                    "vlans": vlan_opts})
     return graph_json, bool(peak_of)
+
+
+def _script_safe_json(obj) -> str:
+    """JSON for embedding inside a <script> element: every graph that
+    reaches a template's `| safe` goes through here, because names and
+    descriptions come from the network and from IPAM free text."""
+    return (json.dumps(obj)
+            .replace("&", "\\u0026").replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
 
 
 @app.get("/routed", response_class=HTMLResponse)
@@ -783,7 +791,7 @@ def routed_page(request: Request):
         db.init(conn)
         graph = routed.build_routed_graph(conn, settings)
         return templates.TemplateResponse(request, "routed.html", {
-            "graph_json": json.dumps(graph),
+            "graph_json": _script_safe_json(graph),
         })
     finally:
         conn.close()
