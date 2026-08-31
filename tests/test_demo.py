@@ -88,3 +88,19 @@ def test_demo_is_deterministic(tmp_path):
                 "SELECT mac, ip, hostname FROM endpoints").fetchall()))
         c.close()
     assert rows[0] == rows[1]
+
+
+def test_demo_routed_view_finds_the_uplink(tmp_path):
+    """The demo exercises WAN discovery and the participation filter: the
+    uplink VLAN (no subnet record) resolves as the wan rail from the
+    default route's exit interface, and the IPAM aggregate never rails."""
+    from patchbay.config import load_settings
+    from patchbay.routed import build_routed_graph
+
+    c, _ = _seed(str(tmp_path / "demo.db"))
+    g = build_routed_graph(c, load_settings())
+    by = {r["key"]: r for r in g["rails"]}
+    assert g["default"]["rail"] == "v199"
+    assert by["v199"]["wan"] is True
+    assert not any(k.startswith("net:") for k in by)   # aggregate filtered
+    c.close()

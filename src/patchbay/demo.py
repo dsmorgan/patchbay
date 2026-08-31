@@ -24,7 +24,10 @@ from .normalize import normalize
 
 MARKER = "demo_seed"          # app_state key marking a DB as demo-generated
 
-VLANS = [(1, "mgmt"), (20, "servers"), (30, "iot"), (40, "wifi"), (103, "iscsi")]
+VLANS = [(1, "mgmt"), (20, "servers"), (30, "iot"), (40, "wifi"), (103, "iscsi"),
+         # the internet uplink: a VLAN with no subnet record, discovered as
+         # the WAN rail from the default route's exit interface
+         (199, "uplink")]
 SUBNETS = [
     ("192.0.2.0/24", 1, "management"),
     ("198.51.100.0/24", 20, "servers"),
@@ -32,6 +35,9 @@ SUBNETS = [
     ("2001:db8:0:20::/64", 20, "servers v6"),
     # storage network: unrouted on purpose — the routed view's isolated rail
     ("2001:db8:0:103::/64", 103, "iscsi storage"),
+    # IPAM-style aggregate: nothing attaches inside it directly, so the
+    # routed view's participation filter keeps it off the rails
+    ("2001:db8::/32", None, "site aggregate"),
 ]
 
 # (name, role, vendor, model, os, mgmt_ip, parent)
@@ -130,7 +136,7 @@ def seed(conn: sqlite3.Connection, *, rnd: random.Random | None = None) -> str:
         db.upsert_subnet(conn, cidr=cidr, source="phpipam", vlan=vid_, description=descr)
 
     # firewall interfaces: routed view of VLAN membership (one leg per subnet)
-    for iface, ip in (("vmx0", None), ("vmx1", "192.0.2.1"),
+    for iface, ip in (("vmx0", "100.64.10.2"), ("vmx1", "192.0.2.1"),
                       ("vmx2", "198.51.100.1"), ("vmx3", "203.0.113.1")):
         db.upsert_interface(conn, device_id=ids["fw1"], name=iface, ip=ip,
                             ip6="2001:db8:0:20::1" if iface == "vmx2" else None,
@@ -139,6 +145,16 @@ def seed(conn: sqlite3.Connection, *, rnd: random.Random | None = None) -> str:
     # the guest can't see its own tag — the hypervisor's port group can
     conn.execute("INSERT OR REPLACE INTO vnic_vlans (mac, vid, portgroup, source) "
                  "VALUES (?, 20, 'pg-servers', 'vsphere')", (mac_of["fw1:vmx2"],))
+    # WAN: vmx0 is an untagged member of the uplink VLAN, and the default
+    # route leaves on it — that's how the routed view finds the uplink rail
+    conn.execute("INSERT OR REPLACE INTO port_vlans VALUES "
+                 "('fw1', 'vmx0', 199, 0, 'config')")
+    for dest, gw, proto in (("0.0.0.0/0", "100.64.10.1", "ipv4"),
+                            ("::/0", "fe80::1%vmx0", "ipv6")):
+        conn.execute("INSERT OR REPLACE INTO routes (device, destination, "
+                     "gateway, interface, proto, flags, source, last_seen) "
+                     "VALUES ('fw1', ?, ?, 'vmx0', ?, 'UGS', 'opnsense', ?)",
+                     (dest, gw, proto, now))
 
     # switches: full port complement, descriptions carry the panel tags
     for dev, prefix, count, speed in (("core1", "1/0/", 24, 10_000_000_000),
@@ -240,7 +256,7 @@ def seed(conn: sqlite3.Connection, *, rnd: random.Random | None = None) -> str:
 
     conn.execute("INSERT OR REPLACE INTO gateways "
                  "(name, address, status, loss, delay, source, last_seen) "
-                 "VALUES ('WAN_GW', '198.51.100.254', 'Online', '0.0 %', "
+                 "VALUES ('WAN_GW', '100.64.10.1', 'Online', '0.0 %', "
                  "'8.1 ms', 'opnsense', ?)", (now,))
 
     # 24h of samples for every live link end: the load view's peak column.
