@@ -29,7 +29,8 @@ SECRET_PAT = re.compile(
     r"(password|passwd|secret|community|pre-shared-key|psk\b|wpa\S*|"
     r"auth(?:entication)?(?:-| )?(?:key|password|md5|sha)|"
     r"priv(?:acy)?(?:-| )?(?:key|password|protocol)|"
-    r"encrypted|private-key|snmp-server user \S+|tacacs|radius[- ]server)",
+    r"encrypted|private-key|otp\S*|totp\S*|\bseed\b|"
+    r"snmp-server user \S+|tacacs|radius[- ]server)",
     re.I)
 HASH_PAT = re.compile(r"\$\d+\w*\$\S+")  # $1$salt$hash and friends
 

@@ -1058,3 +1058,19 @@ def test_save_raw_strips_credential_fields(conn):
         assert a[k] == "<stripped>", k
     for k in ("x_authkey", "guest_token", "syslog_key"):
         assert b[k] == "<stripped>", k
+
+
+def test_prepare_config_matches_secret_tags_as_substrings(conn):
+    """Exact-tag matching let <rocommunity>, <sharedsecret>, <otp_seed>, and
+    <varusersfreeradiuspassword> through — plugin tags merely *contain* the
+    secret keyword. Innocent elements still survive."""
+    from patchbay.collectors.opnsense import prepare_config
+    raw = ("<opnsense><otp_seed>GEZDGNBVGY3TQOJQ</otp_seed>"
+           "<rocommunity>notpublic</rocommunity>"
+           "<sharedsecret>radiuspw</sharedsecret>"
+           "<varusersfreeradiuspassword>frp</varusersfreeradiuspassword>"
+           "<descr>allow lan</descr><hostname>fw1</hostname></opnsense>")
+    text, _, _ = prepare_config(raw)
+    for secret in ("GEZDGNBVGY3TQOJQ", "notpublic", "radiuspw", "frp"):
+        assert secret not in text, secret
+    assert "allow lan" in text and "fw1" in text

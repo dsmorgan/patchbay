@@ -17,6 +17,8 @@ tacacs-server key sharedkey
 """
     out, n = scrub_config(cfg)
     assert "s3cretRO" not in out
+    o2, _ = scrub_config("username bob otp_seed GEZDGNBVGY3TQOJQ\nhostname sw1")
+    assert "GEZDGNBVGY" not in o2 and "hostname sw1" in o2
     assert "0257552a6a44" not in out
     assert "$1$Qn$abcdef123" not in out
     assert "authkey123" not in out and "privkey456" not in out

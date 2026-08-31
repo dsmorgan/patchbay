@@ -25,11 +25,16 @@ from . import register
 # every secret-bearing element is replaced with a short hash of itself —
 # a rotated key still shows as a change, but no secret is ever stored.
 # Overzealous by design, same stance as the snapshot scrubber.
-_SECRET_TAGS = ("prv", "crt", "password", "pass", "secret", "psk",
-                "pre-shared-key", "private-key", "privatekey", "privkey",
-                "sharedkey", "authorizedkeys", "key")
+# matched as substrings of the tag NAME, not exact tags: plugins invent
+# names like <rocommunity>, <sharedsecret>, <varusersfreeradiuspassword>,
+# <otp_seed> — exact matching let all of those through. A false positive
+# still diffs as a change (the hash moves), so err toward matching.
+_SECRET_TAG_WORDS = ("prv", "crt", "cert", "pass", "secret", "psk", "shared",
+                     "private", "key", "seed", "community", "auth", "token",
+                     "hash", "credential")
 _SECRET_RE = re.compile(
-    r"<(" + "|".join(re.escape(t) for t in _SECRET_TAGS) + r")>([^<]+)</\1>")
+    r"<([a-zA-Z0-9_-]*(?:" + "|".join(_SECRET_TAG_WORDS) +
+    r")[a-zA-Z0-9_-]*)>([^<]+)</\1>")
 # catch-all for key material hiding under tags the list doesn't know: any
 # element whose content is one long base64-ish run gets the same treatment
 # (a real ACME account key surfaced under a bare <key> before this existed —
