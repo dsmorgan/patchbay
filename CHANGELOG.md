@@ -30,6 +30,25 @@ put.
   and only while the device is up — stale liveness is omitted, not
   written.
 
+- Targeted deletion: /snapshots rows and a patchbay-held device's stored
+  config revisions can be deleted from the UI (one revision or all;
+  Oxidized history is untouched).
+
+### Security
+
+- `raw_payloads` strips credential-looking fields before storage — the
+  LibreNMS device payload carries SNMPv3 secrets, UniFi's carries
+  controller keys. Existing rows age out with the 7-day retention.
+- Firewall-config redaction matches secret tags as substrings
+  (`<rocommunity>`, `<sharedsecret>`, `<varusersfreeradiuspassword>`) and
+  redacts OTP seeds; the snapshot scrubber learns otp/totp/seed. Delete
+  stored revisions captured before this and let the next poll re-capture.
+- The routed view's graph JSON is script-escaped like the topology's — a
+  hostile device or VLAN name could break out of the script element.
+- pfSense and phpIPAM no longer wipe gateways, port_vlans, or the IPAM
+  address book when a poll answers 403 or empty — degraded visibility
+  keeps last good data, matching the collector contract.
+
 ### Changed
 
 - Routed-view rails must participate: a network appears when a router
