@@ -1136,3 +1136,14 @@ def test_routed_page_renders_graph(clean_env, tmp_path, client):
     # empty DB stays a page, not a crash
     r2 = client.get("/routed?hosts=0&groups=0&focus=v24")
     assert r2.status_code == 200
+
+
+# --- /configs canonical display names ---------------------------------------
+
+def test_canonical_label_shortens_known_fqdn_only():
+    from patchbay.web import _canonical_label
+    canon = {"core1", "fw1"}
+    assert _canonical_label("core1.example.internal", canon) == "core1"
+    assert _canonical_label("core1", canon) == "core1"
+    # an FQDN whose first label is not a known device stays whole
+    assert _canonical_label("mystery.example.internal", canon) == "mystery.example.internal"

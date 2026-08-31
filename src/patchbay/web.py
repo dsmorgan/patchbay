@@ -1678,6 +1678,20 @@ def _db_config_devices(conn: sqlite3.Connection) -> list[str]:
         "SELECT DISTINCT device FROM config_revisions ORDER BY device")]
 
 
+def _canonical_label(name: str, canon: set[str]) -> str:
+    """Display name for a config node. Oxidized inventories often enroll by
+    FQDN while patchbay's canonical device names are the short first label;
+    show the canonical name when it matches a known device so /configs reads
+    like every other page. The full node name stays in every URL — that's
+    the key Oxidized answers to."""
+    short = name.split(".", 1)[0]
+    return short if short != name and short.lower() in canon else name
+
+
+def _canon_names(conn: sqlite3.Connection) -> set[str]:
+    return {r["name"].lower() for r in conn.execute("SELECT name FROM devices")}
+
+
 def _db_config_versions(conn: sqlite3.Connection, device: str) -> list[dict]:
     rows = conn.execute(
         "SELECT id, fetched_at, message, author FROM config_revisions "
@@ -1699,7 +1713,8 @@ def _db_config_timeline(conn: sqlite3.Connection) -> list[dict]:
             href = f"/configs/{quote(device, safe='')}?v={v['oid']}"
             if v["prev"]:
                 href += f"&prev={v['prev']}"
-            entries.append({"node": device, "oid": v["oid"], "prev": v["prev"],
+            entries.append({"node": device, "label": device,
+                            "oid": v["oid"], "prev": v["prev"],
                             "date": v["date"], "ts": v["ts"],
                             "message": v["message"], "author": v["author"],
                             "href": href})
@@ -1713,12 +1728,13 @@ def configs(request: Request):
     entries, problems, truncated = [], [], False
     conn = _conn()
     db.init(conn)
+    canon = _canon_names(conn)
     for device in _db_config_devices(conn):
         latest = conn.execute(
             "SELECT MAX(fetched_at) AS t FROM config_revisions WHERE device = ?",
             (device,)).fetchone()
-        nodes.append({"name": device, "ip": None, "model": "config.xml",
-                      "group": "api", "status": "success",
+        nodes.append({"name": device, "label": device, "ip": None,
+                      "model": "config.xml", "group": "api", "status": "success",
                       "time": datetime.fromtimestamp(latest["t"]).strftime(
                           "%Y-%m-%d %H:%M:%S") if latest and latest["t"] else None})
     entries.extend(_db_config_timeline(conn))
@@ -1730,13 +1746,17 @@ def configs(request: Request):
                 raw_nodes = _ox_nodes(client)
                 for n in raw_nodes:
                     last = n.get("last") or {}
+                    name = n.get("name") or ""
                     nodes.append({
-                        "name": n.get("name"), "ip": n.get("ip"),
+                        "name": name, "label": _canonical_label(name, canon),
+                        "ip": n.get("ip"),
                         "model": n.get("model"), "group": n.get("group"),
                         "status": last.get("status") or n.get("status") or "never",
                         "time": last.get("end") or n.get("time") or n.get("mtime"),
                     })
                 ox_entries, problems = _ox_timeline(client, raw_nodes)
+                for e in ox_entries:
+                    e["label"] = _canonical_label(e["node"], canon)
                 entries.extend(ox_entries)
         except Exception as exc:  # unreachable oxidized is a state, not a crash
             error = str(exc)
@@ -1774,6 +1794,7 @@ def config_node(request: Request, node: str):
     # patchbay-held firewall history resolves first — it's local and cheap
     conn = _conn()
     db.init(conn)
+    label = _canonical_label(node, _canon_names(conn))
     if node in _db_config_devices(conn):
         versions = _db_config_versions(conn, node)
         by_oid = {v["oid"]: v for v in versions}
@@ -1790,7 +1811,7 @@ def config_node(request: Request, node: str):
             else:
                 text = new
         return templates.TemplateResponse(request, "confignode.html", {
-            "node": node, "versions": versions, "text": text,
+            "node": node, "label": label, "versions": versions, "text": text,
             "diff_lines": diff_lines, "want": want, "prev": prev, "error": None,
         })
 
@@ -1834,7 +1855,7 @@ def config_node(request: Request, node: str):
     except Exception as exc:
         error = str(exc)
     return templates.TemplateResponse(request, "confignode.html", {
-        "node": node, "versions": versions, "text": text,
+        "node": node, "label": label, "versions": versions, "text": text,
         "diff_lines": diff_lines, "want": want, "prev": prev, "error": error,
     })
 

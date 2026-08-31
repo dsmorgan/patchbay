@@ -19,7 +19,7 @@ docker-compose.</p>
   {% for e in entries %}
   <tr>
     <td class="muted">{{ e.date or "" }}</td>
-    <td><a href="/configs/{{ e.node | urlencode }}">{{ e.node }}</a></td>
+    <td><a href="/configs/{{ e.node | urlencode }}">{{ e.label or e.node }}</a></td>
     <td class="muted">{{ e.message }}</td>
     <td><a href="{{ e.href }}">{{ "diff" if e.prev else "view" }}</a></td>
   </tr>
@@ -41,7 +41,7 @@ docker-compose.</p>
   {% for n in nodes %}
   <tr>
     <td><span class="dot {{ 'up' if n.status == 'success' else 'down' if n.status in ('no_connection', 'fail') else 'unknown' }}"></span></td>
-    <td><a href="/configs/{{ n.name | urlencode }}">{{ n.name }}</a></td>
+    <td><a href="/configs/{{ n.name | urlencode }}">{{ n.label or n.name }}</a></td>
     <td class="mono muted">{{ n.ip or "" }}</td>
     <td class="muted">{{ n.model or "" }}</td>
     <td class="muted">{{ n.time or "never" }} <span class="mono">({{ n.status }})</span></td>
