@@ -152,6 +152,10 @@ class Settings:
     # Operator-declared cabling facts that no protocol reveals:
     # PATCHBAY_LINKS="edge1:ethernet1/2/2=vmhost2:vmnic3"
     links: list[tuple[str, str, str, str]]
+    # Routed-view rail order override (ADR-0002): named networks (VLAN id or
+    # name) pin to the left in the declared order; the rest keep the computed
+    # order. PATCHBAY_ROUTED_ORDER="mgmt,20,servers"
+    routed_order: tuple[str, ...]
     # Internet cloud nodes and where they physically land. Both accept a
     # comma-separated list, paired by position:
     #   one name, several ports  -> redundant links to one provider (one cloud
@@ -371,6 +375,9 @@ def load_settings() -> Settings:
             related.append((comp.strip(), owner.strip()))
         elif spec.strip():
             warn("PATCHBAY_RELATED", spec)
+    routed_order = tuple(
+        x.strip() for x in (env("PATCHBAY_ROUTED_ORDER") or "").split(",")
+        if x.strip())
     vlan_filters = {}
     for spec in (env("PATCHBAY_VLAN_FILTER") or "").split(","):
         port, _, vids = spec.partition("=")
@@ -437,6 +444,7 @@ def load_settings() -> Settings:
         wan_pairing=wan_pairing,
         related=related,
         vlan_filters=vlan_filters,
+        routed_order=routed_order,
         capacities=capacities,
         panels=panels,
         librenms_url=env("LIBRENMS_URL"),
