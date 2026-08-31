@@ -35,7 +35,8 @@ these snapshots are safe to share.</p>
 </table></div>
 {% else %}
 <p class="muted">No snapshot yet — take one, or set
-<span class="mono">PATCHBAY_SNAPSHOT_AT</span> for one a day.</p>
+<span class="mono">PATCHBAY_SNAPSHOT_AT</span> on <a href="/ops">Ops</a>
+for one a day.</p>
 {% endif %}
 </div>
 
@@ -45,8 +46,8 @@ these snapshots are safe to share.</p>
 Written to <span class="mono">{{ settings_view.dir }}</span>{% if settings_view.deliver_dir
 %}, delivered to <span class="mono">{{ settings_view.deliver_dir }}</span>{% endif %}
 · {% if settings_view.at %}one written automatically at {{ settings_view.at }} daily
-{% else %}on-demand only — set <span class="mono">PATCHBAY_SNAPSHOT_AT</span> for a daily
-one{% endif %} · keeping {{ settings_view.keep if settings_view.keep > 0 else "every" }}
+{% else %}on-demand only — set <span class="mono">PATCHBAY_SNAPSHOT_AT</span> on
+<a href="/ops">Ops</a> for a daily one{% endif %} · keeping {{ settings_view.keep if settings_view.keep > 0 else "every" }}
 timestamped file{{ "s" if settings_view.keep != 1 }}.</p>
 {% if not settings_view.deliver_dir %}
 <p class="muted" style="font-size: 0.82rem">This host is the only copy, and a

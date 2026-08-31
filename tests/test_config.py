@@ -142,3 +142,14 @@ def test_unmanaged_mixed_and_malformed(clean_env):
     assert s.unmanaged == [(None, "core1", "1/0/8"), ("k8s", "sw1", "e1/5")]
     assert len(s.parse_warnings) == 1
     assert "PATCHBAY_UNMANAGED" in s.parse_warnings[0]
+
+
+def test_snapshot_at_validates_hhmm(clean_env):
+    from patchbay.config import load_settings
+
+    clean_env.setenv("PATCHBAY_SNAPSHOT_AT", "03:30")
+    assert load_settings().snapshot_at == "03:30"
+    clean_env.setenv("PATCHBAY_SNAPSHOT_AT", "quarter past three")
+    s = load_settings()
+    assert s.snapshot_at is None
+    assert any("PATCHBAY_SNAPSHOT_AT" in w for w in s.parse_warnings)

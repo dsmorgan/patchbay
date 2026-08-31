@@ -21,7 +21,7 @@ DECLARATION_VARS = (
     "PATCHBAY_ALIASES", "PATCHBAY_UNMANAGED", "PATCHBAY_LINKS",
     "PATCHBAY_RELATED", "PATCHBAY_VLAN_FILTER", "PATCHBAY_CAPACITY",
     "PATCHBAY_PANELS", "PATCHBAY_WAN_NAME", "PATCHBAY_WAN_PORT",
-    "PATCHBAY_EXPECT",
+    "PATCHBAY_EXPECT", "PATCHBAY_SNAPSHOT_AT",
 )
 
 # Inline help for /ops (issue #20): what each declaration does, its syntax,
@@ -96,6 +96,13 @@ DECLARATION_HELP = {
                 "device (bare name) to quiet every item naming it.",
         "syntax": "device:interface or device, comma-separated",
         "example": "core1:1/0/16,esxi1",
+    },
+    "PATCHBAY_SNAPSHOT_AT": {
+        "what": "Local time for the daily break-glass snapshot; the poller "
+                "checks it each cycle. Empty means on-demand only, from the "
+                "Snapshots page.",
+        "syntax": "HH:MM, 24-hour local time",
+        "example": "03:30",
     },
 }
 
@@ -432,6 +439,12 @@ def load_settings() -> Settings:
                 pass
         if spec.strip():
             warn("PATCHBAY_PANELS", spec)
+
+    snapshot_at = (env("PATCHBAY_SNAPSHOT_AT") or "").strip() or None
+    if snapshot_at and not re.fullmatch(r"(?:[01]?\d|2[0-3]):[0-5]\d", snapshot_at):
+        warnings.append(f"PATCHBAY_SNAPSHOT_AT: {snapshot_at!r} is not HH:MM — "
+                        "the daily snapshot is off until it is")
+        snapshot_at = None
     return Settings(
         db_path=env("PATCHBAY_DB", "patchbay.db"),
         tls_verify=tls_verify,
@@ -495,5 +508,5 @@ def load_settings() -> Settings:
                                       or ".", "snapshots")),
         snapshot_keep=int(env("PATCHBAY_SNAPSHOT_KEEP", "30") or 30),
         snapshot_deliver_dir=env("PATCHBAY_SNAPSHOT_DELIVER_DIR") or None,
-        snapshot_at=env("PATCHBAY_SNAPSHOT_AT") or None,
+        snapshot_at=snapshot_at,
     )
