@@ -1035,9 +1035,35 @@ def test_unifi_temperature_stored_when_sensed(conn, clean_env, monkeypatch):
         "SELECT name, temperature FROM devices")}
     assert t["sw-access-01"] == 52.0
     assert t["ap-floor1"] is None            # has_temperature: false
-    # a down device's reading is never trusted
     assert _temperature({"general_temperature": 47}) == 47.0
     assert _temperature({"general_temperature": "junk"}) is None
+
+
+def test_unifi_down_device_temperature_not_written(conn, clean_env, monkeypatch):
+    """A non-up device's cached reading is stale liveness — omitted, and the
+    last good value stands (upsert drops None)."""
+    from patchbay.collectors.unifi import UnifiCollector
+
+    class DownSwitch(_UnifiClient):
+        def get(self, url, **kw):
+            class R:
+                status_code = 200
+                def raise_for_status(self_): pass
+                def json(self_):
+                    if "stat/device" in url:
+                        # the controller still relays the cached reading
+                        return {"data": [{**_USW, "state": 0}, _UAP]}
+                    return {"data": []}
+            return R()
+
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    monkeypatch.setattr(httpx, "Client", DownSwitch)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    row = conn.execute("SELECT status, temperature FROM devices "
+                       "WHERE name='sw-access-01'").fetchone()
+    assert row["status"] != "up"
+    assert row["temperature"] == 52.0        # last good reading stands
 
 
 def test_save_raw_strips_credential_fields(conn):

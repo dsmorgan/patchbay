@@ -15,8 +15,10 @@
   {{ ui.ricon(d.role) }}
   <div class="name"><span class="dot {{ d.status }}"></span>{{ d.name }}</div>
   <div class="sub">{{ d.role or '?' }} · {{ d | hw or '?' }}</div>
+  {# temperature only while up: the stored value is the last good reading,
+     and "down · 52 °C" would present it as live #}
   <div class="sub">{{ d.os or '' }}{% if d.serial %} · s/n {{ d.serial }}{% endif %}{%
-    if d.temperature is not none %} · {{ d.temperature | round | int }} °C{% endif %}</div>
+    if d.temperature is not none and d.status == 'up' %} · {{ d.temperature | round | int }} °C{% endif %}</div>
   <div class="sub mono">{{ d.mgmt_ip or '' }}{% if d.parent %} · on {{ d.parent }}{% endif %}</div>
 </div>
 

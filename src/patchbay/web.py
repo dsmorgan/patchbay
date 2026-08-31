@@ -1739,17 +1739,20 @@ def configs(request: Request):
     nodes, error = [], None
     entries, problems, truncated = [], [], False
     conn = _conn()
-    db.init(conn)
-    canon = _canon_names(conn)
-    for device in _db_config_devices(conn):
-        latest = conn.execute(
-            "SELECT MAX(fetched_at) AS t FROM config_revisions WHERE device = ?",
-            (device,)).fetchone()
-        nodes.append({"name": device, "label": device, "ip": None,
-                      "model": "config.xml", "group": "api", "status": "success",
-                      "time": datetime.fromtimestamp(latest["t"]).strftime(
-                          "%Y-%m-%d %H:%M:%S") if latest and latest["t"] else None})
-    entries.extend(_db_config_timeline(conn))
+    try:
+        db.init(conn)
+        canon = _canon_names(conn)
+        for device in _db_config_devices(conn):
+            latest = conn.execute(
+                "SELECT MAX(fetched_at) AS t FROM config_revisions WHERE device = ?",
+                (device,)).fetchone()
+            nodes.append({"name": device, "label": device, "ip": None,
+                          "model": "config.xml", "group": "api", "status": "success",
+                          "time": datetime.fromtimestamp(latest["t"]).strftime(
+                              "%Y-%m-%d %H:%M:%S") if latest and latest["t"] else None})
+        entries.extend(_db_config_timeline(conn))
+    finally:
+        conn.close()
     if not settings.oxidized_url and not nodes:
         error = "unconfigured"
     elif settings.oxidized_url:
@@ -1769,6 +1772,7 @@ def configs(request: Request):
                 ox_entries, problems = _ox_timeline(client, raw_nodes)
                 for e in ox_entries:
                     e["label"] = _canonical_label(e["node"], canon)
+                problems = [_canonical_label(p, canon) for p in problems]
                 entries.extend(ox_entries)
         except Exception as exc:  # unreachable oxidized is a state, not a crash
             error = str(exc)
@@ -1805,27 +1809,30 @@ def config_node(request: Request, node: str):
 
     # patchbay-held firewall history resolves first — it's local and cheap
     conn = _conn()
-    db.init(conn)
-    label = _canonical_label(node, _canon_names(conn))
-    if node in _db_config_devices(conn):
-        versions = _db_config_versions(conn, node)
-        by_oid = {v["oid"]: v for v in versions}
-        def rev_text(oid: str) -> str:
-            return conn.execute("SELECT text FROM config_revisions WHERE id = ?",
-                                (int(oid),)).fetchone()["text"]
-        if want == "current" and versions:
-            want = versions[0]["oid"]
-        if want and want in by_oid:
-            new = rev_text(want)
-            if prev and prev in by_oid:
-                diff_lines = _diff_lines(rev_text(prev), new,
-                                         f"rev {prev}", f"rev {want}")
-            else:
-                text = new
-        return templates.TemplateResponse(request, "confignode.html", {
-            "node": node, "label": label, "versions": versions, "text": text,
-            "diff_lines": diff_lines, "want": want, "prev": prev, "error": None,
-        })
+    try:
+        db.init(conn)
+        label = _canonical_label(node, _canon_names(conn))
+        if node in _db_config_devices(conn):
+            versions = _db_config_versions(conn, node)
+            by_oid = {v["oid"]: v for v in versions}
+            def rev_text(oid: str) -> str:
+                return conn.execute("SELECT text FROM config_revisions WHERE id = ?",
+                                    (int(oid),)).fetchone()["text"]
+            if want == "current" and versions:
+                want = versions[0]["oid"]
+            if want and want in by_oid:
+                new = rev_text(want)
+                if prev and prev in by_oid:
+                    diff_lines = _diff_lines(rev_text(prev), new,
+                                             f"rev {prev}", f"rev {want}")
+                else:
+                    text = new
+            return templates.TemplateResponse(request, "confignode.html", {
+                "node": node, "label": label, "versions": versions, "text": text,
+                "diff_lines": diff_lines, "want": want, "prev": prev, "error": None,
+            })
+    finally:
+        conn.close()
 
     if not settings.oxidized_url:
         raise HTTPException(503, "OXIDIZED_URL is not configured")

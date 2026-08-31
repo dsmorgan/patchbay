@@ -90,7 +90,7 @@ def test_demo_is_deterministic(tmp_path):
     assert rows[0] == rows[1]
 
 
-def test_demo_routed_view_finds_the_uplink(tmp_path):
+def test_demo_routed_view_finds_the_uplink(clean_env, tmp_path):
     """The demo exercises WAN discovery and the participation filter: the
     uplink VLAN (no subnet record) resolves as the wan rail from the
     default route's exit interface, and the IPAM aggregate never rails."""
