@@ -1292,6 +1292,69 @@ def snapshot_file(name: str):
         "Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@app.post("/snapshots/{name}/delete")
+def snapshot_delete(name: str):
+    """Targeted removal of one kept snapshot — the file here and its
+    delivered twin. Same filename allowlist as serving; deleting
+    patchbay-latest.html is allowed (the next snapshot recreates it)."""
+    import re
+
+    from fastapi.responses import RedirectResponse
+
+    settings = load_settings()
+    d = Path(settings.snapshot_dir)
+    p = d / name
+    if (not re.fullmatch(r"patchbay-(?:\d{8}-\d{6}|latest)\.html", name)
+            or p.resolve().parent != d.resolve()):
+        raise HTTPException(404, "no such snapshot")
+    if p.exists():
+        p.unlink()
+    if settings.snapshot_deliver_dir:
+        # best effort: an unreachable share must not fail the local delete
+        try:
+            twin = Path(settings.snapshot_deliver_dir) / name
+            if twin.exists():
+                twin.unlink()
+        except OSError:
+            pass
+    return RedirectResponse("/snapshots", status_code=303)
+
+
+@app.post("/configs/{node}/delete")
+async def config_revision_delete(request: Request, node: str):
+    """Targeted removal of stored firewall config history: one revision
+    (form field v=oid) or every revision for the device (v=all). Only
+    patchbay-held history — Oxidized's lives in its own git."""
+    from fastapi.responses import RedirectResponse
+    from urllib.parse import parse_qs
+
+    # parsed by hand: starlette's form() wants python-multipart even for a
+    # plain urlencoded body, and this one field isn't worth a dependency
+    body = (await request.body()).decode("utf-8", "replace")
+    want = (parse_qs(body).get("v") or [""])[0]
+    conn = _conn()
+    try:
+        db.init(conn)
+        if node not in _db_config_devices(conn):
+            raise HTTPException(404, "no stored history for this device")
+        if want == "all":
+            conn.execute("DELETE FROM config_revisions WHERE device = ?", (node,))
+        elif want.isdigit():
+            conn.execute("DELETE FROM config_revisions WHERE device = ? AND id = ?",
+                         (node, int(want)))
+        else:
+            raise HTTPException(400, "v must be a revision id or 'all'")
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM config_revisions WHERE device = ?",
+            (node,)).fetchone()[0]
+        conn.commit()
+    finally:
+        conn.close()
+    from urllib.parse import quote
+    dest = f"/configs/{quote(node, safe='')}" if remaining else "/configs"
+    return RedirectResponse(dest, status_code=303)
+
+
 @app.post("/ops/config")
 async def ops_config(request: Request):
     """Store one declaration in the DB (the UI half of env-wins-else-DB).
@@ -1830,6 +1893,7 @@ def config_node(request: Request, node: str):
             return templates.TemplateResponse(request, "confignode.html", {
                 "node": node, "label": label, "versions": versions, "text": text,
                 "diff_lines": diff_lines, "want": want, "prev": prev, "error": None,
+                "db_held": True,
             })
     finally:
         conn.close()

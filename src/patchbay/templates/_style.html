@@ -113,6 +113,11 @@
   .autoref[aria-pressed="true"]::before { background: var(--ok);
                                           border-color: var(--ok); }
   .autoref:hover { background: var(--hover); color: var(--ink); }
+  /* a destructive action styled like a link, not a pill — table rows hold
+     these (delete a snapshot, delete a config revision) */
+  button.linkbtn { background: none; border: 0; padding: 0; font: inherit;
+                   color: var(--crit); cursor: pointer; }
+  button.linkbtn:hover { text-decoration: underline; }
   /* ---- the rail: pages grouped by the question they answer (web.py NAV).
      Headings sit a level above their entries and look it — brighter, and set
      off by a rule rather than a gap. The selected marker is one edge, not an

@@ -25,7 +25,7 @@ site-specific leaked into code, tests, or docs.
   `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.patchbay.poll.plist`,
   and unload with `launchctl bootout gui/$UID/com.patchbay.poll`.
 - Quick verification without the server: FastAPI `TestClient` against the real site DB.
-- `pytest` (install `.[dev]`): 216 tests, no network, hermetic env via the
+- `pytest` (install `.[dev]`): 220 tests, no network, hermetic env via the
   `clean_env` fixture. Every normalizer bug family has a regression test —
   add one when fixing anything there.
 - Commits go straight to `main` (homelab repo, no PR flow). Small, single-topic commits.

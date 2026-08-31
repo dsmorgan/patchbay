@@ -23,13 +23,16 @@ these snapshots are safe to share.</p>
 <h2>Kept here</h2>
 {% if snapshots %}
 <div class="scroll"><table>
-  <tr><th>when</th><th>file</th><th>size</th><th></th></tr>
+  <tr><th>when</th><th>file</th><th>size</th><th></th><th></th></tr>
   {% for s in snapshots %}
   <tr>
     <td class="muted">{{ s.when }}</td>
     <td class="mono">{{ s.name }}</td>
     <td class="muted">{{ s.size_mb }} MB</td>
     <td><a href="{{ s.href }}">download</a></td>
+    <td><form method="post" action="/snapshots/{{ s.name }}/delete"
+          onsubmit="return confirm('Delete {{ s.name }} (and its delivered copy)?')"
+          style="display: inline"><button class="linkbtn">delete</button></form></td>
   </tr>
   {% endfor %}
 </table></div>

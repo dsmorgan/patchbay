@@ -20,7 +20,7 @@
 {% endif %}
 {% if versions %}
 <div class="scroll"><table>
-  <tr><th>when</th><th>commit</th><th>message</th><th></th><th></th></tr>
+  <tr><th>when</th><th>commit</th><th>message</th><th></th><th></th>{% if db_held %}<th></th>{% endif %}</tr>
   {% for v in versions %}
   <tr>
     <td class="muted">{{ v.date or "" }}</td>
@@ -28,9 +28,20 @@
     <td class="muted">{{ v.message }}</td>
     <td><a href="/configs/{{ node }}?v={{ v.oid }}">view</a></td>
     <td>{% if v.prev %}<a href="/configs/{{ node }}?v={{ v.oid }}&prev={{ v.prev }}">diff vs previous</a>{% else %}<span class="muted">first version</span>{% endif %}</td>
+    {% if db_held %}<td><form method="post" action="/configs/{{ node | urlencode }}/delete"
+      onsubmit="return confirm('Delete revision {{ v.oid }}?')" style="display: inline">
+      <input type="hidden" name="v" value="{{ v.oid }}">
+      <button class="linkbtn">delete</button></form></td>{% endif %}
   </tr>
   {% endfor %}
 </table></div>
+{% if db_held %}
+<form method="post" action="/configs/{{ node | urlencode }}/delete"
+  onsubmit="return confirm('Delete ALL stored revisions for {{ label or node }}? The next poll starts history fresh.')">
+  <input type="hidden" name="v" value="all">
+  <button class="linkbtn" style="font-size: 0.8rem">delete all stored revisions</button>
+</form>
+{% endif %}
 {% elif not error %}
 <p class="muted">No versions recorded yet for this node.</p>
 {% endif %}

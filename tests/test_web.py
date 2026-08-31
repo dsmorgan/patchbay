@@ -1172,3 +1172,32 @@ def test_routed_graph_json_is_script_safe(clean_env, tmp_path, client):
     assert r.status_code == 200
     assert "</script><script>alert" not in r.text
     assert "\\u003c/script" in r.text     # the name reached the page, escaped
+
+
+def test_snapshot_delete_removes_file_and_rejects_traversal(clean_env, tmp_path, client):
+    seed(str(tmp_path / "test.db"))
+    snaps = tmp_path / "snaps"
+    snaps.mkdir()
+    f = snaps / "patchbay-20260831-010203.html"
+    f.write_text("<html></html>")
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(snaps))
+    r = client.post(f"/snapshots/{f.name}/delete", follow_redirects=False)
+    assert r.status_code == 303
+    assert not f.exists()
+    r = client.post("/snapshots/..%2Fsecrets.html/delete", follow_redirects=False)
+    assert r.status_code == 404
+
+
+def test_config_revision_delete_targets_one_or_all(clean_env, tmp_path, client):
+    old_id, new_id = _seed_fw_history(str(tmp_path / "test.db"))
+    r = client.post("/configs/fw1/delete", data={"v": str(old_id)},
+                    follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/configs/fw1"
+    body = client.get("/configs/fw1").text
+    assert "rule edited" in body            # the newer revision remains
+    r = client.post("/configs/fw1/delete", data={"v": "all"},
+                    follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/configs"
+    assert "fw1" not in client.get("/configs").text
+    # a node without stored history is refused
+    assert client.post("/configs/nope/delete", data={"v": "all"}).status_code == 404
