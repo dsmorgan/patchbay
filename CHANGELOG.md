@@ -10,6 +10,21 @@ put.
 
 ### Added
 
+- **The routed view: the logical network** ([#17](https://github.com/dsmorgan/patchbay/issues/17),
+  [ADR-0002](docs/adr/0002-routed-view.md)). `/routed` answers "what can
+  reach what": networks as vertical rails (routed teal with an angled fan
+  from the router, unrouted grey — the missing fan line *is* the isolated
+  badge), VLAN tags linking into /vlans, one dashed "×N hosts" box per
+  network for the single-homed crowd, and multi-homed hosts drawn once on
+  their home rail (fastest interface, highest-VLAN tiebreak) with rim
+  dots where a rail meets the box and thin lines to rails beyond it. Rail
+  order is VLAN-number order pulled tighter by a greedy pass that
+  shortens attachment lines; `PATCHBAY_ROUTED_ORDER` pins rails when the
+  computed order chafes — no dragging, ever. Hover highlights a network's
+  world and carries subnets, gateway, and sources; zoom, pan, and fit
+  match the topology frame. The demo network gains a three-legged NAS and
+  storage-legged hypervisors so the hard cases render out of the box.
+
 - **The firewall joins config history**
   ([#23](https://github.com/dsmorgan/patchbay/issues/23)). Grant the
   OPNsense API key the "Diagnostics: Configuration History" privilege

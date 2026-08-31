@@ -1123,3 +1123,16 @@ def test_confignode_shows_firewall_revision_and_diff(clean_env, tmp_path, client
     d = client.get(f"/configs/fw1?v={new_id}&prev={old_id}")
     assert d.status_code == 200
     assert "allow lan and dmz" in d.text    # the diff shows the real change
+
+
+# --- /routed (#17) -----------------------------------------------------------
+
+def test_routed_page_renders_graph(clean_env, tmp_path, client):
+    seed(str(tmp_path / "test.db"))
+    r = client.get("/routed")
+    assert r.status_code == 200
+    assert '"rails"' in r.text and '"hosts"' in r.text
+    assert "lab 24" in r.text or "lab" in r.text   # the seeded VLAN reaches the page
+    # empty DB stays a page, not a crash
+    r2 = client.get("/routed?hosts=0&groups=0&focus=v24")
+    assert r2.status_code == 200

@@ -15,8 +15,8 @@
   {% for v in vlans %}
     {% if v.subnets %}
       {% for s in v.subnets %}
-      <tr>
-        <td class="mono">{% if loop.first %}<a href="/topology?view=vlan&vlan={{ v.vid }}" title="show on the map">{{ v.vid }}</a>{% endif %}</td>
+      <tr id="{% if loop.first %}v{{ v.vid }}{% endif %}">
+        <td class="mono">{% if loop.first %}<a href="/topology?view=vlan&vlan={{ v.vid }}" title="show on the map">{{ v.vid }}</a> <a href="/routed?focus=v{{ v.vid }}" title="show on the routed map">⇉</a>{% endif %}</td>
         <td>{{ v.name or "" if loop.first else "" }}</td>
         <td class="mono">{{ s.cidr }}</td>
         <td class="muted">{{ s.descr or "" }}</td>
@@ -27,8 +27,8 @@
       </tr>
       {% endfor %}
     {% else %}
-      <tr>
-        <td class="mono"><a href="/topology?view=vlan&vlan={{ v.vid }}" title="show on the map">{{ v.vid }}</a></td>
+      <tr id="v{{ v.vid }}">
+        <td class="mono"><a href="/topology?view=vlan&vlan={{ v.vid }}" title="show on the map">{{ v.vid }}</a> <a href="/routed?focus=v{{ v.vid }}" title="show on the routed map">⇉</a></td>
         <td>{{ v.name or "" }}</td>
         <td class="muted" colspan="5">no subnet documented in IPAM</td>
         <td class="muted">{% for d in v.devices %}<a href="/device/{{ d.name | urlencode }}">{{ d.name }}</a>{% if d.assumed %}*{% endif %}{{ ", " if not loop.last }}{% endfor %}</td>

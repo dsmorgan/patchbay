@@ -7,6 +7,7 @@ Server-rendered, reads the SQLite model the collectors maintain. Run with
 from __future__ import annotations
 
 import ipaddress
+import json
 import sqlite3
 import time
 from datetime import datetime
@@ -20,6 +21,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from . import db
+from . import routed
 from .attention import (CATEGORIES, STALE_MIN, attention_items, drift_report,
                         human_age, human_speed, ip_sort_key, ipam_link,
                         source_ages, speed_tier, stamp_first_seen)
@@ -134,6 +136,8 @@ NAV = [
          "Everything the checks flag, in one filterable list — and since when"),
         ("/topology", "Topology", "topology",
          "How it's wired: the physical map, with VLAN and load overlays"),
+        ("/routed", "Routed", "routed",
+         "What can reach what: networks as rails, who routes them, and the hosts that stand in several"),
         ("/vlans", "VLANs", "vlans",
          "Every VLAN and subnet — who routes it, who carries it, what's live in it"),
         ("/patchpanel", "Patch panels", "patchpanel",
@@ -160,6 +164,9 @@ NAV_ICONS = {
                 "M1.7 14.5a1.8 1.8 0 103.6 0 1.8 1.8 0 10-3.6 0 "
                 "M12.7 14.5a1.8 1.8 0 103.6 0 1.8 1.8 0 10-3.6 0 "
                 "M8.2 5.1 4.3 12.9 M9.8 5.1l3.9 7.8 M5.3 14.5h7.4",
+    "routed": "M9 2.5a1.3 1.3 0 102.6 0 1.3 1.3 0 10-2.6 0 "
+              "M4.5 8.5 9.6 4.2 M10.3 4.2l4.2 4.3 M10 3.8v4.7 "
+              "M4.5 8.5V16 M10 8.5V16 M14.5 8.5V16",
     "vlans": "M2 2.5h6.5l7.5 7.5-6.5 6.5L2 9z M4.6 5.8a.7.7 0 101.4 0 .7.7 0 10-1.4 0",
     "patchpanel": "M2.5 5.5h13a1 1 0 011 1v5a1 1 0 01-1 1h-13a1 1 0 01-1-1v-5a1 1 0 011-1z "
                   "M4.5 8v2 M7.5 8v2 M10.5 8v2 M13.5 8v2",
@@ -766,6 +773,20 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
                   .replace(">", "\\u003e")
                   .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
     return graph_json, bool(peak_of)
+
+
+@app.get("/routed", response_class=HTMLResponse)
+def routed_page(request: Request):
+    settings = load_settings()
+    conn = _conn()
+    try:
+        db.init(conn)
+        graph = routed.build_routed_graph(conn, settings)
+        return templates.TemplateResponse(request, "routed.html", {
+            "graph_json": json.dumps(graph),
+        })
+    finally:
+        conn.close()
 
 
 @app.get("/topology", response_class=HTMLResponse)

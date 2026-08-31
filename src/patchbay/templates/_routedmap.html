@@ -1,0 +1,327 @@
+{# The routed view (ADR-0002, #17): networks as vertical rails, the logical
+   map beside the physical one. Geometry is computed server-side (rail order,
+   host rows) and drawn here; no pins, no dragging — zoom, pan, fit only.
+   v1 ships the Routes mode alone; the segmented control arrives with the
+   second mode so a one-button control never renders. #}
+<style>
+  #routedwrap { border: 1px solid var(--grid); border-radius: 10px;
+                background: var(--card); height: 72vh; overflow: hidden;
+                cursor: grab; position: relative; }
+  #routedwrap:active { cursor: grabbing; }
+  #routed { width: 100%; height: 100%; display: block; }
+  .rlegend { display: flex; flex-wrap: wrap; align-items: center;
+             gap: 0.35rem 1.1rem; color: var(--muted); font-size: 0.78rem;
+             margin: 0 0 0.55rem 0.15rem; }
+  .rlegend .item { display: inline-flex; align-items: center; gap: 0.4rem;
+                   white-space: nowrap; }
+  .rlegend svg { flex: none; display: block; }
+  .rtool { display: flex; align-items: center; gap: 0.4rem 1rem;
+           flex-wrap: wrap; margin-bottom: 0.55rem; font-size: 0.8rem; }
+  .rtool .fitbtn { margin-left: auto; }
+
+  #routed .band { fill: var(--muted); font: 600 10px var(--font-mono);
+                  letter-spacing: 0.14em; opacity: 0.55; }
+  #routed .bandline { stroke: var(--grid); stroke-dasharray: 2 6; }
+  #routed .rail { stroke: var(--accent); stroke-width: 2; }
+  #routed .rail.unrouted { stroke: var(--muted); opacity: 0.75; }
+  #routed .fan { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+  #routed .defroute { stroke: var(--ok); stroke-width: 1.6;
+                      stroke-dasharray: 6 4; fill: none; }
+  #routed .raildot { fill: var(--accent); }
+  #routed .raildot.unrouted { fill: var(--muted); }
+  #routed .cloud { fill: var(--card); stroke: var(--line); }
+  #routed .router rect { fill: var(--card); stroke: var(--r-firewall);
+                         stroke-width: 1.4; rx: 8; }
+  #routed .vtag rect { fill: var(--vbox, var(--hover)); stroke: var(--line); }
+  #routed .vtag text { font: 10px var(--font-mono); fill: var(--ink); }
+  #routed .vtag { cursor: pointer; }
+  #routed .gbox rect { fill: none; stroke: var(--accent); stroke-width: 1.1;
+                       stroke-dasharray: 5 4; rx: 8; }
+  #routed .gbox.unrouted rect { stroke: var(--muted); }
+  #routed .gbox text { font: 10.5px var(--font-ui); fill: var(--muted); }
+  #routed .gbox { cursor: pointer; }
+  #routed .host rect { fill: var(--card); stroke: var(--ink2, var(--ink));
+                       stroke-width: 1.2; rx: 8; }
+  #routed .host text { font: 600 11px var(--font-ui); fill: var(--ink); }
+  #routed .host { cursor: pointer; }
+  #routed .tap { stroke: var(--muted); stroke-width: 1.2; }
+  #routed .rim { fill: var(--accent); stroke: var(--card); stroke-width: 1.5; }
+  #routed .rim.unrouted { fill: var(--muted); }
+  #routed .rlabel { font: 600 11px var(--font-ui); fill: var(--ink); }
+  #routed .dim { opacity: 0.18; transition: opacity 0.12s; }
+  #routed .routerlabel { font: 600 11.5px var(--font-ui); fill: var(--ink); }
+  #routed .gwlabel { font: 10px var(--font-mono); fill: var(--muted); }
+</style>
+
+<div class="rtool">
+  <span class="grp filters">
+    <button type="button" class="fchip" id="r-hosts" aria-pressed="true">multi-homed hosts</button>
+    <button type="button" class="fchip" id="r-groups" aria-pressed="true">single-homed groups</button>
+  </span>
+  <button type="button" class="fchip fitbtn" id="r-fit" title="fit the whole map">fit ⤢</button>
+</div>
+
+<div class="rlegend" id="rlegend">
+  <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--accent)" stroke-width="2"/></svg> routed network</span>
+  <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--muted)" stroke-width="2" opacity="0.75"/></svg> not routed</span>
+  <span class="item"><svg width="26" height="12"><rect x="0" y="0" width="26" height="12" fill="var(--hover)" stroke="var(--line)"/></svg> VLAN label</span>
+  <span class="item"><svg width="14" height="14"><circle cx="7" cy="7" r="3.5" fill="var(--accent)" stroke="var(--card)" stroke-width="1.5"/></svg> attached at the rim</span>
+  <span class="item"><svg width="30" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="var(--muted)" stroke-width="1.2"/><circle cx="26" cy="5" r="3" fill="var(--accent)"/></svg> attached beyond the box</span>
+  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--accent)" stroke-width="1.1" stroke-dasharray="4 3" rx="4"/></svg> ×N single-homed hosts</span>
+  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="var(--card)" stroke="var(--ink)" stroke-width="1.2" rx="4"/></svg> multi-homed host</span>
+  <span class="item" style="color: var(--muted)">hover a rail or box for subnets, gateway &amp; sources · scroll zooms · background pans · click a network or host for its page</span>
+</div>
+
+<div id="routedwrap"><svg id="routed"></svg></div>
+
+<script>
+const rg = {{ graph_json | safe }};
+
+// --- state in the URL (ADR-0001 rules: only non-defaults serialize) --------
+const R_DEFAULTS = { hosts: true, groups: true, focus: null };
+const rstate = { ...R_DEFAULTS };
+{
+  const p = new URLSearchParams(location.search);
+  if (p.get("hosts") === "0") rstate.hosts = false;
+  if (p.get("groups") === "0") rstate.groups = false;
+  if (p.get("focus")) rstate.focus = p.get("focus");
+}
+function rwrite() {
+  const p = new URLSearchParams(location.search);
+  ["hosts", "groups", "focus"].forEach(k => p.delete(k));
+  if (!rstate.hosts) p.set("hosts", "0");
+  if (!rstate.groups) p.set("groups", "0");
+  if (rstate.focus) p.set("focus", rstate.focus);
+  const qs = p.toString();
+  history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
+}
+
+// --- geometry ---------------------------------------------------------------
+const G = { left: 90, gap: 55, railTop: 250, tagRow: [268, 292],
+            groupRow: [330, 386], hostY0: 450, rowH: 62, bottomPad: 60 };
+const rails = rg.rails, nR = rails.length;
+// the viewBox hugs the content: rails span + margins, but never narrower
+// than the internet cloud over the routing tier
+const W = Math.max(G.left * 2 + (nR - 1) * G.gap + 40, 480);
+const maxRow = rg.hosts.length ? Math.max(...rg.hosts.map(h => h.row)) : 0;
+const H = Math.max(700, G.hostY0 + (maxRow + 1) * G.rowH + G.bottomPad);
+const railX = i => G.left + i * G.gap;
+const pos = {}; rails.forEach((r, i) => pos[r.key] = i);
+
+const svg = document.getElementById("routed");
+svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+const NS = "http://www.w3.org/2000/svg";
+const root = document.createElementNS(NS, "g");
+svg.appendChild(root);
+function el(tag, attrs, parent, textContent) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  (parent || root).appendChild(e);
+  if (textContent != null) e.textContent = textContent;
+  return e;
+}
+function title(parent, text) { el("title", {}, parent, text); }
+
+// hover: everything not related to the hovered rail set dims
+const members = [];   // [element, Set(railKeys)]
+function track(e, keys) { members.push([e, new Set(keys)]); }
+function wireHover(e, keys) {
+  e.addEventListener("mouseenter", () => {
+    const on = new Set(keys);
+    for (const [m, ks] of members)
+      m.classList.toggle("dim", ![...ks].some(k => on.has(k)));
+  });
+  e.addEventListener("mouseleave", () =>
+    members.forEach(([m]) => m.classList.remove("dim")));
+}
+
+const router = rg.routers[0] || null;
+const routedKeys = new Set(router ? router.rails : []);
+const midX = nR ? (railX(0) + railX(nR - 1)) / 2 : W / 2;
+
+// bands
+el("text", { x: 14, y: 60, class: "band" }, root, "INTERNET");
+el("line", { x1: 0, y1: 96, x2: W, y2: 96, class: "bandline" });
+el("text", { x: 14, y: 130, class: "band" }, root, "ROUTING");
+el("line", { x1: 0, y1: 230, x2: W, y2: 230, class: "bandline" });
+el("text", { x: 14, y: 244, class: "band" }, root, "NETWORKS");
+
+// internet cloud + default route
+if (router) {
+  const cloud = el("g", {});
+  el("ellipse", { cx: midX, cy: 48, rx: 96, ry: 30, class: "cloud" }, cloud);
+  el("text", { x: midX, y: 45, "text-anchor": "middle", class: "rlabel" },
+     cloud, rg.wan_names[0] || "internet");
+  const gw = rg.gateways[0];
+  if (gw) el("text", { x: midX, y: 60, "text-anchor": "middle", class: "gwlabel" },
+             cloud, `${gw.name} ${gw.status || ""}`.trim());
+  if (rg.default)
+    el("line", { x1: midX, y1: 78, x2: midX, y2: 128, class: "defroute" });
+  if (rg.default && rg.default.gateway) title(cloud, `default via ${rg.default.gateway}`);
+}
+
+// taps (before rails so they pass underneath), collected per host below
+const tapLayer = el("g", {});
+// rails + fan
+const rw = 150, rh = 54, ry = 128;
+if (router) {
+  const rbx = midX - rw / 2;
+  const rgrp = el("g", { class: "router" });
+  el("rect", { x: rbx, y: ry, width: rw, height: rh, rx: 8 }, rgrp);
+  el("text", { x: midX, y: ry + 22, "text-anchor": "middle",
+               class: "routerlabel" }, rgrp, router.name);
+  el("text", { x: midX, y: ry + 38, "text-anchor": "middle", class: "gwlabel" },
+     rgrp, `${router.rails.length} networks`);
+  track(rgrp, router.rails); wireHover(rgrp, router.rails);
+  rgrp.style.cursor = "pointer";
+  rgrp.addEventListener("click", () =>
+    location.href = `/device/${encodeURIComponent(router.name)}`);
+  // pins left-to-right in rail order so fan lines never cross
+  const claimed = rails.filter(r => routedKeys.has(r.key));
+  claimed.forEach((r, i) => {
+    const px = rbx + (rw / (claimed.length + 1)) * (i + 1);
+    const fan = el("line", { x1: px, y1: ry + rh, x2: railX(pos[r.key]),
+                             y2: G.railTop, class: "fan" });
+    track(fan, [r.key]);
+  });
+}
+rails.forEach((r, i) => {
+  const x = railX(i);
+  const cls = "rail" + (r.routed ? "" : " unrouted");
+  const line = el("line", { x1: x, y1: G.railTop, x2: x, y2: H - 20, class: cls });
+  const dot = el("circle", { cx: x, cy: G.railTop, r: 3.4,
+                             class: "raildot" + (r.routed ? "" : " unrouted") });
+  const tip = [`${r.name || "?"}${r.vid != null ? " · VLAN " + r.vid : ""}`,
+               ...(r.subnets.length ? r.subnets : ["no subnet recorded"]),
+               r.gateway ? `gateway ${r.gateway}` : (r.routed ? "" : "not routed"),
+               `sources: ${r.sources.join(", ")}`].filter(Boolean).join("\n");
+  [line, dot].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); title(e, tip); });
+
+  // VLAN tag, staggered rows
+  const label = (r.name || (r.vid != null ? "vlan" : r.key)).slice(0, 8)
+                + ((r.name || "").length > 8 ? "…" : "");
+  const text = r.vid != null ? `${label} ${r.vid}` : label;
+  const tw = text.length * 6.4 + 10;
+  const tyy = G.tagRow[i % 2];
+  const tag = el("g", { class: "vtag" });
+  el("rect", { x: x - tw / 2, y: tyy - 13, width: tw, height: 18, rx: 3 }, tag);
+  el("text", { x: x, y: tyy, "text-anchor": "middle" }, tag, text);
+  title(tag, tip);
+  track(tag, [r.key]); wireHover(tag, [r.key]);
+  if (r.vid != null)
+    tag.addEventListener("click", () => location.href = `/vlans#v${r.vid}`);
+
+  // single-homed group box
+  if (r.hosts > 0) {
+    const gy = G.groupRow[i % 2];
+    const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
+                        "data-kind": "group" });
+    el("rect", { x: x - 37.5, y: gy, width: 75, height: 40, rx: 8 }, g);
+    el("text", { x: x, y: gy + 24, "text-anchor": "middle" }, g,
+       `×${r.hosts} host${r.hosts > 1 ? "s" : ""}`);
+    el("circle", { cx: x, cy: gy, r: 3.4,
+                   class: "rim" + (r.routed ? "" : " unrouted") }, g);
+    title(g, `${r.hosts} single-homed host${r.hosts > 1 ? "s" : ""} on ${r.name || r.key}`);
+    track(g, [r.key]); wireHover(g, [r.key]);
+    if (r.vid != null)
+      g.addEventListener("click", () => location.href = `/vlans#v${r.vid}`);
+  }
+});
+
+// multi-homed hosts: box on the home rail, rim dots where a rail meets the
+// box, thin tap lines (under the rails) to rails beyond the footprint
+rg.hosts.forEach(h => {
+  const cx = railX(pos[h.home]);
+  const bw = Math.max(84, h.name.length * 7.4 + 24);
+  const y = G.hostY0 + h.row * G.rowH;
+  const grp = el("g", { class: "host", "data-kind": "host" });
+  el("rect", { x: cx - bw / 2, y: y, width: bw, height: 40, rx: 8 }, grp);
+  el("text", { x: cx, y: y + 24, "text-anchor": "middle" }, grp, h.name);
+  const keys = h.legs.map(l => l.rail);
+  const tips = h.legs.map(l => {
+    const r = rails[pos[l.rail]];
+    return `${l.iface}${l.ip ? " " + l.ip : ""} → ${r.name || l.rail}`;
+  });
+  title(grp, `${h.name}\n${tips.join("\n")}`);
+  h.legs.forEach(l => {
+    const lx = railX(pos[l.rail]);
+    const r = rails[pos[l.rail]];
+    const rimCls = "rim" + (r.routed ? "" : " unrouted");
+    if (Math.abs(lx - cx) <= bw / 2) {
+      // rail meets (or crosses) the box: a dot on the rim marks attachment;
+      // an unattached rail crossing the box simply passes underneath
+      const d = el("circle", { cx: lx, cy: y, r: 3.4, class: rimCls }, grp);
+      track(d, [l.rail]);
+    } else {
+      const edgeX = lx > cx ? cx + bw / 2 : cx - bw / 2;
+      const tap = el("line", { x1: edgeX, y1: y + 20, x2: lx, y2: y + 20,
+                               class: "tap" }, tapLayer);
+      const d = el("circle", { cx: lx, cy: y + 20, r: 3.4, class: rimCls }, grp);
+      track(tap, keys); track(d, [l.rail]);
+    }
+  });
+  track(grp, keys); wireHover(grp, keys);
+  grp.addEventListener("click", () =>
+    location.href = `/device/${encodeURIComponent(h.name)}`);
+});
+
+// --- chips, focus, zoom/pan/fit --------------------------------------------
+function applyRouted() {
+  document.querySelectorAll('[data-kind="host"]').forEach(e =>
+    e.style.display = rstate.hosts ? "" : "none");
+  document.querySelectorAll('[data-kind="group"]').forEach(e =>
+    e.style.display = rstate.groups ? "" : "none");
+  document.getElementById("routedwrap").parentNode
+    .querySelectorAll(".tap").forEach(e =>
+      e.style.display = rstate.hosts ? "" : "none");
+  const setChip = (id, on) => {
+    const el = document.getElementById(id);
+    el.classList.toggle("on", on); el.setAttribute("aria-pressed", String(on));
+  };
+  setChip("r-hosts", rstate.hosts);
+  setChip("r-groups", rstate.groups);
+  if (rstate.focus) {
+    const on = new Set([rstate.focus]);
+    for (const [m, ks] of members)
+      m.classList.toggle("dim", ![...ks].some(k => on.has(k)));
+  }
+}
+document.getElementById("r-hosts").addEventListener("click", () => {
+  rstate.hosts = !rstate.hosts; rwrite(); applyRouted(); });
+document.getElementById("r-groups").addEventListener("click", () => {
+  rstate.groups = !rstate.groups; rwrite(); applyRouted(); });
+applyRouted();
+
+let view = { x: 0, y: 0, k: 1 };
+function applyView() {
+  root.setAttribute("transform",
+    `translate(${view.x},${view.y}) scale(${view.k})`);
+}
+const wrap = document.getElementById("routedwrap");
+wrap.addEventListener("wheel", ev => {
+  ev.preventDefault();
+  const k = Math.min(6, Math.max(0.3, view.k * (ev.deltaY < 0 ? 1.12 : 0.89)));
+  const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+  const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+  view.x = p.x - (p.x - view.x) * (k / view.k);
+  view.y = p.y - (p.y - view.y) * (k / view.k);
+  view.k = k; applyView();
+}, { passive: false });
+let drag = null;
+wrap.addEventListener("pointerdown", ev => {
+  if (ev.target.closest(".host, .gbox, .vtag, .router")) return;
+  drag = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y };
+  wrap.setPointerCapture(ev.pointerId);
+});
+wrap.addEventListener("pointermove", ev => {
+  if (!drag) return;
+  const ctm = svg.getScreenCTM();
+  view.x = drag.vx + (ev.clientX - drag.x) / ctm.a;
+  view.y = drag.vy + (ev.clientY - drag.y) / ctm.d;
+  applyView();
+});
+wrap.addEventListener("pointerup", () => drag = null);
+document.getElementById("r-fit").addEventListener("click", () => {
+  view = { x: 0, y: 0, k: 1 }; applyView();
+});
+</script>

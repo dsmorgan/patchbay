@@ -24,12 +24,14 @@ from .normalize import normalize
 
 MARKER = "demo_seed"          # app_state key marking a DB as demo-generated
 
-VLANS = [(1, "mgmt"), (20, "servers"), (30, "iot"), (40, "wifi")]
+VLANS = [(1, "mgmt"), (20, "servers"), (30, "iot"), (40, "wifi"), (103, "iscsi")]
 SUBNETS = [
     ("192.0.2.0/24", 1, "management"),
     ("198.51.100.0/24", 20, "servers"),
     ("203.0.113.0/24", 30, "iot devices"),
     ("2001:db8:0:20::/64", 20, "servers v6"),
+    # storage network: unrouted on purpose — the routed view's isolated rail
+    ("2001:db8:0:103::/64", 103, "iscsi storage"),
 ]
 
 # (name, role, vendor, model, os, mgmt_ip, parent)
@@ -42,6 +44,10 @@ DEVICES = [
     ("ap-attic", "ap", "UbiFi", "AP-6-Pro", "7.0.66", "192.0.2.31", None),
     ("ap-den", "ap", "UbiFi", "AP-6-Lite", "7.0.66", "192.0.2.32", None),
     ("ap-garage", "ap", "UbiFi", "AP-6-Lite", "7.0.66", "192.0.2.33", None),
+    # multi-homed on purpose: the routed view's hardest cases (rim dots,
+    # pass-under, attachment lines) need a NAS with three legs and
+    # hypervisors with storage legs on the public demo (ADR-0002)
+    ("nas1", "host", "BoxCo", "NS-424", "nasos 5.2", "192.0.2.21", None),
 ]
 
 VMS = ["vm-web1", "vm-db1", "vm-git", "vm-media", "vm-backup", "vm-monitor"]
@@ -148,15 +154,25 @@ def seed(conn: sqlite3.Connection, *, rnd: random.Random | None = None) -> str:
                 oper_status="up" if up else "down",
                 speed_bps=speed if up else None,
                 description=PANEL_RUNS.get(n) if dev == "core1" else None)
-    # hypervisor NICs + vmkernel
-    for hyp in ("hyp1", "hyp2"):
-        for iface in ("vmnic0", "vmnic1", "vmk0"):
+    # hypervisor NICs + vmkernel; vmk1 is the storage leg (multi-homed on
+    # the routed view, home = the faster storage network)
+    for i, hyp in enumerate(("hyp1", "hyp2")):
+        for iface in ("vmnic0", "vmnic1", "vmk0", "vmk1"):
+            ip = (f"192.0.2.{10 + i}" if iface == "vmk0" else None)
+            ip6 = (f"2001:db8:0:103::{10 + i}" if iface == "vmk1" else None)
             db.upsert_interface(conn, device_id=ids[hyp], name=iface,
                                 mac=mk_mac(f"{hyp}:{iface}"),
                                 oper_status="up" if iface != "vmnic1" else "down",
-                                ip="192.0.2.10" if (hyp, iface) == ("hyp1", "vmk0")
-                                else "192.0.2.11" if iface == "vmk0" else None,
-                                speed_bps=10_000_000_000 if iface != "vmk0" else None)
+                                ip=ip, ip6=ip6,
+                                speed_bps=10_000_000_000 if iface.startswith("vmnic") else None)
+    # nas1: three legs — mgmt, servers (fast, its home rail), and storage
+    for iface, ip, ip6, speed in (
+            ("lan1", "192.0.2.21", None, 1_000_000_000),
+            ("lan2", "198.51.100.21", None, 10_000_000_000),
+            ("lan3", None, "2001:db8:0:103::21", 10_000_000_000)):
+        db.upsert_interface(conn, device_id=ids["nas1"], name=iface,
+                            mac=mk_mac(f"nas1:{iface}"), oper_status="up",
+                            ip=ip, ip6=ip6, speed_bps=speed)
     for ap, *_ in [d for d in DEVICES if d[1] == "ap"]:
         db.upsert_interface(conn, device_id=ids[ap], name="eth0", mac=mk_mac(f"{ap}:eth0"),
                             oper_status="up", speed_bps=2_500_000_000,
