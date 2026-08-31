@@ -61,6 +61,10 @@ class PhpIpamCollector:
                 if not s.get("subnet") or s.get("isFolder") == "1":
                     continue
                 fetched.append((s, self._get(client, settings, f"subnets/{s['id']}/addresses/")))
+            if not fetched:
+                # a 404 or success-with-no-data listing is not "IPAM says
+                # empty" — keep the last good address book
+                return "phpipam returned no subnets; kept previous data"
             conn.execute("DELETE FROM ipam_addresses")  # full refresh: IPAM is the master here
             seen_cidrs: list[str] = []
             for s, addrs in fetched:

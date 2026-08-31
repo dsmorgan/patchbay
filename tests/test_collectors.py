@@ -1074,3 +1074,52 @@ def test_prepare_config_matches_secret_tags_as_substrings(conn):
     for secret in ("GEZDGNBVGY3TQOJQ", "notpublic", "radiuspw", "frp"):
         assert secret not in text, secret
     assert "allow lan" in text and "fw1" in text
+
+
+def test_pfsense_failed_calls_keep_last_good_rows(conn, clean_env, monkeypatch):
+    """A 403/empty response is degraded visibility, not an empty network:
+    gateways and port_vlans from the last good poll must survive it."""
+    from patchbay.collectors.pfsense import PfsenseCollector
+
+    monkeypatch.setattr(httpx, "Client", PfClient)
+    s = _pf_settings(clean_env)
+    PfsenseCollector().collect(s, conn)
+    assert conn.execute("SELECT COUNT(*) FROM gateways WHERE source='pfsense'"
+                        ).fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM port_vlans WHERE device='fw2'"
+                        ).fetchone()[0] == 1
+    monkeypatch.setattr(PfClient, "fail_gateways", True)
+    monkeypatch.setattr(PfClient, "interfaces", [])   # 200 with empty body
+    PfsenseCollector().collect(s, conn)
+    assert conn.execute("SELECT COUNT(*) FROM gateways WHERE source='pfsense'"
+                        ).fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM port_vlans WHERE device='fw2'"
+                        ).fetchone()[0] == 1
+
+
+def test_phpipam_empty_listing_keeps_address_book(conn, clean_env, monkeypatch):
+    """subnets/ answering 404 (phpIPAM's 'no results') must not commit an
+    empty address book — the fetch-before-delete guard's other half."""
+    from patchbay.collectors.phpipam import PhpIpamCollector
+    from patchbay.config import load_settings
+
+    conn.execute("INSERT INTO ipam_addresses (ip, hostname) VALUES ('192.0.2.9', 'old')")
+    clean_env.setenv("IPAM_URL", "https://ipam.example/api")
+    clean_env.setenv("IPAM_APP_ID", "app")
+    clean_env.setenv("IPAM_TOKEN", "t")
+
+    class EmptyClient(FlakyClient):
+        def get(self, url, **kw):
+            if url.endswith("vlan/"):
+                return FakeResponse([])
+            if url.endswith("subnets/"):
+                r = FakeResponse([])
+                r.status_code = 404
+                return r
+            raise AssertionError("unexpected call")
+
+    monkeypatch.setattr(httpx, "Client", EmptyClient)
+    summary = PhpIpamCollector().collect(load_settings(), conn)
+    assert "kept previous" in summary
+    rows = [r["ip"] for r in conn.execute("SELECT ip FROM ipam_addresses")]
+    assert rows == ["192.0.2.9"]

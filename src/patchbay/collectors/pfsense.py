@@ -186,13 +186,16 @@ class PfsenseCollector:
 
             # This collector owns its port_vlans rows: delete-then-insert, so a
             # VLAN sub-interface removed from pfSense leaves the model too
-            # (upsert-only stores rot — see CONTRIBUTING).
-            conn.execute("DELETE FROM port_vlans WHERE source = ? AND device = ?",
-                         (NAME, dev_name))
-            conn.executemany(
-                "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
-                "VALUES (?, ?, ?, 0, ?) ON CONFLICT(device, interface, vid) DO NOTHING",
-                vlan_rows)
+            # (upsert-only stores rot — see CONTRIBUTING). Guarded on a
+            # non-empty interfaces listing: a 403 or empty body must keep
+            # last good data, never wipe it.
+            if iface_cfg:
+                conn.execute("DELETE FROM port_vlans WHERE source = ? AND device = ?",
+                             (NAME, dev_name))
+                conn.executemany(
+                    "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                    "VALUES (?, ?, ?, 0, ?) ON CONFLICT(device, interface, vid) DO NOTHING",
+                    vlan_rows)
 
             # Purge tunnel interfaces and their port_vlans rows written before the
             # filter was in place. interfaces has no source column, so target by prefix.
@@ -209,11 +212,12 @@ class PfsenseCollector:
                 (NAME, dev_name),
             )
 
-            # Gateway health — prune stale rows then re-insert filtered set.
-            # Prune first so gateways removed from pfSense (or now filtered) don't linger.
-            conn.execute("DELETE FROM gateways WHERE source = ?", (NAME,))
+            # Gateway health — fetch first, prune only on a real listing:
+            # deleting before the GET meant a 403 or empty body emptied the
+            # gateways table for a full poll cycle.
             gw_status = get("api/v2/status/gateways") or []
             if gw_status:
+                conn.execute("DELETE FROM gateways WHERE source = ?", (NAME,))
                 db.save_raw(conn, source=NAME, endpoint="status/gateways", payload=gw_status)
             for gw in (gw_status if isinstance(gw_status, list) else []):
                 gw_name = gw.get("name")
