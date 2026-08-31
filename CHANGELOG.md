@@ -12,7 +12,8 @@ put.
 
 - **The firewall joins config history**
   ([#23](https://github.com/dsmorgan/patchbay/issues/23)). Grant the
-  OPNsense API key the backup page privilege and every poll pulls
+  OPNsense API key the "Diagnostics: Configuration History" privilege
+  (the one covering `api/core/backup/*`) and every poll pulls
   config.xml, redacts secret-bearing elements down to content hashes (a
   rotated key still reads as a change; no secret is ever stored), strips
   the revision-block noise, and keeps a revision only when something real
