@@ -6,6 +6,35 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## Unreleased
+
+### Added
+
+- **The routed view discovers the internet uplink.** The default route's
+  exit interface resolves to its VLAN's rail (untagged membership first,
+  else the rail holding the next-hop address): that rail draws green, the
+  drop line from the cloud names it ("via VLAN 299"), and hovering either
+  lights both. Sites whose WAN lands on a dedicated appliance port keep
+  the plain cloud-to-router drawing — no configuration either way. The
+  opnsense collector now records default routes (normalized to
+  `0.0.0.0/0` / `::/0`); reachability checks skip /0 destinations.
+- The break-glass snapshot embeds the latest patchbay-held firewall config
+  revision — already redacted at capture, and scrubbed a second time by the
+  snapshot's own redactor on the way in.
+- `PATCHBAY_SNAPSHOT_AT` is editable on /ops like the other declarations,
+  with inline help and an HH:MM parse warning.
+
+### Changed
+
+- Routed-view rails must participate: a network appears when a router
+  routes it, a drawn host has a leg on it, or single-homed hosts count
+  against it. IPAM-only supernets, aggregates, and VLANs no device claims
+  stay on /vlans, where documentation-vs-reality is the point.
+- /configs shows canonical short device names for Oxidized nodes enrolled
+  by FQDN, matching the rest of the UI; URLs keep the full node name.
+- Topology toolbar pills share one height, and the selected view mode uses
+  the same teal ring as active filter chips.
+
 ## [0.10.0] — 2026-08-30
 
 ### Added
