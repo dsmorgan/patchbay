@@ -1149,3 +1149,41 @@ def test_phpipam_empty_listing_keeps_address_book(conn, clean_env, monkeypatch):
     assert "kept previous" in summary
     rows = [r["ip"] for r in conn.execute("SELECT ip FROM ipam_addresses")]
     assert rows == ["192.0.2.9"]
+
+
+def test_phpipam_prunes_deleted_vlans_but_not_claimed_ones(conn, clean_env, monkeypatch):
+    """A VLAN deleted from IPAM leaves the model — unless a device still
+    claims it, in which case it just loses its IPAM documentation. An
+    empty listing prunes nothing."""
+    from patchbay.collectors.phpipam import PhpIpamCollector
+    from patchbay.config import load_settings
+
+    for vid in (10, 2001, 24):
+        conn.execute("INSERT INTO vlans (vid, name, source) VALUES (?, 'x', 'phpipam')",
+                     (vid,))
+    conn.execute("INSERT INTO port_vlans VALUES ('sw1', '1/0/1', 24, 1, 'config')")
+    clean_env.setenv("IPAM_URL", "https://ipam.example/api")
+    clean_env.setenv("IPAM_APP_ID", "app")
+    clean_env.setenv("IPAM_TOKEN", "t")
+
+    class VlanClient(FlakyClient):
+        listing = [{"number": "10", "name": "keep", "vlanId": "1"}]
+
+        def get(self, url, **kw):
+            if url.endswith("vlan/"):
+                return FakeResponse(self.listing)
+            if url.endswith("subnets/"):
+                return FakeResponse([{"subnet": "192.0.2.0", "mask": "24",
+                                      "id": 1, "sectionId": 1}])
+            if "subnets/1/" in url:
+                return FakeResponse([])
+            raise AssertionError(url)
+
+    monkeypatch.setattr(httpx, "Client", VlanClient)
+    PhpIpamCollector().collect(load_settings(), conn)
+    left = {r[0] for r in conn.execute("SELECT vid FROM vlans")}
+    assert left == {10, 24}                 # 2001 pruned; claimed 24 survives
+
+    monkeypatch.setattr(VlanClient, "listing", [])
+    PhpIpamCollector().collect(load_settings(), conn)
+    assert {r[0] for r in conn.execute("SELECT vid FROM vlans")} == {10, 24}

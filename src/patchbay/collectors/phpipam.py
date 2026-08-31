@@ -50,6 +50,21 @@ class PhpIpamCollector:
                         (vid, v.get("name"), NAME, db.now()),
                     )
                     n_vlans += 1
+            # prune VLANs deleted from IPAM: this collector's rows only, and
+            # never one a device still claims — IPAM dropping its record of a
+            # real VLAN just demotes it to "no subnet documented in IPAM".
+            # Guarded on a non-empty listing: a failed or empty answer keeps
+            # last good data, same as the address book below.
+            if vlans:
+                seen_vids = [int(v.get("number") or 0) for v in vlans
+                             if v.get("number")]
+                conn.execute(
+                    "DELETE FROM vlans WHERE source = ? "
+                    f"AND vid NOT IN ({','.join('?' * len(seen_vids))}) "
+                    "AND vid NOT IN (SELECT vid FROM device_vlans) "
+                    "AND vid NOT IN (SELECT vid FROM port_vlans) "
+                    "AND vid NOT IN (SELECT vid FROM vnic_vlans)",
+                    (NAME, *seen_vids))
 
             subnets = self._get(client, settings, "subnets/")
             db.save_raw(conn, source=NAME, endpoint="subnets/", payload=subnets)
