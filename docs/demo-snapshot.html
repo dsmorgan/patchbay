@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>patchbay snapshot — 2026-08-29 22:11 EDT</title>
+<title>patchbay snapshot — 2026-08-30 23:01 EDT</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
 <style>
   /* IBM Plex Sans, variable weight, Latin subset, self-hosted (SIL OFL 1.1 —
@@ -180,9 +180,19 @@
              margin: 0 0 1rem; }
   .fgroup { display: inline-flex; gap: 0.4rem; margin-left: 0.6rem;
             padding-left: 1rem; border-left: 1px solid var(--grid); }
+  /* ---- filter chips: THE boolean display toggle (#36). An <a class="fchip">
+     where the state lives in the URL (alerts, aggregate pages); a
+     <button class="fchip" aria-pressed> where it lives in client state (the
+     maps). `.on` marks active; crit/warn tint by severity. The header's
+     .autoref pill is the action-chip cousin — it triggers rather than
+     filters, and keeps its status dot. Mutually exclusive modes stay a
+     segmented control (.grp.modes radios), not chips. ---- */
   .fchip { font-size: 0.78rem; padding: 0.12rem 0.7rem; border-radius: 999px;
            border: 1px solid var(--line); color: var(--muted); }
+  button.fchip { background: none; cursor: pointer;
+                 font: inherit; font-size: 0.78rem; }
   .fchip:hover { text-decoration: none; background: var(--hover); }
+  .fchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .fchip.on { color: var(--ink); border-color: var(--accent); }
   .fchip.crit { color: var(--crit); }
   .fchip.warn { color: var(--warn); }
@@ -290,8 +300,8 @@
     <rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/>
   </g>
 </svg>patchbay snapshot</h1>
-  <nav class="muted">generated 2026-08-29 22:11 EDT · build 0.9.0</nav>
-  <span class="ages">data age at generation: librenms 0.8m · opnsense 0.8m · oxidized 0.8m · phpipam 0.8m · unifi 0.8m · vsphere 0.8m</span>
+  <nav class="muted">generated 2026-08-30 23:01 EDT · build 0.10.0</nav>
+  <span class="ages">data age at generation: librenms -0.0m · opnsense -0.0m · oxidized -0.0m · phpipam -0.0m · unifi -0.0m · vsphere -0.0m</span>
 </header>
 <main>
 <p class="muted" style="max-width: 76ch">Demo snapshot of a
@@ -371,6 +381,8 @@ from your own network.</p>
   /* the mode-specific groups toggle the `hidden` attribute; an author
      display rule outranks the browser default for [hidden], so say it here */
   .toolbar .grp[hidden] { display: none; }
+  /* filter chips are pills already — no outer pill around the row */
+  .toolbar .grp.filters { border: none; background: none; padding: 0; gap: 0.4rem; }
   /* segmented view control: radios are visually hidden but stay focusable,
      the adjacent label carries the pill styling and the checked/focus state */
   .toolbar .grp.modes { padding: 0.22rem; gap: 0; }
@@ -423,12 +435,12 @@ from your own network.</p>
     <input type="radio" name="view" id="view-evidence" value="evidence">
     <label for="view-evidence">Evidence</label>
   </span>
-  <span class="grp">
-    <label><input type="checkbox" id="hideoff"> hide offline &amp; unlinked</label>
-    <label><input type="checkbox" id="coreonly"> core only</label>
-    <label><input type="checkbox" id="hosts"> wired hosts</label>
-    <label><input type="checkbox" id="unmhosts"> behind unmanaged</label>
-    <label title="lanes own each node's vertical position; off = arrange freely, pins keep both axes"><input type="checkbox" id="tierbox"> tier lanes</label>
+  <span class="grp filters">
+    <button type="button" class="fchip" id="hideoff" aria-pressed="false">hide offline &amp; unlinked</button>
+    <button type="button" class="fchip" id="coreonly" aria-pressed="false">core only</button>
+    <button type="button" class="fchip" id="hosts" aria-pressed="false">wired hosts</button>
+    <button type="button" class="fchip" id="unmhosts" aria-pressed="false">behind unmanaged</button>
+    <button type="button" class="fchip" id="tierbox" aria-pressed="false" title="lanes own each node's vertical position; off = arrange freely, pins keep both axes">tier lanes</button>
   </span>
   <span class="grp" id="loadgrp" hidden>
     <select id="loadmode">
@@ -490,7 +502,7 @@ from your own network.</p>
 
 <script>
 const SNAPSHOT = true;
-const graph = {"nodes": [{"name": "ap-attic", "label": "ap-attic", "w": 134.8, "sub": "1 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-attic", "vlans": [1], "px": null, "py": null}, {"name": "ap-den", "label": "ap-den", "w": 119.6, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-den", "vlans": [1], "px": null, "py": null}, {"name": "ap-garage", "label": "ap-garage", "w": 142.39999999999998, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-garage", "vlans": [1], "px": null, "py": null}, {"name": "core1", "label": "core1", "w": 180.0, "sub": "192.0.2.2", "status": "up", "role": "switch", "rank": 1, "title": "core1", "vlans": [1], "px": null, "py": null}, {"name": "edge1", "label": "edge1", "w": 180.0, "sub": "192.0.2.3", "status": "up", "role": "switch", "rank": 1, "title": "edge1", "vlans": [1], "px": null, "py": null}, {"name": "fw1", "label": "fw1", "w": 107.4, "sub": "192.0.2.1", "status": "up", "role": "firewall", "rank": 0, "title": "fw1", "vlans": [1, 20, 30], "px": null, "py": null}, {"name": "hyp1", "label": "hyp1", "w": 180.0, "sub": "192.0.2.10 \u00b7 4/4 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp1", "vlans": [1], "px": null, "py": null}, {"name": "hyp2", "label": "hyp2", "w": 180.0, "sub": "192.0.2.11 \u00b7 3/3 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp2", "vlans": [1], "px": null, "py": null}, {"name": "unmanaged@edge1:e1/0/8", "label": "unmanaged", "w": 142.39999999999998, "sub": "5 MACs", "status": "up", "role": "unmanaged-switch", "rank": 2, "title": "unmanaged@edge1:e1/0/8 \u00b7 ~5 MACs behind edge1 e1/0/8", "vlans": [30], "px": null, "py": null}, {"name": "internet", "role": "cloud", "rank": -1, "w": 127.60000000000001, "sub": "WAN_GW Online", "status": "up", "vlans": [], "px": null, "py": null}, {"name": "console", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "203.0.113.61", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "nas1", "role": "host", "rank": 2, "viaUn": false, "w": 114.0, "sub": "wired host", "status": "up", "vlans": [20], "px": null, "py": null}, {"name": "pi-hole", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.62", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "printer", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.61", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "shelly-plug", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.62", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "tv-basement", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.60", "status": "up", "vlans": [30], "px": null, "py": null}], "links": [{"source": "core1", "target": "hyp1", "alab": "1/0/1 [1]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.2, "putil": 33.6, "vlans": [1], "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/2 [2]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 0.7, "putil": 33.7, "vlans": [1], "note": null}, {"source": "core1", "target": "edge1", "alab": "1/0/3 [3]", "blab": "e1/0/1", "amode": "trunk", "bmode": "trunk", "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.5, "putil": 33.9, "vlans": [1], "note": null}, {"source": "ap-attic", "target": "edge1", "alab": "eth0", "blab": "e1/0/2", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 4.4, "putil": 33.2, "vlans": null, "note": null}, {"source": "ap-den", "target": "edge1", "alab": "eth0", "blab": "e1/0/3", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 9.4, "putil": 33.9, "vlans": null, "note": null}, {"source": "ap-garage", "target": "edge1", "alab": "eth0", "blab": "e1/0/4", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 10.3, "putil": 33.0, "vlans": null, "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/4", "blab": "vmnic1", "amode": null, "bmode": null, "cls": "vspherehint", "sw": 7.4, "speed": "10G", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "edge1", "target": "unmanaged@edge1:e1/0/8", "alab": "e1/0/8", "blab": "", "amode": "access", "bmode": null, "cls": "fdbinference", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "fw1", "target": "hyp1", "alab": "vm", "blab": "", "amode": null, "bmode": null, "cls": "virtualized", "sw": 2.5, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "internet", "alab": "WAN", "blab": "", "amode": null, "bmode": null, "cls": "wan", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "console", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "edge1", "target": "nas1", "alab": "e1/0/10", "blab": "lan1", "amode": "access", "bmode": null, "cls": "fdbhost", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [20], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "pi-hole", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "printer", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "shelly-plug", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "tv-basement", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}], "vlans": [{"vid": 1, "name": "mgmt"}, {"vid": 20, "name": "servers"}, {"vid": 30, "name": "iot"}]};
+const graph = {"nodes": [{"name": "ap-attic", "label": "ap-attic", "w": 134.8, "sub": "1 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-attic", "vlans": [1], "px": null, "py": null}, {"name": "ap-den", "label": "ap-den", "w": 119.6, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-den", "vlans": [1], "px": null, "py": null}, {"name": "ap-garage", "label": "ap-garage", "w": 142.39999999999998, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-garage", "vlans": [1], "px": null, "py": null}, {"name": "core1", "label": "core1", "w": 180.0, "sub": "192.0.2.2", "status": "up", "role": "switch", "rank": 1, "title": "core1", "vlans": [1], "px": null, "py": null}, {"name": "edge1", "label": "edge1", "w": 180.0, "sub": "192.0.2.3", "status": "up", "role": "switch", "rank": 1, "title": "edge1", "vlans": [1], "px": null, "py": null}, {"name": "fw1", "label": "fw1", "w": 107.4, "sub": "192.0.2.1", "status": "up", "role": "firewall", "rank": 0, "title": "fw1", "vlans": [1, 20, 30], "px": null, "py": null}, {"name": "hyp1", "label": "hyp1", "w": 180.0, "sub": "192.0.2.10 \u00b7 4/4 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp1", "vlans": [1], "px": null, "py": null}, {"name": "hyp2", "label": "hyp2", "w": 180.0, "sub": "192.0.2.11 \u00b7 3/3 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp2", "vlans": [1], "px": null, "py": null}, {"name": "unmanaged@edge1:e1/0/8", "label": "unmanaged", "w": 142.39999999999998, "sub": "5 MACs", "status": "up", "role": "unmanaged-switch", "rank": 2, "title": "unmanaged@edge1:e1/0/8 \u00b7 ~5 MACs behind edge1 e1/0/8", "vlans": [30], "px": null, "py": null}, {"name": "internet", "role": "cloud", "rank": -1, "w": 127.60000000000001, "sub": "WAN_GW Online", "status": "up", "vlans": [], "px": null, "py": null}, {"name": "console", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "203.0.113.61", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "nas1", "role": "host", "rank": 2, "viaUn": false, "w": 114.0, "sub": "wired host", "status": "up", "vlans": [20], "px": null, "py": null}, {"name": "pi-hole", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.62", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "printer", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.61", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "shelly-plug", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.62", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "tv-basement", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.60", "status": "up", "vlans": [30], "px": null, "py": null}], "links": [{"source": "core1", "target": "hyp1", "alab": "1/0/1 [1]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.2, "putil": 33.6, "vlans": [1], "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/2 [2]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 0.7, "putil": 33.8, "vlans": [1], "note": null}, {"source": "core1", "target": "edge1", "alab": "1/0/3 [3]", "blab": "e1/0/1", "amode": "trunk", "bmode": "trunk", "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.5, "putil": 33.6, "vlans": [1], "note": null}, {"source": "ap-attic", "target": "edge1", "alab": "eth0", "blab": "e1/0/2", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 4.4, "putil": 33.1, "vlans": null, "note": null}, {"source": "ap-den", "target": "edge1", "alab": "eth0", "blab": "e1/0/3", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 9.4, "putil": 33.9, "vlans": null, "note": null}, {"source": "ap-garage", "target": "edge1", "alab": "eth0", "blab": "e1/0/4", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 10.3, "putil": 33.5, "vlans": null, "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/4", "blab": "vmnic1", "amode": null, "bmode": null, "cls": "vspherehint", "sw": 7.4, "speed": "10G", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "edge1", "target": "unmanaged@edge1:e1/0/8", "alab": "e1/0/8", "blab": "", "amode": "access", "bmode": null, "cls": "fdbinference", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "fw1", "target": "hyp1", "alab": "vm", "blab": "", "amode": null, "bmode": null, "cls": "virtualized", "sw": 2.5, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "internet", "alab": "WAN", "blab": "", "amode": null, "bmode": null, "cls": "wan", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "console", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "edge1", "target": "nas1", "alab": "e1/0/10", "blab": "lan1", "amode": "access", "bmode": null, "cls": "fdbhost", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [20], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "pi-hole", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "printer", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "shelly-plug", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "tv-basement", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}], "vlans": [{"vid": 1, "name": "mgmt"}, {"vid": 20, "name": "servers"}, {"vid": 30, "name": "iot"}]};
 const svg = d3.select("#topo");
 let W, H;
 ({ width: W, height: H } = svg.node().getBoundingClientRect());
@@ -1024,12 +1036,18 @@ function renderChips() {
   if (state.load === "peak" && state.view !== "load")
     chips.append(chip("peak", () => set({ load: "now" })));
 }
+// filter chips carry their state as .on + aria-pressed (see _style.html)
+function setChip(id, on) {
+  const el = document.getElementById(id);
+  el.classList.toggle("on", on);
+  el.setAttribute("aria-pressed", String(on));
+}
 function applyControls() {
-  document.getElementById("hideoff").checked = state.hideoff;
-  document.getElementById("coreonly").checked = state.coreonly;
-  document.getElementById("hosts").checked = state.hosts;
-  document.getElementById("unmhosts").checked = state.unmhosts;
-  document.getElementById("tierbox").checked = state.layout === "tiers";
+  setChip("hideoff", state.hideoff);
+  setChip("coreonly", state.coreonly);
+  setChip("hosts", state.hosts);
+  setChip("unmhosts", state.unmhosts);
+  setChip("tierbox", state.layout === "tiers");
   document.getElementById("view-" + state.view).checked = true;
   document.getElementById("loadmode").value = state.load;
   vlansel.value = state.vlan == null ? "" : String(state.vlan);
@@ -1047,7 +1065,7 @@ function render() {
 }
 
 ["hideoff", "coreonly", "hosts", "unmhosts"].forEach(id => {
-  document.getElementById(id).addEventListener("change", e => set({ [id]: e.target.checked }));
+  document.getElementById(id).addEventListener("click", () => set({ [id]: !state[id] }));
 });
 document.querySelectorAll('input[name="view"]').forEach(r =>
     r.addEventListener("change", () => set({ view: r.value })));
@@ -1060,8 +1078,8 @@ document.getElementById("fitbtn").addEventListener("click", () => fit(true));
 
 // switching layout re-seeds node positions, pins, and forces — a reload with
 // the state in the URL (or, in a snapshot, the hash) is the honest re-init
-document.getElementById("tierbox").addEventListener("change", e => {
-  state.layout = e.target.checked ? "tiers" : "free";
+document.getElementById("tierbox").addEventListener("click", () => {
+  state.layout = state.layout === "tiers" ? "free" : "tiers";
   if (SNAPSHOT) {
     location.hash = buildParams().toString();  // whole state survives the toggle
     location.reload();
@@ -1126,7 +1144,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
 });
 </script>
 
-<h2 id="devices">Devices (15)</h2>
+<h2 id="devices">Devices (16)</h2>
 
 <section class="dev" id="dev-fw1">
   <div class="card firewall" style="max-width: 560px">
@@ -1564,6 +1582,15 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
     </tr>
     
     <tr>
+      <td class="mono">vmk1</td>
+      <td><span class="dot up"></span>up</td>
+      <td class="muted">-</td>
+      <td class="mono">-</td>
+      <td class="mono muted">02:d3:00:00:02:57</td>
+      <td class="muted"></td>
+    </tr>
+    
+    <tr>
       <td class="mono">vmnic0</td>
       <td><span class="dot up"></span>up</td>
       <td class="muted">-</td>
@@ -1604,7 +1631,16 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
       <td><span class="dot up"></span>up</td>
       <td class="muted">-</td>
       <td class="mono">-</td>
-      <td class="mono muted">02:d3:00:00:02:65</td>
+      <td class="mono muted">02:d3:00:00:02:6c</td>
+      <td class="muted"></td>
+    </tr>
+    
+    <tr>
+      <td class="mono">vmk1</td>
+      <td><span class="dot up"></span>up</td>
+      <td class="muted">-</td>
+      <td class="mono">-</td>
+      <td class="mono muted">02:d3:00:00:02:73</td>
       <td class="muted"></td>
     </tr>
     
@@ -1613,7 +1649,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
       <td><span class="dot up"></span>up</td>
       <td class="muted">-</td>
       <td class="mono">10G</td>
-      <td class="mono muted">02:d3:00:00:02:57</td>
+      <td class="mono muted">02:d3:00:00:02:5e</td>
       <td class="muted"></td>
     </tr>
     
@@ -1622,7 +1658,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
       <td><span class="dot down"></span>down</td>
       <td class="muted">-</td>
       <td class="mono">10G</td>
-      <td class="mono muted">02:d3:00:00:02:5e</td>
+      <td class="mono muted">02:d3:00:00:02:65</td>
       <td class="muted"></td>
     </tr>
     
@@ -1649,7 +1685,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
       <td><span class="dot up"></span>up</td>
       <td class="muted">-</td>
       <td class="mono">2.5G</td>
-      <td class="mono muted">02:d3:00:00:02:6c</td>
+      <td class="mono muted">02:d3:00:00:02:8f</td>
       <td class="muted">uplink</td>
     </tr>
     
@@ -1676,7 +1712,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
       <td><span class="dot up"></span>up</td>
       <td class="muted">-</td>
       <td class="mono">2.5G</td>
-      <td class="mono muted">02:d3:00:00:02:73</td>
+      <td class="mono muted">02:d3:00:00:02:96</td>
       <td class="muted">uplink</td>
     </tr>
     
@@ -1703,7 +1739,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
       <td><span class="dot up"></span>up</td>
       <td class="muted">-</td>
       <td class="mono">2.5G</td>
-      <td class="mono muted">02:d3:00:00:02:7a</td>
+      <td class="mono muted">02:d3:00:00:02:9d</td>
       <td class="muted">uplink</td>
     </tr>
     
@@ -1719,6 +1755,51 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
     <div class="sub">unmanaged-switch · ~5 MACs behind edge1 e1/0/8</div>
     <div class="sub"></div>
     <div class="sub mono"></div>
+  </div>
+  
+  
+</section>
+
+<section class="dev" id="dev-nas1">
+  <div class="card host" style="max-width: 560px">
+    <div class="name"><span class="dot up"></span>nas1</div>
+    <div class="sub">host · BoxCo NS-424</div>
+    <div class="sub">nasos 5.2</div>
+    <div class="sub mono">192.0.2.21</div>
+  </div>
+  
+  <div class="scroll" style="margin-top: 0.5rem">
+  <table>
+    <tr><th>Port</th><th>Oper</th><th>Admin</th><th>Speed</th><th>MAC</th><th>Description</th></tr>
+    
+    <tr>
+      <td class="mono">lan1</td>
+      <td><span class="dot up"></span>up</td>
+      <td class="muted">-</td>
+      <td class="mono">1G</td>
+      <td class="mono muted">02:d3:00:00:02:7a</td>
+      <td class="muted"></td>
+    </tr>
+    
+    <tr>
+      <td class="mono">lan2</td>
+      <td><span class="dot up"></span>up</td>
+      <td class="muted">-</td>
+      <td class="mono">10G</td>
+      <td class="mono muted">02:d3:00:00:02:81</td>
+      <td class="muted"></td>
+    </tr>
+    
+    <tr>
+      <td class="mono">lan3</td>
+      <td><span class="dot up"></span>up</td>
+      <td class="muted">-</td>
+      <td class="mono">10G</td>
+      <td class="mono muted">02:d3:00:00:02:88</td>
+      <td class="muted"></td>
+    </tr>
+    
+  </table>
   </div>
   
   
@@ -1949,7 +2030,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
 </table>
 </div>
 
-<h2>VLANs (4)</h2>
+<h2>VLANs (5)</h2>
 <div class="scroll">
 <table>
   <tr><th>VID</th><th>Name</th><th>Devices carrying</th></tr>
@@ -1966,10 +2047,13 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr><td class="mono">40</td><td>wifi</td>
       <td class="mono">0</td></tr>
   
+  <tr><td class="mono">103</td><td>iscsi</td>
+      <td class="mono">0</td></tr>
+  
 </table>
 </div>
 
-<h2>Subnets (4 · 13 IPAM addresses at generation)</h2>
+<h2>Subnets (5 · 13 IPAM addresses at generation)</h2>
 <div class="scroll">
 <table>
   <tr><th>CIDR</th><th>Description</th><th>VLAN</th><th>Source</th></tr>
@@ -1979,6 +2063,9 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   
   <tr><td class="mono">198.51.100.0/24</td><td>servers</td>
       <td class="mono">20</td><td class="muted">phpipam</td></tr>
+  
+  <tr><td class="mono">2001:db8:0:103::/64</td><td>iscsi storage</td>
+      <td class="mono">103</td><td class="muted">phpipam</td></tr>
   
   <tr><td class="mono">2001:db8:0:20::/64</td><td>servers v6</td>
       <td class="mono">20</td><td class="muted">phpipam</td></tr>
@@ -1997,7 +2084,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>console</td>
     <td class="mono">203.0.113.61</td>
-    <td class="mono muted">02:d3:00:00:02:88</td>
+    <td class="mono muted">02:d3:00:00:02:ab</td>
     <td>unmanaged@edge1:e1/0/8</td>
     <td class="mono">?</td>
     <td class="mono">-</td>
@@ -2006,7 +2093,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>doorbell</td>
     <td class="mono">203.0.113.51</td>
-    <td class="mono muted">02:d3:00:00:02:f1</td>
+    <td class="mono muted">02:d3:00:00:03:14</td>
     <td>ap-garage</td>
     <td class="mono">IoT</td>
     <td class="mono">30</td>
@@ -2015,7 +2102,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>esp32-a1b2c3</td>
     <td class="mono">192.0.2.77</td>
-    <td class="mono muted">02:d3:00:00:02:f8</td>
+    <td class="mono muted">02:d3:00:00:03:1b</td>
     <td>-</td>
     <td class="mono">-</td>
     <td class="mono">-</td>
@@ -2024,7 +2111,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>lab-bench</td>
     <td class="mono">198.18.0.9</td>
-    <td class="mono muted">02:d3:00:00:02:ff</td>
+    <td class="mono muted">02:d3:00:00:03:22</td>
     <td>-</td>
     <td class="mono">-</td>
     <td class="mono">-</td>
@@ -2033,7 +2120,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>laptop-kay</td>
     <td class="mono">203.0.113.40</td>
-    <td class="mono muted">02:d3:00:00:02:d5</td>
+    <td class="mono muted">02:d3:00:00:02:f8</td>
     <td>ap-den</td>
     <td class="mono">HouseNet</td>
     <td class="mono">40</td>
@@ -2042,7 +2129,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>nas1</td>
     <td class="mono">192.0.2.21</td>
-    <td class="mono muted">02:d3:00:00:02:a4</td>
+    <td class="mono muted">02:d3:00:00:02:c7</td>
     <td>-</td>
     <td class="mono">-</td>
     <td class="mono">-</td>
@@ -2051,7 +2138,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>phone-sam</td>
     <td class="mono">203.0.113.41</td>
-    <td class="mono muted">02:d3:00:00:02:dc</td>
+    <td class="mono muted">02:d3:00:00:02:ff</td>
     <td>ap-den</td>
     <td class="mono">HouseNet</td>
     <td class="mono">40</td>
@@ -2060,7 +2147,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>pi-hole</td>
     <td class="mono">192.0.2.62</td>
-    <td class="mono muted">02:d3:00:00:02:96</td>
+    <td class="mono muted">02:d3:00:00:02:b9</td>
     <td>unmanaged@edge1:e1/0/8</td>
     <td class="mono">?</td>
     <td class="mono">-</td>
@@ -2069,7 +2156,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>printer</td>
     <td class="mono">192.0.2.61</td>
-    <td class="mono muted">02:d3:00:00:02:8f</td>
+    <td class="mono muted">02:d3:00:00:02:b2</td>
     <td>unmanaged@edge1:e1/0/8</td>
     <td class="mono">?</td>
     <td class="mono">-</td>
@@ -2078,7 +2165,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>shelly-plug</td>
     <td class="mono">203.0.113.62</td>
-    <td class="mono muted">02:d3:00:00:02:9d</td>
+    <td class="mono muted">02:d3:00:00:02:c0</td>
     <td>unmanaged@edge1:e1/0/8</td>
     <td class="mono">?</td>
     <td class="mono">-</td>
@@ -2087,7 +2174,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>tablet-liv</td>
     <td class="mono">203.0.113.42</td>
-    <td class="mono muted">02:d3:00:00:02:e3</td>
+    <td class="mono muted">02:d3:00:00:03:06</td>
     <td>ap-attic</td>
     <td class="mono">HouseNet</td>
     <td class="mono">40</td>
@@ -2096,7 +2183,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>thermostat</td>
     <td class="mono">203.0.113.50</td>
-    <td class="mono muted">02:d3:00:00:02:ea</td>
+    <td class="mono muted">02:d3:00:00:03:0d</td>
     <td>ap-garage</td>
     <td class="mono">IoT</td>
     <td class="mono">30</td>
@@ -2105,7 +2192,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   <tr>
     <td>tv-basement</td>
     <td class="mono">203.0.113.60</td>
-    <td class="mono muted">02:d3:00:00:02:81</td>
+    <td class="mono muted">02:d3:00:00:02:a4</td>
     <td>unmanaged@edge1:e1/0/8</td>
     <td class="mono">?</td>
     <td class="mono">-</td>
