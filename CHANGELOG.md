@@ -6,6 +6,20 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [0.11.1] — 2026-08-31
+
+### Fixed
+
+- phpIPAM prunes VLANs deleted from IPAM: the collector's own rows only,
+  guarded on a real listing, and never a VLAN a device still claims —
+  that one just loses its IPAM documentation. Previously a deleted VLAN
+  sat on /vlans (and everywhere else) forever.
+
+### Changed
+
+- The routed view carries a visible still-settling note with a link to
+  the issue tracker.
+
 ## [0.11.0] — 2026-08-31
 
 ### Added
