@@ -1671,7 +1671,7 @@ def _ox_version_text(client: httpx.Client, node: str, v: dict, num: int) -> str:
 # --- patchbay-held config history (#23): firewall config.xml pulled over the
 # device API by the opnsense collector, redacted before storage. These nodes
 # merge into the same /configs page and timeline as the Oxidized ones; the
-# snapshot deliberately embeds neither raw nor redacted firewall configs.
+# snapshot embeds the latest revision, scrubbed a second time on the way in.
 
 def _db_config_devices(conn: sqlite3.Connection) -> list[str]:
     return [r["device"] for r in conn.execute(

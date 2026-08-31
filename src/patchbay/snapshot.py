@@ -103,6 +103,15 @@ def generate(settings: Settings) -> str:
             "SELECT * FROM endpoints ORDER BY hostname IS NULL, hostname, mac")]
         gateways = [dict(r) for r in conn.execute("SELECT * FROM gateways ORDER BY name")]
         n_ipam = conn.execute("SELECT COUNT(*) FROM ipam_addresses").fetchone()[0]
+        # patchbay-held firewall history (#23): the latest revision per
+        # device. Stored text is already redacted at capture (secret tags +
+        # long-blob digests); scrub_config runs over it again below anyway —
+        # this file lands on cloud-synced storage, and two independent
+        # layers beat one.
+        fw_configs = [dict(r) for r in conn.execute(
+            "SELECT device, text FROM config_revisions cr "
+            "WHERE fetched_at = (SELECT MAX(fetched_at) FROM config_revisions "
+            "WHERE device = cr.device) ORDER BY device")]
     finally:
         conn.close()
 
@@ -121,11 +130,14 @@ def generate(settings: Settings) -> str:
             graphs_by_dev.setdefault(dev, []).append(
                 {"iface": iface, "uri": _data_uri(*got)})
 
-    # latest configs via Oxidized, scrubbed; an unreachable Oxidized means a
-    # snapshot without configs, never no snapshot. Firewall config history
-    # (config_revisions, #23) is deliberately NOT embedded — even redacted,
-    # that class of config stays off cloud-synced storage.
+    # latest configs: patchbay-held firewall revisions first, then Oxidized,
+    # all scrubbed; an unreachable Oxidized means a snapshot without its
+    # configs, never no snapshot.
     configs: list[dict] = []
+    for fw in fw_configs:
+        text, redacted = scrub_config(fw["text"])
+        configs.append({"name": fw["device"], "text": text,
+                        "redacted": redacted, "lines": text.count("\n") + 1})
     if settings.oxidized_url:
         try:
             with web._ox_client(settings) as client:

@@ -130,3 +130,36 @@ def test_daily_snapshot_fires_once(clean_env, conn):
     assert snap.due_today(conn, load_settings()) is False  # not yet today
     clean_env.setenv("PATCHBAY_SNAPSHOT_AT", "garbage")
     assert snap.due_today(conn, load_settings()) is False  # malformed = off
+
+
+def test_snapshot_embeds_firewall_history_scrubbed(clean_env, tmp_path):
+    # the latest patchbay-held firewall revision rides along, and the
+    # snapshot's own scrubber runs over the already-redacted text anyway
+    from tests.test_web import seed
+
+    seed(str(tmp_path / "test.db"))
+    import sqlite3
+
+    from patchbay import db as pdb
+
+    conn = sqlite3.connect(str(tmp_path / "test.db"))
+    conn.row_factory = sqlite3.Row
+    pdb.init(conn)
+    old = "<opnsense><hostname>fw1</hostname></opnsense>"
+    new = ("<opnsense><hostname>fw1</hostname>"
+           "<community>leftover-snmp-secret</community></opnsense>")
+    conn.execute("INSERT INTO config_revisions (device, fetched_at, sha, message, "
+                 "author, text) VALUES ('fw1', 1000, 'a', 'older', NULL, ?)", (old,))
+    conn.execute("INSERT INTO config_revisions (device, fetched_at, sha, message, "
+                 "author, text) VALUES ('fw1', 2000, 'b', 'newer', NULL, ?)", (new,))
+    conn.commit()
+    conn.close()
+
+    from patchbay.config import load_settings
+    from patchbay.snapshot import write_snapshot
+
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    t = write_snapshot(load_settings()).read_text()
+    assert "<h2>Device configs (redacted)</h2>" in t
+    assert "hostname&gt;fw1" in t                  # the latest revision is in
+    assert "leftover-snmp-secret" not in t         # second scrub layer caught it
