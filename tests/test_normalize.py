@@ -751,3 +751,40 @@ def test_merge_keeps_untranslated_model_strings(conn):
     dev(conn, "ap2", "unifi", last_seen=NOW, vendor="Ubiquiti")
     normalize(conn)
     assert get_dev(conn, "ap2")["model"] == "U7XYZ9"
+
+
+def test_rename_rewrites_routes_roles_and_config_history(conn):
+    # a rename that misses these silently breaks WAN discovery, mirror
+    # labels, and /configs for the device
+    dev(conn, "fw1.example.lan", "opnsense", last_seen=NOW, role="firewall")
+    dev(conn, "fw1", "librenms", last_seen=NOW, role="firewall")
+    conn.execute("INSERT INTO routes (device, destination, gateway, proto, source) "
+                 "VALUES ('fw1.example.lan', '0.0.0.0/0', '203.0.113.1', 'ipv4', 'opnsense')")
+    conn.execute("INSERT INTO port_roles VALUES "
+                 "('fw1.example.lan', 'igc3', 'monitor-dst', 'span', 'config')")
+    conn.execute("INSERT INTO config_revisions (device, fetched_at, sha, text) "
+                 "VALUES ('fw1.example.lan', 1000, 'a', '<x/>')")
+    normalize(conn)
+    assert conn.execute("SELECT device FROM routes").fetchone()[0] == "fw1"
+    assert conn.execute("SELECT device FROM port_roles").fetchone()[0] == "fw1"
+    assert conn.execute("SELECT device FROM config_revisions").fetchone()[0] == "fw1"
+
+
+def test_expired_unmanaged_switch_takes_its_endpoints_along(conn):
+    # ghost endpoints on a TTL-expired inferred switch pointed at a device
+    # that no longer exists and inflated every count
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    conn.execute("INSERT INTO devices (name, role, source, last_seen) VALUES "
+                 "('unmanaged@sw1:1/0/8', 'unmanaged-switch', 'inference', ?)",
+                 (NOW - 3 * 3600,))
+    conn.execute("INSERT INTO endpoints (mac, device, interface, source, last_seen) "
+                 "VALUES ('02:00:00:00:0e:01', 'unmanaged@sw1:1/0/8', 'port', 'fdb', ?)",
+                 (NOW - 3 * 3600,))
+    # sw1 is not quiet: give it live fdb so the expiry path runs
+    conn.execute("INSERT INTO fdb (device, interface, mac, source) VALUES "
+                 "('sw1', '1/0/1', '02:00:00:00:0e:02', 'librenms')")
+    normalize(conn)
+    assert conn.execute("SELECT COUNT(*) FROM devices WHERE name LIKE 'unmanaged@%'"
+                        ).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM endpoints WHERE device LIKE 'unmanaged@%'"
+                        ).fetchone()[0] == 0

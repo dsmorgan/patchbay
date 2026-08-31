@@ -168,6 +168,14 @@ def _rename_refs(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE rate_history SET device=? WHERE device=?", (canon, alias))
         conn.execute("UPDATE OR IGNORE positions SET name=? WHERE name=?", (canon, alias))
         conn.execute("DELETE FROM positions WHERE name=?", (alias,))
+        # routes feed the routed view's WAN lookup, port_roles the mirror
+        # labels, config_revisions the /configs history — a rename that
+        # missed any of them silently broke that feature for the device
+        conn.execute("UPDATE OR IGNORE routes SET device=? WHERE device=?", (canon, alias))
+        conn.execute("DELETE FROM routes WHERE device=?", (alias,))
+        conn.execute("UPDATE OR IGNORE port_roles SET device=? WHERE device=?", (canon, alias))
+        conn.execute("DELETE FROM port_roles WHERE device=?", (alias,))
+        conn.execute("UPDATE config_revisions SET device=? WHERE device=?", (canon, alias))
     # renames can flip a row out of upsert_link's sorted orientation, hiding
     # it from the UNIQUE constraint and from pair-keyed deletes — restore it.
     # A collision with an already-sorted twin merges timestamps (same rule
@@ -724,6 +732,9 @@ def _expire_stale_evidence(conn: sqlite3.Connection) -> int:
         conn.execute("DELETE FROM devices WHERE name = ?", (r["name"],))
         conn.execute("DELETE FROM links WHERE a_device = ? OR b_device = ?",
                      (r["name"], r["name"]))
+        # the ghost's placed endpoints too — the other retirement paths do
+        # this, and nothing re-places a MAC that's absent from fdb
+        conn.execute("DELETE FROM endpoints WHERE device = ?", (r["name"],))
         dropped += 1
     return dropped
 
