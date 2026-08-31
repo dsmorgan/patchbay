@@ -1,12 +1,14 @@
 # ADR-0002 — The routed view: the logical network
 
-*Status: draft (2026-08-29) · Issue: [#17](https://github.com/dsmorgan/patchbay/issues/17)*
+*Status: accepted (2026-08-31) · Issue: [#17](https://github.com/dsmorgan/patchbay/issues/17)*
 
 ![Design mock: the rails layout on a 15-network model](0002-routed-view-mock.png)
 
 *The mock above is generated from [0002-routed-view-mock.html](0002-routed-view-mock.html)
-against a 15-network model (10 routed, 5 not). It settles the visual design;
-polish waits for a render against real site data.*
+against a 15-network model (10 routed, 5 not). It settled the visual design;
+the shipped view was then polished against a real 8-network site render
+(0.10.0), which drove the rail-participation filter and the internet-uplink
+discovery below.*
 
 ## Context
 
@@ -85,7 +87,13 @@ in this tier), Networks (the rails).
   the rail's color (same interface = same color). Pins are ordered
   left-to-right with the rails so fan lines never cross each other. The
   default route is a dashed line from router to cloud carrying gateway
-  health. Gateway addresses (`.1`) show on hover, not as labels.
+  health. Gateway addresses (`.1`) show on hover, not as labels. The
+  **internet uplink rail** is discovered, not declared: the default
+  route's exit interface resolves to its VLAN's rail (untagged membership
+  first, else the rail holding the next-hop address); that rail draws in
+  the ok color, the drop line names it ("via VLAN 299"), and hovering
+  either lights both. A site whose WAN lands on a dedicated appliance
+  port resolves to no rail and keeps the plain cloud-to-router drawing.
 - **Routed vs unrouted is a class, not a color**: routed rails all take
   the accent; unrouted rails are muted grey with no fan line, and they
   intermix with routed rails wherever ordering puts them. A network no
@@ -97,6 +105,12 @@ in this tier), Networks (the rails).
   top dot — name + VLAN id, staggered on two rows, long names truncated
   with an ellipsis so tags never stretch. CIDRs live in the hover and on
   the per-network page.
+- **A rail must participate**: a network draws when a router routes it,
+  a host box has a leg on it, or single-homed hosts count against it.
+  IPAM exports carry supernets, aggregates, and VLANs no device claims;
+  those stay on `/vlans`, where documentation-vs-reality is the point.
+  (Added after the real-site render: 16 rails collapsed to the 8 that
+  exist.)
 - **Rail ordering**: default is VLAN-number order left to right; the
   layout then reorders to minimize total attachment-line length (pull each
   multi-homed host's networks adjacent — a greedy pass is enough at
@@ -167,10 +181,10 @@ Load/Protocol/Evidence may land as follow-ups behind the same control.
 
 ## Consequences
 
-- A second map include (`_routedmap.html`) and one builder in `web.py`;
-  the layout engine (ordering + row assignment so no two attachment lines
-  share a y) is server-side and pure, so it unit-tests without a browser.
-  The physical map is untouched.
+- A second map include (`_routedmap.html`) and a pure server-side module
+  (`routed.py`): builder plus layout engine (ordering + row assignment so
+  no two attachment lines share a y), so the layout unit-tests without a
+  browser. The physical map is untouched.
 - The demo network gains multi-homed hosts (a NAS with legs in three
   networks, hypervisors with storage legs) so the view's hardest cases —
   rim dots, pass-under, both-side lines — are visible on the public demo
@@ -178,5 +192,7 @@ Load/Protocol/Evidence may land as follow-ups behind the same control.
 - `/vlans` keeps its table; the routed view is its picture. Deep links go
   both ways (a VLAN tag links to `/vlans#v<vid>`, the vlans row gains a
   "show on routed map" link), same pattern the physical map set.
-- Finishing the design needs a render against real site data — the mock's
-  15-network model settles the vocabulary, not the polish.
+- The real-site render happened (0.10.0 on an 8-network site) and its
+  findings — documentation-only rails, an undiscovered WAN, three pill
+  heights in the shared toolbar grammar — are folded in above. Follow-up
+  modes (Load / Protocol / Evidence) remain open behind Decision 3.
