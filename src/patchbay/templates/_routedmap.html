@@ -24,6 +24,8 @@
   #routed .bandline { stroke: var(--grid); stroke-dasharray: 2 6; }
   #routed .rail { stroke: var(--accent); stroke-width: 2; }
   #routed .rail.unrouted { stroke: var(--muted); opacity: 0.75; }
+  #routed .rail.wan { stroke: var(--ok); }
+  #routed .raildot.wan { fill: var(--ok); }
   #routed .fan { stroke: var(--accent); stroke-width: 1.6; fill: none; }
   #routed .defroute { stroke: var(--ok); stroke-width: 1.6;
                       stroke-dasharray: 6 4; fill: none; }
@@ -64,6 +66,7 @@
 <div class="rlegend" id="rlegend">
   <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--accent)" stroke-width="2"/></svg> routed network</span>
   <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--muted)" stroke-width="2" opacity="0.75"/></svg> not routed</span>
+  <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ok)" stroke-width="2"/></svg> internet uplink</span>
   <span class="item"><svg width="26" height="12"><rect x="0" y="0" width="26" height="12" fill="var(--hover)" stroke="var(--line)"/></svg> VLAN label</span>
   <span class="item"><svg width="14" height="14"><circle cx="7" cy="7" r="3.5" fill="var(--accent)" stroke="var(--card)" stroke-width="1.5"/></svg> attached at the rim</span>
   <span class="item"><svg width="30" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="var(--muted)" stroke-width="1.2"/><circle cx="26" cy="5" r="3" fill="var(--accent)"/></svg> attached beyond the box</span>
@@ -157,6 +160,15 @@ if (router) {
              cloud, `${gw.name} ${gw.status || ""}`.trim());
   if (rg.default)
     el("line", { x1: midX, y1: 78, x2: midX, y2: 128, class: "defroute" });
+  // discovered WAN rail: the default route's exit VLAN. Say it on the
+  // drop line and light the cloud with that rail on hover.
+  const wanRail = rg.default && rg.default.rail
+    ? rails.find(r => r.key === rg.default.rail) : null;
+  if (wanRail) {
+    el("text", { x: midX + 8, y: 110, class: "gwlabel" }, cloud,
+       wanRail.vid != null ? `via VLAN ${wanRail.vid}` : `via ${wanRail.name}`);
+    track(cloud, [wanRail.key]); wireHover(cloud, [wanRail.key]);
+  }
   if (rg.default && rg.default.gateway) title(cloud, `default via ${rg.default.gateway}`);
 }
 
@@ -187,11 +199,13 @@ if (router) {
 }
 rails.forEach((r, i) => {
   const x = railX(i);
-  const cls = "rail" + (r.routed ? "" : " unrouted");
+  const cls = "rail" + (r.routed ? "" : " unrouted") + (r.wan ? " wan" : "");
   const line = el("line", { x1: x, y1: G.railTop, x2: x, y2: H - 20, class: cls });
   const dot = el("circle", { cx: x, cy: G.railTop, r: 3.4,
-                             class: "raildot" + (r.routed ? "" : " unrouted") });
+                             class: "raildot" + (r.routed ? "" : " unrouted")
+                                    + (r.wan ? " wan" : "") });
   const tip = [`${r.name || "?"}${r.vid != null ? " · VLAN " + r.vid : ""}`,
+               r.wan ? `internet uplink (${rg.wan_names[0] || "wan"})` : "",
                ...(r.subnets.length ? r.subnets : ["no subnet recorded"]),
                r.gateway ? `gateway ${r.gateway}` : (r.routed ? "" : "not routed"),
                `sources: ${r.sources.join(", ")}`].filter(Boolean).join("\n");

@@ -160,4 +160,33 @@ def test_default_route_skips_discard_flags(conn):
     conn.execute("INSERT INTO routes (device, destination, gateway, proto, flags, source) "
                  "VALUES ('fw1', '::/0', 'fe80::1', 'ipv6', 'UGB', 'test')")
     g = build_routed_graph(conn, _S())
-    assert g["default"] == {"device": "fw1", "gateway": "203.0.113.1"}
+    assert g["default"]["device"] == "fw1"
+    assert g["default"]["gateway"] == "203.0.113.1"
+
+
+def test_wan_rail_from_default_route_exit_vlan(conn):
+    # the default route's exit interface is an untagged member of VLAN 299:
+    # that rail is the internet uplink, and it draws even with nothing on it
+    seed_site(conn)
+    vlan(conn, 299, "xternal")
+    conn.execute("INSERT INTO routes (device, destination, gateway, interface, "
+                 "proto, flags, source) VALUES "
+                 "('fw1', '0.0.0.0/0', '203.0.113.1', 'wan0', 'ipv4', 'UGS', 'test')")
+    conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                 "VALUES ('fw1', 'wan0', 299, 0, 'test')")
+    g = build_routed_graph(conn, _S())
+    assert g["default"]["rail"] == "v299"
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v299"]["wan"] is True
+    assert not by["v1"]["wan"]
+
+
+def test_wan_rail_falls_back_to_gateway_address(conn):
+    # no VLAN membership on the exit interface, but the next hop lives in a
+    # known rail's subnet — good enough to name the way out
+    seed_site(conn)
+    conn.execute("INSERT INTO routes (device, destination, gateway, interface, "
+                 "proto, flags, source) VALUES "
+                 "('fw1', '0.0.0.0/0', '198.51.100.254', 'wan0', 'ipv4', 'UGS', 'test')")
+    g = build_routed_graph(conn, _S())
+    assert g["default"]["rail"] == "v20"

@@ -138,14 +138,32 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # default route + WAN health
     default = None
     for r in conn.execute(
-            "SELECT device, gateway, flags FROM routes WHERE destination IN "
-            "('0.0.0.0/0', '::/0') ORDER BY proto"):
+            "SELECT device, gateway, interface, flags FROM routes WHERE "
+            "destination IN ('0.0.0.0/0', '::/0') ORDER BY proto"):
         if any(f in (r["flags"] or "") for f in ("B", "R")):
             continue
         if default is None:
-            default = {"device": r["device"], "gateway": r["gateway"]}
+            default = {"device": r["device"], "gateway": r["gateway"],
+                       "interface": r["interface"], "rail": None}
     gws = [dict(r) for r in conn.execute(
         "SELECT name, address, status, loss, delay FROM gateways")]
+
+    # which rail the default route leaves on: the exit interface's VLAN
+    # membership (untagged first), else the rail holding the next-hop
+    # address. An appliance whose WAN port never touches the switch fabric
+    # resolves to neither — the cloud then attaches straight to the router,
+    # which is also the truth.
+    wan_rail = None
+    if default:
+        row = conn.execute(
+            "SELECT vid FROM port_vlans WHERE device = ? AND interface = ? "
+            "ORDER BY tagged, vid LIMIT 1",
+            (default["device"], default["interface"] or "")).fetchone()
+        if row is not None and f"v{row['vid']}" in rails.rails:
+            wan_rail = f"v{row['vid']}"
+        elif default["gateway"]:
+            wan_rail = rails.rail_of_ip(default["gateway"])
+        default["rail"] = wan_rail
 
     # hosts: multi-homed devices draw once; single-homed collapse to a count.
     # Routers live in the routing tier, never as host boxes.
@@ -179,6 +197,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     attached = {l["rail"] for h in hosts for l in h["legs"]}
     live = {k: r for k, r in rails.rails.items()
             if r["routed"] or single.get(k, 0) or k in attached}
+    if wan_rail and wan_rail not in live:   # the way out always draws
+        live[wan_rail] = rails.rails[wan_rail]
 
     order = order_rails(live, hosts, declared=getattr(
         settings, "routed_order", ()) or ())
@@ -194,7 +214,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     for k in order:
         r = live[k]
         out_rails.append({**r, "sources": sorted(r["sources"]),
-                          "hosts": single.get(k, 0)})
+                          "hosts": single.get(k, 0), "wan": k == wan_rail})
     return {
         "rails": out_rails,
         "routers": routers,

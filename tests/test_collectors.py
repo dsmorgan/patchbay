@@ -482,7 +482,12 @@ class _OnsClient:
                 if "get_arp" in url or "getArp" in url:
                     return []
                 if "get_routes" in url:
-                    return []
+                    return [
+                        {"destination": "default", "gateway": "203.0.113.1",
+                         "netif": "igc0", "proto": "ipv4", "flags": "UGS"},
+                        {"destination": "198.51.100.0/24", "gateway": "link#2",
+                         "netif": "igc0.20", "proto": "ipv4", "flags": "U"},
+                    ]
                 if "searchLease" in url:
                     return {"rows": []}
                 return None
@@ -519,6 +524,19 @@ def test_opnsense_admin_status_and_speed(conn, clean_env, monkeypatch):
         "WHERE d.name='fw1' AND i.name='igc0'").fetchone()
     assert iface["admin_status"] == "up"
     assert iface["speed_bps"] == 1_000_000_000
+
+
+def test_opnsense_default_route_normalized(conn, clean_env, monkeypatch):
+    """'default' is stored as 0.0.0.0/0 — it names the WAN exit interface
+    for the routed view; reachability consumers skip /0 themselves."""
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(httpx, "Client", _OnsClient)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    row = conn.execute(
+        "SELECT gateway, interface FROM routes WHERE device='fw1' "
+        "AND destination='0.0.0.0/0'").fetchone()
+    assert row is not None
+    assert row["gateway"] == "203.0.113.1" and row["interface"] == "igc0"
 
 
 def test_opnsense_vlan_tag_written_to_port_vlans(conn, clean_env, monkeypatch):

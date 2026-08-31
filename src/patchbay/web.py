@@ -963,10 +963,14 @@ def vlans(request: Request):
             if any(f in (r["flags"] or "") for f in "BR"):
                 continue
             try:
-                route_nets.append((ipaddress.ip_network(r["destination"], strict=False),
-                                   r["gateway"], r["interface"]))
+                rn = ipaddress.ip_network(r["destination"], strict=False)
             except ValueError:
-                pass
+                continue
+            if rn.prefixlen == 0:
+                # a default route covers everything; it can't say a subnet
+                # is *reachable*
+                continue
+            route_nets.append((rn, r["gateway"], r["interface"]))
 
         def routed_by(cidr: str) -> str | None:
             try:

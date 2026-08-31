@@ -236,8 +236,11 @@ class OpnsenseCollector:
                     dest, proto = rt.get("destination"), rt.get("proto")
                     if not dest or not proto:
                         continue
-                    if dest == "default":  # a default route covers everything;
-                        continue           # it can't say a subnet is *reachable*
+                    if dest == "default":
+                        # a default route can't say a subnet is *reachable*
+                        # (consumers skip /0 destinations), but it names the
+                        # WAN exit interface — the routed view's internet rail
+                        dest = "0.0.0.0/0" if proto == "ipv4" else "::/0"
                     conn.execute(
                         "INSERT OR REPLACE INTO routes (device, destination, gateway, "
                         "interface, proto, flags, source, last_seen) "
