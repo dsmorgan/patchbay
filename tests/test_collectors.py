@@ -987,3 +987,18 @@ def test_opnsense_collect_stores_config_revision(conn, clean_env, monkeypatch):
     # raw config.xml must never land in raw_payloads
     for r in conn.execute("SELECT payload FROM raw_payloads"):
         assert "FAKEKEYB64" not in r["payload"]
+
+
+def test_prepare_config_redacts_bare_key_and_unknown_long_blobs():
+    # an ACME account key ships under a bare <key>; unknown plugins invent
+    # more names, so any long base64 run is redacted by shape too
+    from patchbay.collectors.opnsense import prepare_config
+    blob = "QUJD" * 100  # 400 chars of base64-looking content
+    raw = _CFG_XML.replace(
+        "<filter>",
+        f"<acme><account><key>{blob}</key></account></acme>"
+        f"<mystery><widget>{blob}</widget></mystery><filter>")
+    text, _, _ = prepare_config(raw)
+    assert blob not in text
+    assert text.count("redacted:") >= 6
+    assert "allow lan" in text          # short real content untouched

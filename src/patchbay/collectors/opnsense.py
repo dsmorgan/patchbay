@@ -27,9 +27,14 @@ from . import register
 # Overzealous by design, same stance as the snapshot scrubber.
 _SECRET_TAGS = ("prv", "crt", "password", "pass", "secret", "psk",
                 "pre-shared-key", "private-key", "privatekey", "privkey",
-                "sharedkey", "authorizedkeys")
+                "sharedkey", "authorizedkeys", "key")
 _SECRET_RE = re.compile(
     r"<(" + "|".join(re.escape(t) for t in _SECRET_TAGS) + r")>([^<]+)</\1>")
+# catch-all for key material hiding under tags the list doesn't know: any
+# element whose content is one long base64-ish run gets the same treatment
+# (a real ACME account key surfaced under a bare <key> before this existed —
+# unknown plugins will invent more names, so shape catches what names miss)
+_LONG_BLOB_RE = re.compile(r"<([a-zA-Z0-9_-]+)>([A-Za-z0-9+/=\s]{200,})</\1>")
 # the <revision> block updates on every save — its description/username are
 # the change's metadata (lifted onto the revision row); its timestamp churn
 # must not read as a config change or clutter the diffs
@@ -56,6 +61,7 @@ def prepare_config(raw: str) -> tuple[str, str | None, str | None]:
         auth = (auth_m.group(1).strip() or None) if auth_m else None
     text = _REVISION_RE.sub("", raw)
     text = _SECRET_RE.sub(_digest, text)
+    text = _LONG_BLOB_RE.sub(_digest, text)
     return text, msg, auth
 
 
