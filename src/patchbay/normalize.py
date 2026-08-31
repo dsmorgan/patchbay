@@ -84,6 +84,11 @@ def _merge_group(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
                 key=lambda r: r["last_seen"] or 0, default=None)
     if fresh is not None:
         merged["status"] = fresh["status"]
+    # temperature likewise: freshest reporter wins; a row without one has
+    # no opinion, and the write below keeps the old value when nobody does
+    fresh_t = max((r for r in [primary, *rest] if r["temperature"] is not None),
+                  key=lambda r: r["last_seen"] or 0, default=None)
+    merged["temperature"] = fresh_t["temperature"] if fresh_t is not None else None
     # role: prefer any network role over 'vm'/None
     for r in rest:
         if (merged.get("role") not in NETWORK_ROLES) and r["role"]:
@@ -113,10 +118,11 @@ def _merge_group(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
         conn.execute("DELETE FROM devices WHERE id=?", (r["id"],))
     conn.execute(
         "UPDATE devices SET name=?, mgmt_ip=?, vendor=?, model=?, os=?, role=?, "
-        "status=?, parent=?, serial=?, last_seen=? WHERE id=?",
+        "status=?, parent=?, serial=?, "
+        "temperature=COALESCE(?, temperature), last_seen=? WHERE id=?",
         (canon, merged.get("mgmt_ip"), merged.get("vendor"), merged.get("model"),
          merged.get("os"), merged.get("role"), merged.get("status"),
-         merged.get("parent"), merged.get("serial"),
+         merged.get("parent"), merged.get("serial"), merged.get("temperature"),
          max((r["last_seen"] or 0) for r in rows), primary["id"]),
     )
     for r in [primary, *rest]:

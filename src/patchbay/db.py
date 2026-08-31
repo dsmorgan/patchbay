@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS devices (
     status TEXT,               -- up | down | disabled | unknown
     parent TEXT,               -- e.g. the ESXi host a VM runs on
     serial TEXT,               -- chassis serial (LLDP alias evidence)
+    temperature REAL,          -- °C, device's own telemetry (liveness:
+                               -- written only while up, omitted when stale)
     source TEXT NOT NULL,      -- collector that owns this record
     last_seen REAL
 );
@@ -208,6 +210,8 @@ def init(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(devices)")}
     if "serial" not in cols:
         conn.execute("ALTER TABLE devices ADD COLUMN serial TEXT")
+    if "temperature" not in cols:  # #40: controller-reported thermals
+        conn.execute("ALTER TABLE devices ADD COLUMN temperature REAL")
     icols = {r[1] for r in conn.execute("PRAGMA table_info(interfaces)")}
     for col in ("in_bps", "out_bps"):
         if col not in icols:

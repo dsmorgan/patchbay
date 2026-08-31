@@ -594,6 +594,7 @@ _USW = {
     "type": "usw", "mac": "02:00:00:00:02:01",
     "name": "sw-access-01", "ip": "192.0.2.10",
     "model": "US-8-150W", "version": "6.5.59", "state": 1,
+    "general_temperature": 52, "has_temperature": True,
     "port_table": [
         {"port_idx": 1, "name": "Port 1", "up": True,  "enable": True, "speed": 1000},
         {"port_idx": 2, "name": "Port 2", "up": False, "enable": True, "speed": 0},
@@ -606,6 +607,7 @@ _UAP = {
     "type": "uap", "mac": "02:00:00:00:03:01",
     "name": "ap-floor1", "ip": "192.0.2.20",
     "model": "UAP-AC-PRO", "version": "6.3.4", "state": 1,
+    "general_temperature": 0, "has_temperature": False,
     "uplink": {
         "name": "eth0", "ifname": "eth0", "up": True, "speed": 1000,
         "uplink_device_name": "sw-access-01", "uplink_remote_port": 1,
@@ -1020,3 +1022,19 @@ def test_prepare_config_redacts_bare_key_and_unknown_long_blobs():
     assert blob not in text
     assert text.count("redacted:") >= 6
     assert "allow lan" in text          # short real content untouched
+
+
+def test_unifi_temperature_stored_when_sensed(conn, clean_env, monkeypatch):
+    """#40: general_temperature lands as a device fact — but only where
+    has_temperature says the sensor is real, and only while the device is
+    up (stale liveness is omitted, not written)."""
+    from patchbay.collectors.unifi import UnifiCollector, _temperature
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    t = {r["name"]: r["temperature"] for r in conn.execute(
+        "SELECT name, temperature FROM devices")}
+    assert t["sw-access-01"] == 52.0
+    assert t["ap-floor1"] is None            # has_temperature: false
+    # a down device's reading is never trusted
+    assert _temperature({"general_temperature": 47}) == 47.0
+    assert _temperature({"general_temperature": "junk"}) is None

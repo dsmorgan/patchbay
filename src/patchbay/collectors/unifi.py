@@ -35,6 +35,21 @@ MODEL_NAMES: dict[str, str] = {
 }
 
 
+def _temperature(d: dict) -> float | None:
+    """Controller-reported thermals (#40): `general_temperature` (°C) on
+    devices with sensors — hardware LibreNMS can't see, since UniFi gear
+    doesn't speak ENTITY-SENSOR MIB. `has_temperature: false` means the
+    field is a meaningless placeholder; a non-up device's reading is
+    stale, and stale liveness is omitted, not written."""
+    if d.get("has_temperature") is False:
+        return None
+    try:
+        t = d.get("general_temperature")
+        return float(t) if t is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 class UnifiCollector:
     name = NAME
 
@@ -75,6 +90,7 @@ class UnifiCollector:
                         model=MODEL_NAMES.get(d.get("model"), d.get("model")),
                         os=f"unifi {d.get('version', '')}".strip(), role="switch",
                         status=status,
+                        temperature=_temperature(d) if status == "up" else None,
                     )
                     if d.get("mac"):
                         sw_mac_to_name[d["mac"].lower()] = dev_name
@@ -118,6 +134,7 @@ class UnifiCollector:
                     model=MODEL_NAMES.get(d.get("model"), d.get("model")),
                     os=f"unifi {d.get('version', '')}".strip(), role="ap",
                     status=status,
+                    temperature=_temperature(d) if status == "up" else None,
                 )
                 uplink = d.get("uplink") or {}
                 iface_name = uplink.get("name") or uplink.get("ifname") or "eth0"

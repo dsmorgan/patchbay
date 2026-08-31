@@ -23,6 +23,12 @@ put.
   snapshot's own redactor on the way in.
 - `PATCHBAY_SNAPSHOT_AT` is editable on /ops like the other declarations,
   with inline help and an HH:MM parse warning.
+- UniFi device temperature ([#40](https://github.com/dsmorgan/patchbay/issues/40)):
+  the controller's `general_temperature` (hardware LibreNMS can't see —
+  UniFi gear doesn't speak ENTITY-SENSOR MIB) lands as a device fact on
+  the detail page. Only where `has_temperature` says the sensor is real,
+  and only while the device is up — stale liveness is omitted, not
+  written.
 
 ### Changed
 

@@ -70,6 +70,15 @@ def test_merge_freshest_status_wins(conn):
     assert get_dev(conn, "hyp1")["status"] == "up"
 
 
+def test_merge_temperature_survives_from_the_duplicate(conn):
+    # #40: the unifi row carries the reading; when it merges into a
+    # higher-priority row without one, the fact must not vanish
+    dev(conn, "sw1", "librenms", last_seen=NOW - 60, role="switch")
+    dev(conn, "sw1.example.lan", "unifi", last_seen=NOW, temperature=52.0)
+    normalize(conn)
+    assert get_dev(conn, "sw1")["temperature"] == 52.0
+
+
 def test_rename_rewrites_fdb(conn):
     # fdb rows keyed by a raw sysName used to survive the rename and poison
     # inference (phantom unmanaged switches, alias<->canonical self-links)
