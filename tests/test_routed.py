@@ -40,16 +40,20 @@ def vlan(c, vid, name):
 
 
 def seed_site(c):
-    """Two routed nets, one unrouted VLAN, a firewall, one multi-homed host."""
+    """Two routed nets, one unrouted VLAN, a firewall, one multi-homed host.
+    The unrouted iscsi VLAN has a storage leg on nas1 — an unattached rail
+    would be filtered out entirely."""
     vlan(c, 1, "mgmt"); vlan(c, 20, "servers"); vlan(c, 103, "iscsi")
     subnet(c, "192.0.2.0/24", vlan=1)
     subnet(c, "198.51.100.0/24", vlan=20)
+    subnet(c, "203.0.113.0/24", vlan=103)
     fw = dev(c, "fw1", role="firewall")
     iface(c, fw, "vmx0", ip="192.0.2.1", speed_bps=10_000_000_000)
     iface(c, fw, "vmx1", ip="198.51.100.1", speed_bps=10_000_000_000)
     nas = dev(c, "nas1")
     iface(c, nas, "eth0", ip="192.0.2.40", speed_bps=1_000_000_000)
     iface(c, nas, "eth1", ip="198.51.100.40", speed_bps=10_000_000_000)
+    iface(c, nas, "eth2", ip="203.0.113.40", speed_bps=1_000_000_000)
     web = dev(c, "web1")
     iface(c, web, "eth0", ip="198.51.100.50", speed_bps=1_000_000_000)
     return c
@@ -71,6 +75,8 @@ def test_dual_stack_vlan_is_one_rail(conn):
     vlan(conn, 20, "servers")
     subnet(conn, "198.51.100.0/24", vlan=20)
     subnet(conn, "2001:db8:20::/64", vlan=20)
+    d = dev(conn, "web1")
+    iface(conn, d, "eth0", ip="198.51.100.50")
     g = build_routed_graph(conn, _S())
     assert [r["key"] for r in g["rails"]] == ["v20"]
     assert len(g["rails"][0]["subnets"]) == 2
@@ -133,6 +139,18 @@ def test_rows_never_overlap():
     rows = assign_rows(hosts, pos)
     assert rows[0] != rows[1]
     assert len(rows) == 3
+
+
+def test_unattached_rails_are_filtered(conn):
+    # documentation-only networks stay on /vlans: an IPAM VLAN nothing
+    # claims, a supernet, and an aggregate all vanish from the rails; the
+    # unrouted iscsi VLAN survives on the strength of its nas1 leg
+    seed_site(conn)
+    vlan(conn, 4001, "dmz-on-paper")
+    subnet(conn, "10.0.0.0/8", descr="supernet")
+    subnet(conn, "2001:db8::/32", descr="aggregate")
+    g = build_routed_graph(conn, _S())
+    assert {r["key"] for r in g["rails"]} == {"v1", "v20", "v103"}
 
 
 def test_default_route_skips_discard_flags(conn):

@@ -171,7 +171,16 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         if key:
             single[key] += 1
 
-    order = order_rails(rails.rails, hosts, declared=getattr(
+    # a rail earns its place by participating: a router routes it, a drawn
+    # host has a leg on it, or single-homed hosts count against it. IPAM
+    # alone can't put a network on the map — supernets, aggregates, and
+    # VLANs nothing claims are /vlans material, where documentation vs
+    # reality is the point.
+    attached = {l["rail"] for h in hosts for l in h["legs"]}
+    live = {k: r for k, r in rails.rails.items()
+            if r["routed"] or single.get(k, 0) or k in attached}
+
+    order = order_rails(live, hosts, declared=getattr(
         settings, "routed_order", ()) or ())
     pos = {k: i for i, k in enumerate(order)}
     for h in hosts:
@@ -183,7 +192,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
 
     out_rails = []
     for k in order:
-        r = rails.rails[k]
+        r = live[k]
         out_rails.append({**r, "sources": sorted(r["sources"]),
                           "hosts": single.get(k, 0)})
     return {
