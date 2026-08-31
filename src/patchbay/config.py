@@ -39,8 +39,9 @@ DECLARATION_HELP = {
     "PATCHBAY_UNMANAGED": {
         "what": "Ports you know feed an unmanaged switch, shown even when "
                 "too few MACs are live for patchbay to infer one.",
-        "syntax": "device:interface, comma-separated",
-        "example": "core1:1/0/8,sw1:e1/1/5",
+        "syntax": "device:interface, comma-separated; optional custom "
+                  "label as label=device:interface",
+        "example": "core1:1/0/8,k8s-switch=sw1:e1/1/5",
     },
     "PATCHBAY_LINKS": {
         "what": "Cabling nothing can discover: a port to a dumb device, a "
@@ -95,7 +96,7 @@ DECLARATION_HELP = {
                 "list: a port whose link is legitimately slow, or a whole "
                 "device (bare name) to quiet every item naming it.",
         "syntax": "device:interface or device, comma-separated",
-        "example": "core1:1/0/16,esxi1",
+        "example": "core1:1/0/16,hyp1",
     },
     "PATCHBAY_SNAPSHOT_AT": {
         "what": "Local time for the daily break-glass snapshot; the poller "
@@ -149,7 +150,7 @@ class Settings:
     # slow-link item for that port (a management drop that is legitimately
     # 100M); a bare "dev" silences every item that names the device. An
     # alert nobody can silence trains everyone to ignore the list.
-    # PATCHBAY_EXPECT="core1:1/0/16,esxi1"
+    # PATCHBAY_EXPECT="core1:1/0/16,hyp1"
     expected: set[str]
     # Declared unmanaged switches (ports the operator knows feed one), shown
     # even when too few MACs are live to infer them:

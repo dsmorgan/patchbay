@@ -182,14 +182,15 @@ Facts no protocol can discover. All optional; all use the pattern
 | Variable | Format | Meaning |
 |---|---|---|
 | `PATCHBAY_ALIASES` | `alias=canonical,…` | Identity aliases — map a chassis serial or an FQDN some source uses onto the canonical device name |
-| `PATCHBAY_UNMANAGED` | `dev:iface,…` | Ports the operator knows feed an unmanaged switch, shown even when too few MACs are live to infer one |
+| `PATCHBAY_UNMANAGED` | `dev:iface,…` | Ports the operator knows feed an unmanaged switch, shown even when too few MACs are live to infer one. A named form gives the box a label: `k8s-switch=dev:iface` |
 | `PATCHBAY_LINKS` | `dev:iface=dev:iface,…` | Declared cabling. The far side may be a bare name (`sw:e1/1/24=basement-tv`) when its port is unknowable. Removing an entry removes the link — the env is the source of truth, not a one-way import |
 | `PATCHBAY_WAN_NAME` | `name,…` | Provider names, one cloud node each (default `internet`) |
 | `PATCHBAY_WAN_PORT` | `dev:iface,…` | Where each provider physically lands. With none declared the cloud hangs off the firewall |
 | `PATCHBAY_RELATED` | `component=owner,…` | Out-of-band component ties (a BMC/CIMC/iDRAC and the server it manages) |
 | `PATCHBAY_VLAN_FILTER` | `dev:iface=1+24+73,…` | Trunks with a restricted VLAN list (defaults assume trunks carry every VLAN — allowed-lists aren't readable via SNMP) |
 | `PATCHBAY_CAPACITY` | `dev:iface=3G,…` | Real service capacity below the port speed; load math divides by it and the map shows both: "10G (3G)". `G`/`M` suffixes |
-| `PATCHBAY_EXPECT` | `dev:iface` or `dev`,… | Conditions declared expected, silenced on the Overview's attention list: a port whose link is legitimately slow (`core1:1/0/16`), or a whole device (`esxi1`) to quiet every item naming it. An alert nobody can silence trains everyone to ignore the list |
+| `PATCHBAY_EXPECT` | `dev:iface` or `dev`,… | Conditions declared expected, silenced on the Overview's attention list: a port whose link is legitimately slow (`core1:1/0/16`), or a whole device (`hyp1`) to quiet every item naming it. An alert nobody can silence trains everyone to ignore the list |
+| `PATCHBAY_ROUTED_ORDER` | `name-or-vid,…` | Routed-view rail order override (ADR-0002): named networks (VLAN id or name) pin to the left in the declared order; the rest keep the computed order |
 | `PATCHBAY_PANELS` | `name:size=regex,…` | Patch panels. The regex's first capture group is the panel position claimed by a port description; distinct prefixes keep panels apart; size `0` = sized by the highest position seen |
 
 ### More than one internet connection
