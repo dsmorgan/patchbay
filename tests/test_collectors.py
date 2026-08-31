@@ -1038,3 +1038,23 @@ def test_unifi_temperature_stored_when_sensed(conn, clean_env, monkeypatch):
     # a down device's reading is never trusted
     assert _temperature({"general_temperature": 47}) == 47.0
     assert _temperature({"general_temperature": "junk"}) is None
+
+
+def test_save_raw_strips_credential_fields(conn):
+    """raw_payloads is a debugging aid, never a credential store: any key
+    whose name smells like a secret has its value dropped before storage."""
+    import json as _json
+    pdb.save_raw(conn, source="librenms", endpoint="devices", payload=[{
+        "hostname": "sw1.example.lan", "community": "s3cret",
+        "authpass": "p", "cryptopass": "c", "authlevel": "authPriv",
+        "port": 161, "uplink_remote_port": 3,
+    }, {"x_authkey": "k", "guest_token": "t", "syslog_key": "s", "name": "ap1"}])
+    stored = _json.loads(conn.execute(
+        "SELECT payload FROM raw_payloads").fetchone()["payload"])
+    a, b = stored
+    assert a["hostname"] == "sw1.example.lan"      # useful fields survive
+    assert a["port"] == 161 and a["uplink_remote_port"] == 3
+    for k in ("community", "authpass", "cryptopass"):
+        assert a[k] == "<stripped>", k
+    for k in ("x_authkey", "guest_token", "syslog_key"):
+        assert b[k] == "<stripped>", k

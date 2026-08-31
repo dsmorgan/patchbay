@@ -8,6 +8,7 @@ in raw_payloads for debugging and for the snapshot generator.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -330,8 +331,28 @@ def upsert_endpoint(conn: sqlite3.Connection, *, mac: str, source: str, **fields
     )
 
 
+# raw_payloads is a debugging aid, but source APIs return credential fields
+# in otherwise-useful payloads (LibreNMS device rows carry the SNMPv3
+# authpass/cryptopass; UniFi stat/device carries controller keys). Any key
+# whose name contains one of these fragments has its VALUE dropped before
+# storage — overzealous by design, the payload stays useful without it.
+_RAW_SECRET_KEY = re.compile(
+    r"pass|secret|token|community|credential|private|(?:^|_)key(?:$|_)|"
+    r"x_.*key|authalgo|cryptoalgo", re.I)
+
+
+def _scrub_payload(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: ("<stripped>" if _RAW_SECRET_KEY.search(str(k)) and v
+                    else _scrub_payload(v))
+                for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub_payload(v) for v in obj]
+    return obj
+
+
 def save_raw(conn: sqlite3.Connection, *, source: str, endpoint: str, payload: Any) -> None:
     conn.execute(
         "INSERT INTO raw_payloads (source, endpoint, fetched_at, payload) VALUES (?, ?, ?, ?)",
-        (source, endpoint, now(), json.dumps(payload)),
+        (source, endpoint, now(), json.dumps(_scrub_payload(payload))),
     )
