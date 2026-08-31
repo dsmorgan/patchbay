@@ -77,8 +77,10 @@
   /* the mode-specific groups toggle the `hidden` attribute; an author
      display rule outranks the browser default for [hidden], so say it here */
   .toolbar .grp[hidden] { display: none; }
-  /* filter chips are pills already — no outer pill around the row */
+  /* filter chips are pills already — no outer pill around the row; padding
+     matches the mode labels so every pill in the row is the same height */
   .toolbar .grp.filters { border: none; background: none; padding: 0; gap: 0.4rem; }
+  .toolbar .fchip { padding: 0.24rem 0.7rem; }
   /* segmented view control: radios are visually hidden but stay focusable,
      the adjacent label carries the pill styling and the checked/focus state */
   .toolbar .grp.modes { padding: 0.22rem; gap: 0; }
@@ -89,7 +91,10 @@
   .toolbar .grp.modes label {
     padding: 0.24rem 0.7rem; border-radius: 999px; color: var(--muted); font-weight: 500;
   }
-  .toolbar .grp.modes input:checked + label { background: var(--selected); color: var(--ink); }
+  /* the checked segment reads like an .fchip.on: teal ring, no fill */
+  .toolbar .grp.modes input:checked + label {
+    box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink);
+  }
   .toolbar .grp.modes input:focus-visible + label {
     outline: 2px solid var(--accent); outline-offset: 2px;
   }
