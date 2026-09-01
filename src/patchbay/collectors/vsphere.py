@@ -80,18 +80,22 @@ class VsphereCollector:
                 if vid is not None:
                     dvpg_vlan[pg.key] = vid
 
+            tag_rows: list[tuple[str, int, str | None, str]] = []
+
             def tag(mac: str | None, vid: int | None, pgname: str | None) -> None:
                 """Record a NIC's port group VLAN. VLAN 0 means the vSwitch
                 doesn't tag, which is the absence of evidence, not evidence of
-                VLAN 0 — the physical switch port decides, so say nothing."""
+                VLAN 0 — the physical switch port decides, so say nothing.
+                Buffered so the whole set lands as a refresh-by-replace below:
+                a port group moved to untagged (or a deleted VM's MAC) must
+                leave the table, not linger as an upsert-only stray."""
                 nonlocal n_tags
                 if not mac or vid is None or vid == NO_VLAN:
                     return
-                conn.execute(
-                    "INSERT OR REPLACE INTO vnic_vlans (mac, vid, portgroup, source) "
-                    "VALUES (?, ?, ?, ?)", (mac.lower(), vid, pgname, NAME))
+                tag_rows.append((mac.lower(), vid, pgname, NAME))
                 n_tags += 1
 
+            live_hosts: set[str] = set()
             host_view = content.viewManager.CreateContainerView(
                 content.rootFolder, [vim.HostSystem], True)
             for host in host_view.view:
@@ -111,6 +115,8 @@ class VsphereCollector:
                 )
                 n_hosts += 1
                 live = host.runtime.connectionState == "connected"
+                if live:
+                    live_hosts.add(host.name)
 
                 # Interface IDENTITY (names, MACs, addresses) is recorded even
                 # for a disconnected host: vCenter keeps its last-known config,
@@ -178,7 +184,14 @@ class VsphereCollector:
                 if vm.config and vm.config.template:
                     continue
                 host_name = vm.runtime.host.name if vm.runtime.host else None
-                status = "up" if vm.runtime.powerState == "poweredOn" else "down"
+                # powerState is only trustworthy while the owning host answers:
+                # a notResponding host's VMs are cached values, and writing them
+                # with a fresh last_seen would make the merge's freshest-status-
+                # wins prefer the stale report over the device's own collector.
+                # Same identity-vs-liveness split as the host pnics above.
+                host_live = host_name in live_hosts
+                status = ("up" if vm.runtime.powerState == "poweredOn" else "down") \
+                    if host_live else None
                 existing = conn.execute(
                     "SELECT role FROM devices WHERE name = ?", (vm.name,)).fetchone()
                 if existing and existing["role"] in network_roles:
@@ -188,10 +201,14 @@ class VsphereCollector:
                     # identity from its own collector (vsphere runs last, so
                     # a full upsert here would always win)
                     vm_id = None
-                    conn.execute(
-                        "UPDATE devices SET parent = ?, status = ?, last_seen = ? "
-                        "WHERE name = ?",
-                        (host_name, status, db.now(), vm.name))
+                    if status is not None:
+                        conn.execute(
+                            "UPDATE devices SET parent = ?, status = ?, last_seen = ? "
+                            "WHERE name = ?",
+                            (host_name, status, db.now(), vm.name))
+                    else:  # placement is identity; liveness stays no-opinion
+                        conn.execute("UPDATE devices SET parent = ? WHERE name = ?",
+                                     (host_name, vm.name))
                 else:
                     vm_id = db.upsert_device(
                         conn, name=vm.name, source=NAME, role="vm", parent=host_name,
@@ -244,6 +261,18 @@ class VsphereCollector:
                             "power": str(vm.runtime.powerState)})
                 n_vms += 1
             db.save_raw(conn, source=NAME, endpoint="vms", payload=vms)
+            # vnic_vlans was upsert-only: a port group moved to untagged left
+            # its old vid row forever (tag() skips NO_VLAN, so nothing
+            # overwrote it), and deleted VMs' MACs kept re-emitting phantom
+            # port_vlans through _apply_vnic_vlans. Refresh-by-replace, scoped
+            # to this collector's rows. The guard is the walk itself: if the
+            # host/VM views yielded inventory, an empty tag set is the truth
+            # (no tagged port groups), not a hiccup.
+            if n_hosts or n_vms:
+                conn.execute("DELETE FROM vnic_vlans WHERE source = ?", (NAME,))
+                conn.executemany(
+                    "INSERT OR REPLACE INTO vnic_vlans (mac, vid, portgroup, source) "
+                    "VALUES (?, ?, ?, ?)", tag_rows)
             # retire VMs vSphere no longer has — deleted guests must not
             # haunt the inventory. Only rows this collector owns; role='vm'
             # also catches orphaned rows whose parent went NULL. Never prune

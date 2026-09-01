@@ -1187,3 +1187,128 @@ def test_phpipam_prunes_deleted_vlans_but_not_claimed_ones(conn, clean_env, monk
     monkeypatch.setattr(VlanClient, "listing", [])
     PhpIpamCollector().collect(load_settings(), conn)
     assert {r[0] for r in conn.execute("SELECT vid FROM vlans")} == {10, 24}
+
+
+# --- audit round 4 (#41): liveness gates and pruning -------------------------
+
+import sys
+import types
+
+_ns = types.SimpleNamespace
+
+
+class _VEthCard:
+    """Stands in for vim.vm.device.VirtualEthernetCard."""
+
+    def __init__(self, mac, portgroup):
+        self.macAddress = mac
+        self.backing = _ns(deviceName=portgroup)
+        self.deviceInfo = _ns(label="Network adapter 1")
+        self.connectable = _ns(connected=True)
+
+
+def _vs_host(name, state="connected", portgroups=()):
+    return _ns(
+        name=name,
+        runtime=_ns(connectionState=state),
+        hardware=_ns(systemInfo=_ns(vendor="ACME", model="Rack1")),
+        config=_ns(
+            product=_ns(version="8.0.2"),
+            network=_ns(
+                vnic=[], pnic=[],
+                portgroup=[_ns(spec=_ns(name=pg, vlanId=vid))
+                           for pg, vid in portgroups]),
+        ),
+        configManager=_ns(networkSystem=_ns(QueryNetworkHint=lambda: [])),
+    )
+
+
+def _vs_vm(name, host, power="poweredOn", nics=()):
+    return _ns(
+        name=name,
+        runtime=_ns(host=host, powerState=power),
+        guest=_ns(ipAddress=None),
+        config=_ns(template=False, guestFullName="FreeBSD 14",
+                   hardware=_ns(device=list(nics))),
+    )
+
+
+def _vs_stub(monkeypatch, hosts, vms):
+    """Install fake pyVim/pyVmomi modules serving the given inventory."""
+    class _Vim:
+        HostSystem = type("HostSystem", (), {})
+        VirtualMachine = type("VirtualMachine", (), {})
+        dvs = _ns(DistributedVirtualPortgroup=type("DVPG", (), {}))
+        vm = _ns(device=_ns(VirtualEthernetCard=_VEthCard))
+
+    def create_view(_root, kinds, _recurse):
+        if kinds[0] is _Vim.HostSystem:
+            return _ns(view=hosts)
+        if kinds[0] is _Vim.VirtualMachine:
+            return _ns(view=vms)
+        return _ns(view=[])
+
+    content = _ns(viewManager=_ns(CreateContainerView=create_view))
+    content.rootFolder = None
+    si = _ns(RetrieveContent=lambda: content)
+    pyvim_connect = types.ModuleType("pyVim.connect")
+    pyvim_connect.SmartConnect = lambda **kw: si
+    pyvim_connect.Disconnect = lambda s: None
+    pyvim = types.ModuleType("pyVim")
+    pyvim.connect = pyvim_connect
+    pyvmomi = types.ModuleType("pyVmomi")
+    pyvmomi.vim = _Vim
+    monkeypatch.setitem(sys.modules, "pyVim", pyvim)
+    monkeypatch.setitem(sys.modules, "pyVim.connect", pyvim_connect)
+    monkeypatch.setitem(sys.modules, "pyVmomi", pyvmomi)
+
+
+def _vs_settings(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("VSPHERE_HOST", "vcenter.example.net")
+    clean_env.setenv("VSPHERE_USER", "u")
+    clean_env.setenv("VSPHERE_PASS", "p")
+    return load_settings()
+
+
+def test_vsphere_vm_status_gated_on_host_liveness(conn, clean_env, monkeypatch):
+    """A notResponding host's VM powerState is a cached value: writing it with
+    a fresh last_seen would let the merge prefer it over the device's own
+    collector. Placement still lands (identity); status stays no-opinion."""
+    from patchbay.collectors.vsphere import VsphereCollector
+    pdb.upsert_device(conn, name="fw1", source="opnsense", role="firewall",
+                      status="up")
+    hyp_ok = _vs_host("hyp1")
+    hyp_stale = _vs_host("hyp2", state="notResponding")
+    vms = [_vs_vm("vm-live", hyp_ok, power="poweredOff"),
+           _vs_vm("vm-cached", hyp_stale, power="poweredOff"),
+           _vs_vm("fw1", hyp_stale, power="poweredOff")]
+    _vs_stub(monkeypatch, [hyp_ok, hyp_stale], vms)
+    VsphereCollector().collect(_vs_settings(clean_env), conn)
+    st = {r["name"]: r["status"]
+          for r in conn.execute("SELECT name, status FROM devices")}
+    assert st["vm-live"] == "down"      # live host: powerState is the truth
+    assert st["vm-cached"] is None      # cached report: no opinion written
+    assert st["fw1"] == "up"            # own collector's status survives
+    assert conn.execute("SELECT parent FROM devices WHERE name='fw1'"
+                        ).fetchone()[0] == "hyp2"
+
+
+def test_vsphere_vnic_vlans_refresh_replaces_stale_rows(conn, clean_env, monkeypatch):
+    """vnic_vlans was upsert-only: a deleted VM's MAC (or a port group moved
+    to untagged) lingered forever and kept re-emitting phantom port_vlans.
+    Refresh-by-replace, scoped to this collector's rows."""
+    from patchbay.collectors.vsphere import VsphereCollector
+    conn.execute("INSERT INTO vnic_vlans (mac, vid, portgroup, source) VALUES "
+                 "('02:00:00:00:0f:01', 99, 'PG99', 'vsphere')")
+    conn.execute("INSERT INTO vnic_vlans (mac, vid, portgroup, source) VALUES "
+                 "('02:00:00:00:0f:02', 12, 'other', 'not-vsphere')")
+    hyp = _vs_host("hyp1", portgroups=[("PG13", 13)])
+    vm = _vs_vm("vm-a", hyp, nics=[_VEthCard("02:00:00:00:0f:03", "PG13")])
+    _vs_stub(monkeypatch, [hyp], [vm])
+    VsphereCollector().collect(_vs_settings(clean_env), conn)
+    rows = {r["mac"]: (r["vid"], r["source"])
+            for r in conn.execute("SELECT * FROM vnic_vlans")}
+    assert "02:00:00:00:0f:01" not in rows          # stale own row pruned
+    assert rows["02:00:00:00:0f:02"] == (12, "not-vsphere")  # foreign row kept
+    assert rows["02:00:00:00:0f:03"] == (13, "vsphere")
