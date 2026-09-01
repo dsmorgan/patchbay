@@ -6,6 +6,28 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+
+- **Firewall VPN tunnels are first-class, type-labeled objects**
+  ([#42](https://github.com/dsmorgan/patchbay/issues/42)). WireGuard,
+  OpenVPN, and IPsec tunnels from OPNsense (peer/session/SA status
+  endpoints) and pfSense (OpenVPN/IPsec status; the WireGuard VPN gateway,
+  previously dropped, becomes tunnel health) land in a new `tunnels`
+  table — prune-per-type with empty-response guards, and no key material
+  stored, not even public keys. On the topology they draw as dashed
+  purple egress nodes hung off their firewall, labeled with type and
+  peer; on the routed view they sit beside the internet cloud, and a
+  subnet reachable *through* a tunnel rails off the tunnel node — drawn
+  even when nothing local claims it, because reachability through the
+  tunnel is its participation. WireGuard liveness derives from handshake
+  age (up / idle / down); tunnel *interfaces* stay out of the port model,
+  exactly as before. The demo network gains a site-b WireGuard peer so
+  both maps show the feature out of the box. The OPNsense API user needs
+  the VPN page privileges — optional, everything else degrades cleanly
+  without them.
+
 ## [0.11.2] — 2026-09-01
 
 ### Fixed

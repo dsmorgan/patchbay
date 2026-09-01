@@ -141,6 +141,13 @@ partial grants degrade gracefully:
 | Diagnostics: Routing Tables | Route table → subnet reachability |
 | System: Gateways | Gateway health and status |
 | DHCP: Leases | DHCPv4 lease table → hostname/IP mapping |
+| VPN: WireGuard | WireGuard peers → tunnel objects with handshake-based health |
+| VPN: OpenVPN | OpenVPN sessions → tunnel objects |
+| VPN: IPsec | IPsec phase-1 SAs → tunnel objects |
+
+The three VPN privileges are optional: without them (or on releases whose
+API lacks the endpoints) tunnels simply stay off the maps — nothing else
+degrades.
 
 The interfaces overview endpoint (`interfaces/overview/export`) does not map
 to a named privilege in current OPNsense releases; if patchbay logs a 403 for
@@ -170,9 +177,11 @@ collector's first round is still read as a fallback.)
 `PFSENSE_HOST` must include the scheme (`https://firewall.example.internal`).
 A bare hostname defaults to HTTPS.
 
-The API user needs read access to interfaces, gateways, and DHCP services.
-A 403 on any endpoint is logged and skipped rather than aborting the poll,
-so partial privilege grants degrade gracefully.
+The API user needs read access to interfaces, gateways, and DHCP services —
+plus OpenVPN and IPsec status for VPN tunnel objects (WireGuard tunnel
+health comes from its VPN gateway, since pfrest has no WireGuard status
+endpoint). A 403 on any endpoint is logged and skipped rather than aborting
+the poll, so partial privilege grants degrade gracefully.
 
 ## Operator declarations
 
