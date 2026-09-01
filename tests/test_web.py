@@ -1201,3 +1201,31 @@ def test_config_revision_delete_targets_one_or_all(clean_env, tmp_path, client):
     assert "fw1" not in client.get("/configs").text
     # a node without stored history is refused
     assert client.post("/configs/nope/delete", data={"v": "all"}).status_code == 404
+
+
+def test_topology_graph_draws_tunnel_nodes(clean_env, tmp_path, client):
+    """A tunnel is a first-class dashed node hung off its firewall (#42):
+    type-labeled, never merged into the WAN cloud, and its interface stays
+    out of the port model."""
+    import json as _json
+    import re
+
+    db_path = str(tmp_path / "test.db")
+    seed(db_path)
+    c = sqlite3.connect(db_path)
+    c.execute("INSERT INTO tunnels (device, type, name, peer, interface, "
+              "status, source, last_seen) VALUES "
+              "('fw1', 'wireguard', 'site-b', '192.0.2.200:51820', 'wg1', "
+              "'up', 'opnsense', ?)", (pdb.now(),))
+    c.commit(); c.close()
+    body = client.get("/topology").text
+    m = re.search(r"const graph = (\{.*?\});\n", body, re.S)
+    assert m, "graph JSON not found"
+    graph = _json.loads(m.group(1))
+    node = next(n for n in graph["nodes"] if n["role"] == "tunnel")
+    assert node["label"] == "site-b"
+    assert node["sub"].startswith("WireGuard")
+    assert node["status"] == "up"
+    edge = next(l for l in graph["links"] if "tunnel" in l["cls"])
+    assert {edge["source"], edge["target"]} == {"fw1", node["name"]}
+    assert edge["alab"] == "wg1"

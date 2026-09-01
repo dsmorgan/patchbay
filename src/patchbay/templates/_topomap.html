@@ -24,6 +24,9 @@
   .edge.fdbinference { stroke-dasharray: 5 4; }
   .edge.virtualized { stroke-dasharray: 3 5; opacity: 0.65; stroke: var(--r-hyp); }
   .edge.wan { stroke-dasharray: 8 4; }
+  /* a tunnel edge is the encrypted path, not a cable — firewall purple,
+     tight dash, same non-cable standing as wan/virtualized */
+  .edge.tunnel { stroke-dasharray: 4 3; stroke: var(--r-firewall); }
   .edge.oob { stroke-dasharray: 2 4; opacity: 0.6; }
   .edge.fdbhost { opacity: 0.45; }
   .portlab, .speedlab { font: 10.5px var(--font-mono); fill: var(--muted);
@@ -51,6 +54,9 @@
   .node text.nm { font: 600 12.5px var(--font-ui); fill: var(--ink); }
   .node text.sub { font: 10.5px var(--font-ui); fill: var(--muted); }
   .node.unmanaged-switch rect { stroke-dasharray: 5 4; stroke: var(--muted); }
+  /* VPN tunnels: cloud-shaped but dashed and firewall-purple — an egress,
+     never mistakable for the provider cloud */
+  .node.tunnel ellipse { stroke-dasharray: 6 4; stroke: var(--r-firewall) !important; }
   .node { cursor: pointer; }
   .ricon { fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: 0.5;
            stroke-linecap: round; stroke-linejoin: round; }
@@ -61,9 +67,10 @@
   .node.firewall .ricon { stroke: var(--r-firewall); opacity: 1; }
   .node.hypervisor .ricon { stroke: var(--r-hyp); opacity: 1; }
   .node.ap .ricon { stroke: var(--r-ap); opacity: 1; }
+  .node.tunnel .ricon { stroke: var(--r-firewall); opacity: 1; }
   .legend svg.licon { width: 16px; height: 16px; vertical-align: -3px; }
   .sdot.up { fill: var(--ok); } .sdot.down { fill: var(--crit); }
-  .sdot.unknown, .sdot.notResponding, .sdot.disabled { fill: var(--warn); }
+  .sdot.unknown, .sdot.notResponding, .sdot.disabled, .sdot.idle { fill: var(--warn); }
   .toolbar { display: flex; align-items: center; gap: 0.4rem 1rem; flex-wrap: wrap;
              margin-bottom: 0.55rem; font-size: 0.8rem; }
   .toolbar label { display: inline-flex; align-items: center; gap: 0.35rem;
@@ -184,7 +191,8 @@
     <svg class="licon" data-role="hypervisor" style="color: var(--r-hyp)"></svg> VM host
     <svg class="licon" data-role="ap" style="color: var(--r-ap)"></svg> AP
     <svg class="licon" data-role="unmanaged-switch" style="color: var(--muted)"></svg> unmanaged
-    <svg class="licon" data-role="host" style="color: var(--muted)"></svg> wired host</span>
+    <svg class="licon" data-role="host" style="color: var(--muted)"></svg> wired host
+    <svg class="licon" data-role="tunnel" style="color: var(--r-firewall)"></svg> VPN tunnel</span>
   <span class="item" id="leg-heat" data-modes="load">load:
     <span class="swatch" style="background: var(--line)"></span>no data
     <span class="swatch" style="background: #5b84a8"></span>idle
@@ -248,7 +256,7 @@ const TIERS = (() => {
   }
   return p.get("layout") === "tiers";
 })();
-const CORE_ROLES = new Set(["cloud", "firewall", "router", "switch", "hypervisor"]);
+const CORE_ROLES = new Set(["cloud", "tunnel", "firewall", "router", "switch", "hypervisor"]);
 const OFF_STATUS = new Set(["down", "notresponding", "disabled"]);
 
 // degree from the raw data, before d3 rewrites link endpoints into objects
@@ -330,10 +338,10 @@ const ICONS = {{ ICONS | tojson }};
 
 const node = gContent.append("g").selectAll("g").data(graph.nodes).join("g")
     .attr("class", d => `node ${d.role}` + (d.px != null ? " pinned" : ""));
-node.filter(d => d.role !== "cloud").append("rect")
+node.filter(d => d.role !== "cloud" && d.role !== "tunnel").append("rect")
     .attr("x", d => -d.w / 2).attr("y", -24).attr("width", d => d.w).attr("height", 48)
     .attr("rx", 8);
-node.filter(d => d.role === "cloud").append("ellipse")
+node.filter(d => d.role === "cloud" || d.role === "tunnel").append("ellipse")
     .attr("rx", d => d.w / 2 + 8).attr("ry", 30)
     .attr("fill", "var(--card)").attr("stroke", "var(--line)");
 node.filter(d => ICONS[d.role]).append("path")
@@ -356,7 +364,7 @@ node.on("click", (e, d) => {
     sim.alpha(0.3).restart();
     return;
   }
-  if (d.role !== "cloud" && d.role !== "host") {
+  if (d.role !== "cloud" && d.role !== "host" && d.role !== "tunnel") {
     if (SNAPSHOT) window.location.hash = "dev-" + d.name;
     else window.location = `/device/${encodeURIComponent(d.name)}`;
   }
@@ -643,7 +651,7 @@ function heat(u) {
 // a "cable" is a physical link; virtualized/oob/wan aren't one. Of the
 // cables, fdb-derived ones are inferred (dashed in wiring/vlan), the rest
 // (lldp, declared, vsphere-hint, unifi) are confirmed (solid).
-const NON_CABLE = new Set(["virtualized", "oob", "wan"]);
+const NON_CABLE = new Set(["virtualized", "oob", "wan", "tunnel"]);
 const INFERRED_CABLE = new Set(["fdbuplink", "fdbinference", "fdbhost"]);
 const edgeSourceCls = d => d.cls.split(" ")[0];
 const isCable = d => !NON_CABLE.has(edgeSourceCls(d));

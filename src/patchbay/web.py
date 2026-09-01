@@ -116,6 +116,7 @@ ICONS = {
     "hypervisor": "M9 2l7 3.5L9 9 2 5.5z M2 9l7 3.5 7-3.5 M2 12.5L9 16l7-3.5",
     "ap": "M9 13.2a1.2 1.2 0 100 .01 M5.5 10a5 5 0 017 0 M3 7a8.5 8.5 0 0112 0",
     "host": "M3 2h12v7h-2.5v3H10v2H8v-2H5.5V9H3z M6 2v3 M9 2v3 M12 2v3",
+    "tunnel": "M5 8V6a4 4 0 018 0v2 M3 8h12v7H3z M9 11v2",
 }
 templates.env.globals["ICONS"] = ICONS
 
@@ -371,13 +372,17 @@ def alerts(request: Request, category: str | None = None,
 
 
 TOPO_ROLES = ("firewall", "router", "switch", "hypervisor", "ap", "unmanaged-switch")
-RANK = {"cloud": -1, "firewall": 0, "router": 0, "switch": 1,
+RANK = {"cloud": -1, "tunnel": -1, "firewall": 0, "router": 0, "switch": 1,
         "hypervisor": 2, "ap": 2, "unmanaged-switch": 2, "host": 2}
 
 
 # the implicit patch panel when PATCHBAY_PANELS is unset: [n] tags, sized by
 # the highest position seen (size 0 = no declared size)
 DEFAULT_PANELS = [("panel", 0, r"\[(\d+)\]")]
+
+
+TUNNEL_TYPE_LABEL = {"wireguard": "WireGuard", "openvpn": "OpenVPN",
+                     "ipsec": "IPsec", "vpn": "VPN"}
 
 
 def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]:
@@ -639,6 +644,31 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
             raw_edges.append({"a_device": dev_name, "a_interface": iface,
                               "b_device": wan_name, "b_interface": "",
                               "source": "wan"})
+
+    # VPN tunnels (#42): first-class egress nodes, dashed and type-labeled,
+    # distinct from the provider cloud even though the encrypted transport
+    # rides it. One node per tunnel, hung off the firewall that terminates
+    # it; tunnel interfaces themselves stay out of the port model.
+    for tun in conn.execute("SELECT * FROM tunnels ORDER BY device, type, name"):
+        if tun["device"] not in on_map:
+            continue
+        tlabel = TUNNEL_TYPE_LABEL.get(tun["type"], "VPN")
+        sub = tlabel + (f" · {tun['peer']}" if tun["peer"] else "")
+        node_id = f"vpn:{tun['type']}:{tun['name']}"
+        nodes.append({
+            "name": node_id, "label": tun["name"], "role": "tunnel", "rank": -1,
+            "w": max(len(tun["name"]), len(sub)) * 7.2 + 34,
+            "sub": sub, "status": tun["status"] or "unknown",
+            "title": f"{tlabel} tunnel · {tun['name']}"
+                     + (f" · {tun['detail']}" if tun["detail"] else ""),
+            "vlans": [],
+            "px": saved.get(node_id, (None, None))[0],
+            "py": saved.get(node_id, (None, None))[1],
+        })
+        raw_edges.append({"a_device": tun["device"],
+                          "a_interface": tun["interface"] or "",
+                          "b_device": node_id, "b_interface": "",
+                          "source": "tunnel"})
 
     # named wired hosts on switch ports (behind the 'wired hosts' toggle).
     # A host is keyed by canonical short hostname — aliases fold interface
