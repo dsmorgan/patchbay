@@ -1312,3 +1312,73 @@ def test_vsphere_vnic_vlans_refresh_replaces_stale_rows(conn, clean_env, monkeyp
     assert "02:00:00:00:0f:01" not in rows          # stale own row pruned
     assert rows["02:00:00:00:0f:02"] == (12, "not-vsphere")  # foreign row kept
     assert rows["02:00:00:00:0f:03"] == (13, "vsphere")
+
+
+class _UnifiDownSwitch(_UnifiClient):
+    """Same fixture devices, but the switch is reported down (cached
+    port_table) and the AP heartbeat-missed."""
+
+    def get(self, url, **kw):
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_):
+                if "stat/device" in url:
+                    return {"data": [dict(_USW, state=0), dict(_UAP, state=6)]}
+                return {"data": []}
+        return R()
+
+
+def test_unifi_down_device_port_liveness_omitted(conn, clean_env, monkeypatch):
+    """A non-up device's port_table is the controller's cache: oper/admin/
+    speed must not overwrite the last good values (omitted means no opinion,
+    same stance as vCenter's disconnected hosts)."""
+    from patchbay.collectors.unifi import UnifiCollector
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    monkeypatch.setattr(httpx, "Client", _UnifiDownSwitch)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    sw = conn.execute("SELECT status FROM devices WHERE name='sw-access-01'"
+                      ).fetchone()
+    assert sw["status"] == "down"           # device liveness IS the report
+    port = conn.execute(
+        "SELECT i.oper_status, i.speed_bps FROM interfaces i "
+        "JOIN devices d ON d.id=i.device_id "
+        "WHERE d.name='sw-access-01' AND i.name='Port 1'").fetchone()
+    assert port["oper_status"] == "up"      # last good value stands
+    assert port["speed_bps"] == 1_000_000_000
+    ap = conn.execute(
+        "SELECT i.oper_status, i.mac FROM interfaces i "
+        "JOIN devices d ON d.id=i.device_id "
+        "WHERE d.name='ap-floor1' AND i.name='eth0'").fetchone()
+    assert ap["oper_status"] == "up"        # cached uplink state not written
+    assert ap["mac"] == "02:00:00:00:03:01"  # identity still lands
+
+
+class _UnifiNoDevices(_UnifiClient):
+    def get(self, url, **kw):
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_): return {"data": []}
+        return R()
+
+
+def test_unifi_retires_devices_the_controller_forgot(conn, clean_env, monkeypatch):
+    """An AP removed from the controller must leave the model; rows owned by
+    other collectors (and non-ap/switch roles) are not unifi's to retire.
+    An empty listing never prunes."""
+    from patchbay.collectors.unifi import UnifiCollector
+    pdb.upsert_device(conn, name="ap-old", source="unifi", role="ap")
+    pdb.upsert_device(conn, name="ap-lnms", source="librenms", role="ap")
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    names = {r[0] for r in conn.execute("SELECT name FROM devices")}
+    assert "ap-old" not in names
+    assert {"ap-lnms", "sw-access-01", "ap-floor1"} <= names
+
+    pdb.upsert_device(conn, name="ap-old", source="unifi", role="ap")
+    monkeypatch.setattr(httpx, "Client", _UnifiNoDevices)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    assert conn.execute("SELECT COUNT(*) FROM devices WHERE name='ap-old'"
+                        ).fetchone()[0] == 1

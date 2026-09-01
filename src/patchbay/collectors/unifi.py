@@ -83,6 +83,12 @@ class UnifiCollector:
                 dev_name = d.get("name") or d.get("mac")
                 status = DEVICE_STATES.get(d.get("state"), "unknown")
 
+                # A non-up device's port_table is the controller's cache, not
+                # an observation: port oper/admin/speed are liveness and must
+                # be omitted rather than written stale (same gate temperature
+                # already had). Port names are identity and still land.
+                live = status == "up"
+
                 if dev_type == "usw":
                     sw_id = db.upsert_device(
                         conn, name=dev_name, source=NAME,
@@ -90,7 +96,7 @@ class UnifiCollector:
                         model=MODEL_NAMES.get(d.get("model"), d.get("model")),
                         os=f"unifi {d.get('version', '')}".strip(), role="switch",
                         status=status,
-                        temperature=_temperature(d) if status == "up" else None,
+                        temperature=_temperature(d) if live else None,
                     )
                     if d.get("mac"):
                         sw_mac_to_name[d["mac"].lower()] = dev_name
@@ -105,9 +111,11 @@ class UnifiCollector:
                         speed = port.get("speed") or 0
                         db.upsert_interface(
                             conn, device_id=sw_id, name=port_name,
-                            oper_status="up" if port.get("up") else "down",
-                            admin_status="up" if port.get("enable") else "down",
-                            speed_bps=speed * 1_000_000 or None,
+                            oper_status=("up" if port.get("up") else "down")
+                                        if live else None,
+                            admin_status=("up" if port.get("enable") else "down")
+                                         if live else None,
+                            speed_bps=(speed * 1_000_000 or None) if live else None,
                         )
                     sw_port_names[dev_name] = port_idx_map
                     # Switch-to-switch uplink (same LLDP data as APs). The
@@ -134,16 +142,20 @@ class UnifiCollector:
                     model=MODEL_NAMES.get(d.get("model"), d.get("model")),
                     os=f"unifi {d.get('version', '')}".strip(), role="ap",
                     status=status,
-                    temperature=_temperature(d) if status == "up" else None,
+                    temperature=_temperature(d) if live else None,
                 )
                 uplink = d.get("uplink") or {}
                 iface_name = uplink.get("name") or uplink.get("ifname") or "eth0"
                 db.upsert_interface(
                     conn, device_id=dev_id,
                     name=iface_name,
-                    oper_status="up" if uplink.get("up") else
-                                ("down" if uplink else None),
-                    speed_bps=(uplink.get("speed") or 0) * 1_000_000 or None,
+                    # the MAC is identity (it's how switch FDB inference finds
+                    # this AP); status and speed are liveness, gated like the
+                    # switch ports above
+                    oper_status=("up" if uplink.get("up") else
+                                 ("down" if uplink else None)) if live else None,
+                    speed_bps=((uplink.get("speed") or 0) * 1_000_000 or None)
+                              if live else None,
                     mac=d.get("mac"),
                     description="uplink",
                 )
@@ -166,6 +178,26 @@ class UnifiCollector:
                 db.upsert_link(conn, a_device=a_dev, a_interface=a_if,
                                b_device=upstream, b_interface=remote_port,
                                source=NAME)
+
+            # Retire APs/switches forgotten by the controller — a device
+            # removed there stayed on every page with frozen status forever.
+            # Scoped to rows this collector owns (a merged record whose
+            # primary source is librenms is that collector's to retire), and
+            # guarded on a non-empty listing like every other prune. Stored
+            # names are post-normalize canonical, so match both forms.
+            if devices:
+                from ..normalize import canonical_name
+                seen: set[str] = set()
+                for d in devices:
+                    n = d.get("name") or d.get("mac")
+                    if n and d.get("type") in ("usw", "uap"):
+                        seen |= {n, canonical_name(n)}
+                if seen:
+                    conn.execute(
+                        f"DELETE FROM devices WHERE source = ? "
+                        f"AND role IN ('ap', 'switch') "
+                        f"AND name NOT IN ({','.join('?' * len(seen))})",
+                        (NAME, *sorted(seen)))
 
             cr = client.get(f"{base}/api/s/{site}/stat/sta")
             cr.raise_for_status()
