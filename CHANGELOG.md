@@ -6,6 +6,39 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Fixed
+
+- The transient duplicate AP↔switch cable visible right after a poll starts
+  is gone ([#38](https://github.com/dsmorgan/patchbay/issues/38)): normalize
+  now runs inside the same transaction as each collector, so the web UI
+  never reads fresh-but-unnormalized state. A normalize failure rolls back
+  to a savepoint and the source's data still lands; per-source atomicity is
+  unchanged.
+- The liveness and pruning gaps from the post-0.10.0 audit
+  ([#41](https://github.com/dsmorgan/patchbay/issues/41)) — the family where
+  nothing lies, things just never leave:
+  - vSphere no longer writes a VM's cached `powerState` (with a fresh
+    timestamp) while the owning host is not responding — a virtualized
+    firewall's own status report wins again. Placement still lands.
+  - UniFi no longer writes port oper/admin/speed from a down or
+    heartbeat-missed device's cached `port_table`; the last good values
+    stand, same gate temperature already had.
+  - `vnic_vlans` is refreshed by replace: a port group moved to untagged,
+    or a deleted VM's MAC, no longer re-emits phantom 802.1Q membership
+    forever.
+  - Devices removed from LibreNMS or the UniFi controller are retired
+    instead of haunting every page with frozen status (each collector's
+    own rows only, guarded on a non-empty listing).
+  - Endpoint observations (ARP, leases, controller clients, the IPAM
+    address book) age out after a week unrefreshed, so /drift stops
+    treating months-old rows as live sightings.
+  - VLANs that vanish from every switch config and SNMP table get the
+    same claim-aware prune phpIPAM's rows got in 0.11.1.
+  - The oxidized per-device `port_vlans` rewrite is scoped to its own
+    rows, like the `port_roles` delete beside it always was.
+
 ## [0.11.1] — 2026-08-31
 
 ### Fixed
