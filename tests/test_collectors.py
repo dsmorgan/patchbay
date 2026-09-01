@@ -1468,3 +1468,66 @@ def test_librenms_vlan_prune_claim_aware(conn, clean_env, monkeypatch):
     monkeypatch.setattr(_LnmsVlanClient, "vlans", [])
     LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
     assert 30 in {r[0] for r in conn.execute("SELECT vid FROM vlans")}
+
+
+class _OxClient:
+    """Oxidized API stub: one FastIron switch whose config defines VLAN 22."""
+    nodes = [{"name": "sw1.example.net", "full_name": "sw1.example.net",
+              "model": "ironware", "last": {"status": "success"}}]
+    config = "vlan 22 name lab\n tagged ethe 1/1/1\n"
+
+    def __init__(self, *a, **k): pass
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+    def get(self, url, **kw):
+        outer = self
+
+        class R:
+            status_code = 200
+            text = outer.config
+            def raise_for_status(self_): pass
+            def json(self_): return outer.nodes
+        return R()
+
+
+def _ox_settings(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("OXIDIZED_URL", "http://oxidized.example.net:8888")
+    return load_settings()
+
+
+def test_oxidized_port_vlans_delete_scoped_to_source(conn, clean_env, monkeypatch):
+    """The rewrite must only clear oxidized's own rows for the device — a
+    device-wide delete could remove another writer's rows."""
+    from patchbay.collectors.oxidized import OxidizedCollector
+    conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                 "VALUES ('sw1', 'old-port', 9, 1, 'oxidized')")
+    conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                 "VALUES ('sw1', 'vmx1', 13, 0, 'vsphere')")
+    monkeypatch.setattr(httpx, "Client", _OxClient)
+    OxidizedCollector().collect(_ox_settings(clean_env), conn)
+    rows = {(r["interface"], r["vid"], r["source"]) for r in
+            conn.execute("SELECT * FROM port_vlans WHERE device='sw1'")}
+    assert ("old-port", 9, "oxidized") not in rows      # own stale row gone
+    assert ("vmx1", 13, "vsphere") in rows              # foreign row kept
+    assert ("ethernet1/1/1", 22, "oxidized") in rows
+
+
+def test_oxidized_vlan_prune_claim_aware(conn, clean_env, monkeypatch):
+    """A VLAN removed from every parsed config is pruned — own rows only,
+    claims protect it (including a skipped device's surviving port_vlans)."""
+    from patchbay.collectors.oxidized import OxidizedCollector
+    now = pdb.now()
+    conn.executemany(
+        "INSERT INTO vlans (vid, name, source, last_seen) VALUES (?, ?, ?, ?)",
+        [(30, "stale", "oxidized", now), (31, "claimed", "oxidized", now),
+         (40, "foreign", "phpipam", now)])
+    # VLAN 31 belongs to a device whose config was skipped this run — its
+    # surviving port_vlans row is the claim that protects it
+    conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                 "VALUES ('sw2', 'ethernet2/1/1', 31, 1, 'oxidized')")
+    monkeypatch.setattr(httpx, "Client", _OxClient)
+    OxidizedCollector().collect(_ox_settings(clean_env), conn)
+    left = {r[0] for r in conn.execute("SELECT vid FROM vlans")}
+    assert left == {22, 31, 40}             # 30 pruned; claimed + foreign kept

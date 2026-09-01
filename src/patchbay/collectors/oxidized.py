@@ -213,6 +213,7 @@ class OxidizedCollector:
     def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
         base = settings.oxidized_url.rstrip("/")
         parsed = []
+        seen_vids: set[int] = set()
         with httpx.Client(verify=settings.tls_verify, timeout=20) as client:
             r = client.get(f"{base}/nodes.json")
             r.raise_for_status()
@@ -243,7 +244,11 @@ class OxidizedCollector:
                     rows += [(p, 1, False) for p in physical
                              if p not in untagged_elsewhere
                              and not any(r0 == p and v0 == 1 for r0, v0, _ in rows)]
-                conn.execute("DELETE FROM port_vlans WHERE device = ?", (dev,))
+                # source-scoped like the port_roles delete below: a device-only
+                # delete could remove rows another writer owns if parsers and
+                # firewall/vsphere sources ever overlap on a device name
+                conn.execute("DELETE FROM port_vlans WHERE device = ? AND source = ?",
+                             (dev, NAME))
                 conn.execute("DELETE FROM port_roles WHERE device = ? AND source = ?",
                              (dev, NAME))
                 for iface, role, detail in roles:
@@ -268,8 +273,22 @@ class OxidizedCollector:
                         "ON CONFLICT(vid) DO UPDATE SET last_seen=excluded.last_seen, "
                         "name=COALESCE(vlans.name, excluded.name)",
                         (vid, vname or None, NAME, db.now()))
+                seen_vids |= set(names)
                 parsed.append(f"{dev}: {len(rows)} port/vlan rows"
                               + (f", {len(roles)} monitor ports" if roles else ""))
+        # prune VLANs no parsed config defines any more: this source's rows
+        # only, never one something still claims (a skipped or unparseable
+        # device keeps its port_vlans rows, and those claims protect its
+        # VLANs here). Guarded on a non-empty union across parsed configs.
+        if seen_vids:
+            vids = sorted(seen_vids)
+            conn.execute(
+                "DELETE FROM vlans WHERE source = ? "
+                f"AND vid NOT IN ({','.join('?' * len(vids))}) "
+                "AND vid NOT IN (SELECT vid FROM device_vlans) "
+                "AND vid NOT IN (SELECT vid FROM port_vlans) "
+                "AND vid NOT IN (SELECT vid FROM vnic_vlans)",
+                (NAME, *vids))
         return "; ".join(parsed) if parsed else "no parseable configs"
 
 
