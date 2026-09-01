@@ -692,6 +692,14 @@ SOURCE_TTL = {"vsphere-hint": 24 * 3600}
 
 QUIET_STATUS = ("down", "notresponding", "disabled")
 
+# Endpoints are observations (ARP, leases, controller clients, the IPAM
+# address book), and every writer refreshes its rows each poll — so a row
+# this old is a device that left, an address book entry deleted from IPAM,
+# or a collector that was unconfigured. /drift must not treat it as a live
+# sighting. Generous next to EVIDENCE_TTL because endpoints come and go by
+# nature (a laptop's week off is not a topology change).
+ENDPOINT_TTL = 7 * 86400
+
 
 def _expire_stale_evidence(conn: sqlite3.Connection) -> int:
     """Discovered evidence that stops being reported ages out: a moved cable's
@@ -872,6 +880,10 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
     # housekeeping: raw payloads are a debugging window, not an archive
     conn.execute("DELETE FROM raw_payloads WHERE fetched_at < ?",
                  (db.now() - 7 * 86400,))
+    # ...and stale endpoint observations age out (see ENDPOINT_TTL): live
+    # ones are re-upserted every poll by whichever source still sees them
+    conn.execute("DELETE FROM endpoints WHERE COALESCE(last_seen, 0) < ?",
+                 (db.now() - ENDPOINT_TTL,))
     # Interfaces are keyed by device *id*, so retiring a device (a deleted VM,
     # a merged duplicate) leaves its ports behind with nothing to join to.
     # They are invisible on every page and harmless until something counts

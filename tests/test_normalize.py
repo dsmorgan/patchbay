@@ -788,3 +788,19 @@ def test_expired_unmanaged_switch_takes_its_endpoints_along(conn):
                         ).fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM endpoints WHERE device LIKE 'unmanaged@%'"
                         ).fetchone()[0] == 0
+
+
+def test_stale_endpoints_age_out(conn):
+    """Observations (ARP, leases, IPAM records) are refreshed every poll by
+    whichever source still sees them — a week-stale row is a device that
+    left or a record deleted at the source, and /drift must not treat it as
+    a live sighting."""
+    from patchbay.normalize import ENDPOINT_TTL
+    conn.execute("INSERT INTO endpoints (mac, ip, source, last_seen) VALUES "
+                 "('02:00:00:00:1a:01', '192.0.2.71', 'opnsense', ?)",
+                 (NOW - ENDPOINT_TTL - 3600,))
+    conn.execute("INSERT INTO endpoints (mac, ip, source, last_seen) VALUES "
+                 "('02:00:00:00:1a:02', '192.0.2.72', 'phpipam', ?)", (NOW,))
+    normalize(conn)
+    left = {r[0] for r in conn.execute("SELECT mac FROM endpoints")}
+    assert left == {"02:00:00:00:1a:02"}
