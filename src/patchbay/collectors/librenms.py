@@ -146,6 +146,24 @@ class LibreNmsCollector:
                         )
             conn.execute("DELETE FROM rate_history WHERE ts < ?", (db.now() - 7 * 86400,))
 
+            # Retire devices removed from LibreNMS — they stayed on every page
+            # with frozen status forever (disabled devices still appear in the
+            # listing, so this only fires on real deletion). Scoped to rows
+            # this collector owns; guarded on a non-empty listing. Stored
+            # names are post-normalize canonical, so match both forms.
+            if devices:
+                from ..normalize import canonical_name
+                seen_names: set[str] = set()
+                for d in devices:
+                    n = d.get("sysName") or d.get("hostname")
+                    if n:
+                        seen_names |= {n, canonical_name(n)}
+                if seen_names:
+                    conn.execute(
+                        f"DELETE FROM devices WHERE source = ? "
+                        f"AND name NOT IN ({','.join('?' * len(seen_names))})",
+                        (NAME, *sorted(seen_names)))
+
             links = self._get(client, settings, "resources/links").get("links", [])
             db.save_raw(conn, source=NAME, endpoint="resources/links", payload=links)
             for l in links:
@@ -193,6 +211,20 @@ class LibreNmsCollector:
                     (dev, vid, NAME),
                 )
                 n_vlans += 1
+            # prune VLANs Q-BRIDGE no longer reports anywhere: this source's
+            # rows only, and never one something still claims (same
+            # claim-aware guard as the phpipam prune — `source` records the
+            # first creator, so a claimed row may belong to a live VLAN
+            # another source still reports). Guarded on a non-empty listing.
+            seen_vids = sorted({int(v.get("vlan_vlan") or 0) for v in vlans} - {0})
+            if seen_vids:
+                conn.execute(
+                    "DELETE FROM vlans WHERE source = ? "
+                    f"AND vid NOT IN ({','.join('?' * len(seen_vids))}) "
+                    "AND vid NOT IN (SELECT vid FROM device_vlans) "
+                    "AND vid NOT IN (SELECT vid FROM port_vlans) "
+                    "AND vid NOT IN (SELECT vid FROM vnic_vlans)",
+                    (NAME, *seen_vids))
 
             fdb = self._get(client, settings, "resources/fdb").get("ports_fdb", [])
             if fdb:  # same empty-response guard as device_vlans above

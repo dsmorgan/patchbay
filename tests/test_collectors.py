@@ -1382,3 +1382,89 @@ def test_unifi_retires_devices_the_controller_forgot(conn, clean_env, monkeypatc
     UnifiCollector().collect(_unifi_settings(clean_env), conn)
     assert conn.execute("SELECT COUNT(*) FROM devices WHERE name='ap-old'"
                         ).fetchone()[0] == 1
+
+
+class _LnmsFqdnClient(_LnmsClient):
+    """ap1 plus a device LibreNMS names by FQDN."""
+
+    def get(self, url, **kw):
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_):
+                if url.endswith("/devices"):
+                    return {"devices": [
+                        {"device_id": 1, "sysName": "ap1",
+                         "hardware": "UAP-AC-Pro-Gen2", "os": "unifi",
+                         "status": 1, "disabled": 0, "serial": None,
+                         "ip": "192.0.2.20", "overwrite_ip": None},
+                        {"device_id": 2, "sysName": "core-sw1.example.net",
+                         "hardware": "M4300", "os": "netgear",
+                         "status": 1, "disabled": 0, "serial": None,
+                         "ip": "192.0.2.21", "overwrite_ip": None}]}
+                if "/ports" in url:
+                    return {"ports": []}
+                return {"links": [], "vlans": [], "ports_fdb": []}
+        return R()
+
+
+def test_librenms_retires_removed_devices(conn, clean_env, monkeypatch):
+    """A device deleted from LibreNMS leaves the model. Post-normalize rows
+    hold canonical (short) names while the listing may say FQDN — both forms
+    must match. Other collectors' rows are untouched."""
+    from patchbay.collectors.librenms import LibreNmsCollector
+    pdb.upsert_device(conn, name="gone-sw", source="librenms", role="switch")
+    pdb.upsert_device(conn, name="core-sw1", source="librenms", role="switch")
+    pdb.upsert_device(conn, name="fw1", source="opnsense", role="firewall")
+    monkeypatch.setattr(httpx, "Client", _LnmsFqdnClient)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    names = {r[0] for r in conn.execute("SELECT name FROM devices")}
+    assert "gone-sw" not in names
+    assert {"core-sw1", "fw1", "ap1"} <= names
+
+
+class _LnmsVlanClient(_LnmsClient):
+    vlans = [{"device_id": 1, "vlan_vlan": 22, "vlan_name": "lab"}]
+
+    def get(self, url, **kw):
+        outer = self
+
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_):
+                if url.endswith("/devices"):
+                    return {"devices": [{"device_id": 1, "sysName": "ap1",
+                                         "hardware": None, "os": "unifi",
+                                         "status": 1, "disabled": 0,
+                                         "serial": None, "ip": "192.0.2.20",
+                                         "overwrite_ip": None}]}
+                if "/ports" in url:
+                    return {"ports": []}
+                if url.endswith("resources/vlans"):
+                    return {"vlans": outer.vlans}
+                return {"links": [], "vlans": [], "ports_fdb": []}
+        return R()
+
+
+def test_librenms_vlan_prune_claim_aware(conn, clean_env, monkeypatch):
+    """A VLAN Q-BRIDGE stops reporting is pruned — but only librenms's own
+    rows, never one a device still claims, and never on an empty listing."""
+    from patchbay.collectors.librenms import LibreNmsCollector
+    now = pdb.now()
+    conn.executemany(
+        "INSERT INTO vlans (vid, name, source, last_seen) VALUES (?, ?, ?, ?)",
+        [(30, "stale", "librenms", now), (31, "claimed", "librenms", now),
+         (40, "foreign", "oxidized", now)])
+    conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                 "VALUES ('sw9', 'ethernet1/1/1', 31, 1, 'oxidized')")
+    monkeypatch.setattr(httpx, "Client", _LnmsVlanClient)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    left = {r[0] for r in conn.execute("SELECT vid FROM vlans")}
+    assert left == {22, 31, 40}             # 30 pruned; claimed + foreign kept
+
+    conn.execute("INSERT INTO vlans (vid, name, source, last_seen) "
+                 "VALUES (30, 'stale', 'librenms', ?)", (now,))
+    monkeypatch.setattr(_LnmsVlanClient, "vlans", [])
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    assert 30 in {r[0] for r in conn.execute("SELECT vid FROM vlans")}
