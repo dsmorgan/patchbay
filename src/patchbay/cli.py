@@ -47,20 +47,41 @@ def cmd_poll(args: argparse.Namespace) -> int:
         except sqlite3.OperationalError:
             time.sleep(3)
             db.init(conn)
+        from .normalize import normalize
+
+        def run_normalize() -> str:
+            return normalize(conn, settings.aliases, settings.unmanaged,
+                             settings.links, settings.vlan_filters,
+                             prune_declared=settings.declarations_readable)
+
         for name, collector in sorted(collectors.items()):
             try:
                 summary = collector.collect(settings, conn)
-                conn.commit()  # each source lands atomically
-                say(f"[ok]   {name}: {summary}")
             except Exception as e:  # one failing source must not block the others
                 conn.rollback()  # ...and must not commit half a collection
                 say(f"[fail] {name}: {e}", err=True)
                 rc = 1
-        from .normalize import normalize
+                continue
+            # normalize inside the SAME transaction as the source (#38): the
+            # web UI reads whatever is committed, and a collector's raw writes
+            # briefly held alias-named duplicate links until the old
+            # end-of-cycle normalize landed — visible as two parallel cables
+            # mid-poll. A normalize bug must not discard the source's data,
+            # so it gets a savepoint: on failure the collection still commits,
+            # merely unnormalized until the next healthy pass.
+            conn.execute("SAVEPOINT pre_normalize")
+            try:
+                run_normalize()
+                conn.execute("RELEASE pre_normalize")
+            except Exception as e:
+                conn.execute("ROLLBACK TO pre_normalize")
+                conn.execute("RELEASE pre_normalize")
+                say(f"[warn] normalize after {name}: {e}", err=True)
+            conn.commit()  # each source lands atomically
+            say(f"[ok]   {name}: {summary}")
 
-        try:
-            say(f"[ok]   normalize: "
-                f"{normalize(conn, settings.aliases, settings.unmanaged, settings.links, settings.vlan_filters, prune_declared=settings.declarations_readable)}")
+        try:  # the closing pass is the one whose summary the cycle reports
+            say(f"[ok]   normalize: {run_normalize()}")
         except Exception as e:  # a normalize bug must not discard the cycle
             conn.rollback()
             say(f"[fail] normalize: {e}", err=True)
