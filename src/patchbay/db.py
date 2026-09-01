@@ -178,6 +178,20 @@ CREATE TABLE IF NOT EXISTS routes (
     last_seen REAL,
     PRIMARY KEY (device, destination, proto)
 );
+CREATE TABLE IF NOT EXISTS tunnels (
+    id INTEGER PRIMARY KEY,    -- firewall VPN tunnels (#42): first-class
+    device TEXT NOT NULL,      -- objects, NOT interfaces — tunnel virtual
+    type TEXT NOT NULL,        -- interfaces stay out of the port model.
+    name TEXT NOT NULL,        -- type: wireguard | openvpn | ipsec | vpn.
+    peer TEXT,                 -- remote endpoint (host:port). NO key
+    interface TEXT,            -- material, ever — not even public keys.
+    status TEXT,               -- up | down | idle (wireguard: stale
+    last_handshake REAL,       -- handshake) | raw source phrases
+    detail TEXT,               -- short human detail (allowed IPs, SA info)
+    source TEXT NOT NULL,
+    last_seen REAL,
+    UNIQUE (device, type, name)
+);
 CREATE TABLE IF NOT EXISTS app_state (
     key TEXT PRIMARY KEY,      -- internal persisted state (e.g. the generated
     value TEXT NOT NULL        -- session-signing secret when none is configured)
@@ -331,13 +345,37 @@ def upsert_endpoint(conn: sqlite3.Connection, *, mac: str, source: str, **fields
     )
 
 
+def save_tunnels(conn: sqlite3.Connection, *, device: str, source: str,
+                 type_: str, rows: list[dict]) -> None:
+    """One tunnel type's refresh-by-replace: the caller only invokes this
+    when the type's status endpoint actually answered, so an empty rows
+    list means 'no tunnels of this type', not a failed poll (a 403 or
+    error never reaches here — last good data stands). Shared by the
+    firewall collectors."""
+    conn.execute("DELETE FROM tunnels WHERE device = ? AND source = ? AND type = ?",
+                 (device, source, type_))
+    for t in rows:
+        conn.execute(
+            "INSERT INTO tunnels (device, type, name, peer, interface, status, "
+            "last_handshake, detail, source, last_seen) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(device, type, name) DO UPDATE SET peer=excluded.peer, "
+            "interface=excluded.interface, status=excluded.status, "
+            "last_handshake=excluded.last_handshake, detail=excluded.detail, "
+            "source=excluded.source, last_seen=excluded.last_seen",
+            (device, type_, t["name"], t.get("peer"), t.get("interface"),
+             t.get("status"), t.get("last_handshake"), t.get("detail"),
+             source, now()))
+
+
+
 # raw_payloads is a debugging aid, but source APIs return credential fields
 # in otherwise-useful payloads (LibreNMS device rows carry the SNMPv3
 # authpass/cryptopass; UniFi stat/device carries controller keys). Any key
 # whose name contains one of these fragments has its VALUE dropped before
 # storage — overzealous by design, the payload stays useful without it.
 _RAW_SECRET_KEY = re.compile(
-    r"pass|secret|token|community|credential|private|(?:^|_)key(?:$|_)|"
+    r"pass|secret|token|community|credential|private|psk|(?:^|[-_])key(?:$|[-_])|"
     r"x_.*key|authalgo|cryptoalgo", re.I)
 
 

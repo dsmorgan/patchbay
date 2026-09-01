@@ -1531,3 +1531,18 @@ def test_oxidized_vlan_prune_claim_aware(conn, clean_env, monkeypatch):
     OxidizedCollector().collect(_ox_settings(clean_env), conn)
     left = {r[0] for r in conn.execute("SELECT vid FROM vlans")}
     assert left == {22, 31, 40}             # 30 pruned; claimed + foreign kept
+
+
+# --- VPN tunnels (#42) -------------------------------------------------------
+
+def test_scrub_payload_strips_hyphenated_key_fields(conn):
+    from patchbay.db import _scrub_payload
+    out = _scrub_payload({"public-key": "AAA", "preshared-key": "BBB",
+                          "psk": "CCC", "endpoint": "192.0.2.200:51820",
+                          "monkey": "notakey"})
+    assert out["public-key"] == "<stripped>"
+    assert out["preshared-key"] == "<stripped>"
+    assert out["psk"] == "<stripped>"
+    assert out["endpoint"] == "192.0.2.200:51820"
+    assert out["monkey"] == "notakey"
+
