@@ -1546,3 +1546,112 @@ def test_scrub_payload_strips_hyphenated_key_fields(conn):
     assert out["endpoint"] == "192.0.2.200:51820"
     assert out["monkey"] == "notakey"
 
+
+def test_wg_status_thresholds():
+    from patchbay.collectors.opnsense import WG_HANDSHAKE_FRESH, wg_status
+    now = 1_800_000_000.0
+    assert wg_status(None, now) == "down"
+    assert wg_status(0, now) == "down"
+    assert wg_status(now - 30, now) == "up"
+    assert wg_status(now - WG_HANDSHAKE_FRESH - 1, now) == "idle"
+
+
+class _OnsClientVpn(_OnsClient):
+    """Adds WireGuard/OpenVPN/IPsec status payloads to the base stub."""
+    wg_rows = None      # set per-test; None = endpoint answers nothing (404)
+
+    def get(self, url, **kw):
+        outer = self
+
+        class R:
+            status_code = 200
+            text = ""
+            def raise_for_status(self_): pass
+            def json(self_):
+                if "wireguard/service/show" in url:
+                    return {"rows": outer.wg_rows} if outer.wg_rows is not None else None
+                if "searchSessions" in url:
+                    return {"rows": [
+                        {"id": "1", "description": "roadwarrior",
+                         "status": "connected", "real_address": "198.51.100.9:1194"},
+                        {"id": "1", "description": "roadwarrior",
+                         "status": "connected", "real_address": "198.51.100.10:1194"},
+                    ]}
+                if "searchPhase1" in url:
+                    return {"rows": [
+                        {"phase1desc": "site-c", "connected": True,
+                         "remote-addrs": "203.0.113.77", "version": "2"},
+                    ]}
+                return None
+        r = R()
+        if any(s in url for s in ("wireguard/service/show",)) and outer.wg_rows is None:
+            return super().get(url, **kw)
+        if r.json() is not None or any(
+                s in url for s in ("wireguard", "searchSessions", "searchPhase1")):
+            return r
+        return super().get(url, **kw)
+
+
+def test_opnsense_collects_vpn_tunnels(conn, clean_env, monkeypatch):
+    """All three types land as first-class tunnel rows; WireGuard peers are
+    named instance · peer, status from handshake age; OpenVPN sessions fold
+    per instance; no key material reaches the database."""
+    import time
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(_OnsClientVpn, "wg_rows", [
+        {"if": "wg1", "type": "interface", "name": "wg-home",
+         "public-key": "FAKEPUBKEYAAA", "status": "up"},
+        {"if": "wg1", "type": "peer", "name": "site-b",
+         "public-key": "FAKEPUBKEYBBB", "endpoint": "192.0.2.200:51820",
+         "allowed-ips": "172.16.44.0/24",
+         "latest-handshake": time.time() - 30},
+    ])
+    monkeypatch.setattr(httpx, "Client", _OnsClientVpn)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    rows = {(r["type"], r["name"]): dict(r) for r in
+            conn.execute("SELECT * FROM tunnels")}
+    wg = rows[("wireguard", "wg-home · site-b")]
+    assert wg["peer"] == "192.0.2.200:51820" and wg["interface"] == "wg1"
+    assert wg["status"] == "up" and wg["detail"] == "allowed 172.16.44.0/24"
+    ov = rows[("openvpn", "roadwarrior")]
+    assert ov["status"] == "up" and ov["detail"] == "2 sessions"
+    sa = rows[("ipsec", "site-c")]
+    assert sa["status"] == "up" and sa["peer"] == "203.0.113.77"
+    assert sa["detail"] == "IKEv2"
+    # no key material anywhere — tunnels or raw payloads
+    for table in ("tunnels", "raw_payloads"):
+        for r in conn.execute(f"SELECT * FROM {table}"):
+            assert "FAKEPUBKEY" not in str(tuple(r))
+
+
+def test_opnsense_absent_tunnel_endpoints_keep_rows(conn, clean_env, monkeypatch):
+    """A firewall without the endpoints (older release) answers nothing —
+    previously collected tunnel rows must stand, and the poll must not
+    fail."""
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    conn.execute("INSERT INTO tunnels (device, type, name, status, source, "
+                 "last_seen) VALUES ('fw1', 'wireguard', 'site-b', 'up', "
+                 "'opnsense', ?)", (pdb.now(),))
+    monkeypatch.setattr(httpx, "Client", _OnsClient)   # base stub: no VPN answers
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert conn.execute("SELECT COUNT(*) FROM tunnels").fetchone()[0] == 1
+
+
+def test_opnsense_empty_tunnel_listing_prunes_own_rows(conn, clean_env, monkeypatch):
+    """An answered-but-empty listing is the truth: stale rows of that type
+    leave. Other devices' rows are not this collector's to prune."""
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    conn.execute("INSERT INTO tunnels (device, type, name, status, source, "
+                 "last_seen) VALUES ('fw1', 'wireguard', 'old-peer', 'up', "
+                 "'opnsense', ?)", (pdb.now(),))
+    conn.execute("INSERT INTO tunnels (device, type, name, status, source, "
+                 "last_seen) VALUES ('fw9', 'wireguard', 'other-site', 'up', "
+                 "'pfsense', ?)", (pdb.now(),))
+    monkeypatch.setattr(_OnsClientVpn, "wg_rows", [])
+    monkeypatch.setattr(httpx, "Client", _OnsClientVpn)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    left = {(r["device"], r["name"]) for r in conn.execute("SELECT * FROM tunnels")}
+    assert ("fw1", "old-peer") not in left
+    assert ("fw9", "other-site") in left
+    # the answered openvpn/ipsec listings landed their rows normally
+    assert ("fw1", "roadwarrior") in left and ("fw1", "site-c") in left

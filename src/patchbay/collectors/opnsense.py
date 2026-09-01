@@ -94,6 +94,18 @@ NAME = "opnsense"
 
 _TUNNEL_PREFIXES = ("tun", "ovpn", "gif", "gre", "ipsec", "wg")
 
+# WireGuard has no session state: liveness is inferred from the latest
+# handshake. Under traffic (or persistent keepalive) a healthy peer
+# re-handshakes at least every ~2–3 minutes; older than this the tunnel is
+# 'idle' — configured and possibly fine, just not provably alive.
+WG_HANDSHAKE_FRESH = 5 * 60
+
+
+def wg_status(last_handshake: float | None, now: float) -> str:
+    if not last_handshake:          # 0 or None: never completed a handshake
+        return "down"
+    return "up" if now - last_handshake <= WG_HANDSHAKE_FRESH else "idle"
+
 
 def _parse_line_rate(stats: dict) -> int | None:
     raw = stats.get("line rate", "")  # "1000000000 bit/s"
@@ -124,10 +136,15 @@ class OpnsenseCollector:
         auth = (settings.opnsense_api_key, settings.opnsense_api_secret)
         notes: list[str] = []
 
-        def get(path: str) -> Any | None:
+        def get(path: str, optional: bool = False) -> Any | None:
             r = client.get(f"{base}/{path}", auth=auth)
             if r.status_code == 403:
                 notes.append(f"{path}: 403 (grant the matching page privilege)")
+                return None
+            if optional and r.status_code in (400, 404):
+                # an endpoint this OPNsense doesn't have (older release,
+                # plugin not installed) — degrade to "no opinion", never
+                # fail the whole poll over it
                 return None
             r.raise_for_status()
             return r.json()
@@ -216,6 +233,91 @@ class OpnsenseCollector:
                         (g.get("name"), g.get("address"), g.get("status_translated") or g.get("status"),
                          g.get("loss"), g.get("delay"), NAME, db.now()),
                     )
+
+            # VPN tunnels (#42): first-class objects, never interfaces (the
+            # export above keeps skipping tun/ovpn/wg/ipsec). Each type's
+            # endpoint is guarded independently — a 403 on one must not
+            # wipe another's rows, and an answered-but-empty listing is the
+            # truth ("no tunnels of this type"). No key material is stored,
+            # not even public keys.
+            n_tunnels = 0
+            wg = get("wireguard/service/show", optional=True)
+            if wg is not None:
+                rows = wg.get("rows", []) if isinstance(wg, dict) else []
+                peers = []
+                iface_name: dict[str, str] = {}   # wg device -> instance name
+                for r in rows:
+                    if r.get("type") == "interface":
+                        dev_if = r.get("if") or r.get("device")
+                        if dev_if and r.get("name"):
+                            iface_name[dev_if] = r["name"]
+                for r in rows:
+                    if r.get("type") != "peer":
+                        continue
+                    dev_if = r.get("if") or r.get("device")
+                    try:
+                        hs = float(r.get("latest-handshake") or 0) or None
+                    except (TypeError, ValueError):
+                        hs = None
+                    pname = r.get("name") or r.get("public-key", "")[:8] or "peer"
+                    inst = iface_name.get(dev_if)
+                    peers.append({
+                        "name": f"{inst} · {pname}" if inst else pname,
+                        "peer": r.get("endpoint") or None,
+                        "interface": dev_if,
+                        "status": wg_status(hs, db.now()),
+                        "last_handshake": hs,
+                        "detail": (f"allowed {r['allowed-ips']}"
+                                   if r.get("allowed-ips") else None),
+                    })
+                db.save_tunnels(conn, device=short_name, source=NAME,
+                             type_="wireguard", rows=peers)
+                n_tunnels += len(peers)
+
+            ovpn = get("openvpn/service/searchSessions", optional=True)
+            if ovpn is not None:
+                rows = ovpn.get("rows", []) if isinstance(ovpn, dict) else []
+                # a server instance lists one row per connected client; fold
+                # to one tunnel per instance with a client count
+                by_name: dict[str, dict] = {}
+                for r in rows:
+                    nm = r.get("description") or f"instance {r.get('id', '?')}"
+                    st = str(r.get("status") or "").lower()
+                    up = st in ("connected", "ok", "up", "online")
+                    t = by_name.setdefault(nm, {
+                        "name": nm, "peer": None, "interface": None,
+                        "status": "down", "sessions": 0})
+                    t["sessions"] += 1 if up else 0
+                    if up:
+                        t["status"] = "up"
+                        t["peer"] = t["peer"] or r.get("real_address") or None
+                for t in by_name.values():
+                    n_sess = t.pop("sessions")
+                    t["detail"] = f"{n_sess} sessions" if n_sess > 1 else None
+                db.save_tunnels(conn, device=short_name, source=NAME,
+                             type_="openvpn", rows=list(by_name.values()))
+                n_tunnels += len(by_name)
+
+            ipsec = get("ipsec/sessions/searchPhase1", optional=True)
+            if ipsec is not None:
+                rows = ipsec.get("rows", []) if isinstance(ipsec, dict) else []
+                sas = []
+                for r in rows:
+                    nm = r.get("phase1desc") or r.get("name") \
+                        or f"ikeid {r.get('ikeid', '?')}"
+                    connected = r.get("connected")
+                    up = connected is True or str(connected).lower() in ("1", "true", "connected")
+                    remote = r.get("remote-addrs") or r.get("remote_addrs")
+                    sas.append({"name": nm, "peer": remote or None,
+                                "interface": None,
+                                "status": "up" if up else "down",
+                                "detail": (f"IKEv{r['version']}"
+                                           if r.get("version") else None)})
+                db.save_tunnels(conn, device=short_name, source=NAME,
+                             type_="ipsec", rows=sas)
+                n_tunnels += len(sas)
+            if n_tunnels:
+                notes.append(f"{n_tunnels} vpn tunnels")
 
             arp = get("diagnostics/interface/get_arp") or get("diagnostics/interface/getArp")
             if arp is not None:
