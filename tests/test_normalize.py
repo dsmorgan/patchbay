@@ -764,10 +764,14 @@ def test_rename_rewrites_routes_roles_and_config_history(conn):
                  "('fw1.example.lan', 'igc3', 'monitor-dst', 'span', 'config')")
     conn.execute("INSERT INTO config_revisions (device, fetched_at, sha, text) "
                  "VALUES ('fw1.example.lan', 1000, 'a', '<x/>')")
+    conn.execute("INSERT INTO tunnels (device, type, name, status, source, last_seen) "
+                 "VALUES ('fw1.example.lan', 'wireguard', 'site-b', 'up', 'opnsense', ?)",
+                 (NOW,))
     normalize(conn)
     assert conn.execute("SELECT device FROM routes").fetchone()[0] == "fw1"
     assert conn.execute("SELECT device FROM port_roles").fetchone()[0] == "fw1"
     assert conn.execute("SELECT device FROM config_revisions").fetchone()[0] == "fw1"
+    assert conn.execute("SELECT device FROM tunnels").fetchone()[0] == "fw1"
 
 
 def test_expired_unmanaged_switch_takes_its_endpoints_along(conn):

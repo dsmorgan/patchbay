@@ -176,6 +176,8 @@ def _rename_refs(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE OR IGNORE port_roles SET device=? WHERE device=?", (canon, alias))
         conn.execute("DELETE FROM port_roles WHERE device=?", (alias,))
         conn.execute("UPDATE config_revisions SET device=? WHERE device=?", (canon, alias))
+        conn.execute("UPDATE OR IGNORE tunnels SET device=? WHERE device=?", (canon, alias))
+        conn.execute("DELETE FROM tunnels WHERE device=?", (alias,))
     # renames can flip a row out of upsert_link's sorted orientation, hiding
     # it from the UNIQUE constraint and from pair-keyed deletes — restore it.
     # A collision with an already-sorted twin merges timestamps (same rule
