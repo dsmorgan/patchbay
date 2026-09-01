@@ -91,9 +91,11 @@ def test_demo_is_deterministic(tmp_path):
 
 
 def test_demo_routed_view_finds_the_uplink(clean_env, tmp_path):
-    """The demo exercises WAN discovery and the participation filter: the
-    uplink VLAN (no subnet record) resolves as the wan rail from the
-    default route's exit interface, and the IPAM aggregate never rails."""
+    """The demo exercises WAN discovery, the participation filter, and the
+    tunnel egress (#42): the uplink VLAN (no subnet record) resolves as the
+    wan rail from the default route's exit interface, the IPAM aggregate
+    never rails, and the site-b subnet rails only because the WireGuard
+    route reaches it."""
     from patchbay.config import load_settings
     from patchbay.routed import build_routed_graph
 
@@ -102,5 +104,8 @@ def test_demo_routed_view_finds_the_uplink(clean_env, tmp_path):
     by = {r["key"]: r for r in g["rails"]}
     assert g["default"]["rail"] == "v199"
     assert by["v199"]["wan"] is True
-    assert not any(k.startswith("net:") for k in by)   # aggregate filtered
+    assert "net:2001:db8::/32" not in by               # aggregate filtered
+    assert by["net:172.16.44.0/24"]["via_tunnel"] == ["site-b · wg-peer"]
+    assert g["tunnels"][0]["rails"] == ["net:172.16.44.0/24"]
+    assert g["tunnels"][0]["label"] == "WireGuard"
     c.close()

@@ -155,6 +155,18 @@ def seed(conn: sqlite3.Connection, *, rnd: random.Random | None = None) -> str:
                      "gateway, interface, proto, flags, source, last_seen) "
                      "VALUES ('fw1', ?, ?, 'vmx0', ?, 'UGS', 'opnsense', ?)",
                      (dest, gw, proto, now))
+    # a WireGuard tunnel to a second site (#42): the tunnel node draws
+    # beside the internet cloud, and the site-b subnet hangs off it via
+    # the route through wg1
+    db.save_tunnels(conn, device="fw1", source="opnsense", type_="wireguard",
+                    rows=[{"name": "site-b · wg-peer", "peer": "192.0.2.200:51820",
+                           "interface": "wg1", "status": "up",
+                           "last_handshake": now - 45,
+                           "detail": "allowed 172.16.44.0/24"}])
+    conn.execute("INSERT OR REPLACE INTO routes (device, destination, "
+                 "gateway, interface, proto, flags, source, last_seen) "
+                 "VALUES ('fw1', '172.16.44.0/24', NULL, 'wg1', 'ipv4', "
+                 "'UGS', 'opnsense', ?)", (now,))
 
     # switches: full port complement, descriptions carry the panel tags
     for dev, prefix, count, speed in (("core1", "1/0/", 24, 10_000_000_000),
