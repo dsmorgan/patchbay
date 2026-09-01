@@ -1655,3 +1655,54 @@ def test_opnsense_empty_tunnel_listing_prunes_own_rows(conn, clean_env, monkeypa
     assert ("fw9", "other-site") in left
     # the answered openvpn/ipsec listings landed their rows normally
     assert ("fw1", "roadwarrior") in left and ("fw1", "site-c") in left
+
+
+class _PfClientVpn(PfClient):
+    """Adds a WireGuard VPN gateway and OpenVPN/IPsec status payloads."""
+
+    def get(self, url, **kw):
+        if url.endswith("status/gateways"):
+            return PfResponse([
+                {"name": "WAN_DHCP", "interface": "igc0", "status": "online",
+                 "monitorip": "203.0.113.1", "loss": "0.0", "stddev": "1.2"},
+                {"name": "WG_HOME_VPNV4", "interface": "tun_wg0",
+                 "status": "online", "monitorip": "172.16.44.1"},
+                {"name": "HOME_VPNV4", "interface": "ovpnc1", "status": "online"},
+            ])
+        if url.endswith("status/openvpn"):
+            return PfResponse([{"name": "site-a", "conns": [{}, {}]}])
+        if url.endswith("status/ipsec"):
+            return PfResponse([{"con_id": "con1", "state": "ESTABLISHED",
+                                "remote_host": "203.0.113.5", "version": 2}])
+        return super().get(url, **kw)
+
+
+def test_pfsense_vpn_gateways_and_status_become_tunnels(conn, clean_env, monkeypatch):
+    """The WireGuard gateway (pfrest has no WG status endpoint) becomes
+    tunnel health instead of being dropped; OpenVPN/IPsec come from their
+    status endpoints; VPN gateways still stay out of the gateways table."""
+    from patchbay.collectors.pfsense import PfsenseCollector
+    monkeypatch.setattr(httpx, "Client", _PfClientVpn)
+    PfsenseCollector().collect(_pf_settings(clean_env), conn)
+    rows = {(r["type"], r["name"]): dict(r) for r in
+            conn.execute("SELECT * FROM tunnels")}
+    wg = rows[("wireguard", "WG_HOME_VPNV4")]
+    assert wg["status"] == "up" and wg["interface"] == "tun_wg0"
+    assert rows[("openvpn", "site-a")]["detail"] == "2 clients"
+    assert rows[("ipsec", "con1")]["status"] == "up"
+    gw_names = {r[0] for r in conn.execute("SELECT name FROM gateways")}
+    assert "WG_HOME_VPNV4" not in gw_names and "HOME_VPNV4" not in gw_names
+    assert "WAN_DHCP" in gw_names
+
+
+def test_pfsense_absent_vpn_status_endpoints_keep_rows(conn, clean_env, monkeypatch):
+    """Base stub 404s status/openvpn and status/ipsec: previously stored
+    rows of those types survive the poll."""
+    from patchbay.collectors.pfsense import PfsenseCollector
+    conn.execute("INSERT INTO tunnels (device, type, name, status, source, "
+                 "last_seen) VALUES ('fw2', 'openvpn', 'site-a', 'up', "
+                 "'pfsense', ?)", (pdb.now(),))
+    monkeypatch.setattr(httpx, "Client", PfClient)
+    PfsenseCollector().collect(_pf_settings(clean_env), conn)
+    assert conn.execute("SELECT COUNT(*) FROM tunnels WHERE type='openvpn'"
+                        ).fetchone()[0] == 1

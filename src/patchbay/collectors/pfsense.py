@@ -219,18 +219,35 @@ class PfsenseCollector:
             if gw_status:
                 conn.execute("DELETE FROM gateways WHERE source = ?", (NAME,))
                 db.save_raw(conn, source=NAME, endpoint="status/gateways", payload=gw_status)
+            # VPN gateways don't belong in the WAN gateway table, but their
+            # monitor status is tunnel health (#42). WireGuard has no status
+            # endpoint in pfrest v2, so its gateway is the only liveness
+            # signal; OpenVPN/IPsec have real status endpoints below, so
+            # their gateways are just skipped (no duplicate tunnel rows).
+            wg_rows: list[dict] = []
             for gw in (gw_status if isinstance(gw_status, list) else []):
                 gw_name = gw.get("name")
                 if not gw_name:
                     continue
-                # Skip gateways whose interface is a tunnel (by id set or name prefix)
                 gw_iface = gw.get("interface") or gw.get("friendlyiface") or ""
-                if gw_iface in tunnel_iface_ids or _is_tunnel(gw_iface):
-                    continue
-                # Also skip if the gateway name itself ends with VPN tier suffixes
-                # (catches WireGuard peers whose interface type isn't reported as wireguard)
-                if gw_name.upper().endswith(("_VPNV4", "_VPNV6", "_VPN", "_GW")) \
-                        and any(kw in gw_name.upper() for kw in ("VPN", "WG", "TUN", "OVPN")):
+                is_vpn_gw = (gw_iface in tunnel_iface_ids or _is_tunnel(gw_iface)
+                             or (gw_name.upper().endswith(("_VPNV4", "_VPNV6", "_VPN", "_GW"))
+                                 and any(kw in gw_name.upper()
+                                         for kw in ("VPN", "WG", "TUN", "OVPN"))))
+                if is_vpn_gw:
+                    if "WG" in gw_name.upper() or gw_iface.lower().startswith(("wg", "tun_wg")):
+                        raw_status = (gw.get("status") or "").lower()
+                        wg_rows.append({
+                            "name": gw_name,
+                            "peer": gw.get("monitorip") or None,
+                            "interface": gw_iface or None,
+                            "status": ("up" if raw_status == "online" else
+                                       "down" if raw_status in ("down", "loss")
+                                       else raw_status or None),
+                            "detail": (f"loss {gw['loss']}"
+                                       if gw.get("loss") not in (None, "", "0.0%", "0%")
+                                       else None),
+                        })
                     continue
                 # Map pfSense status string → patchbay status.
                 # API returns "status": "online"|"down"|"unknown"|"loss" (string, not bool).
@@ -253,6 +270,51 @@ class PfsenseCollector:
                      status,
                      gw.get("loss"), gw.get("stddev"), NAME, db.now()),
                 )
+
+            # VPN tunnels (#42): each type's rows land only when its own
+            # signal actually answered — a 403/404 (get() returns None)
+            # keeps last good data. Tunnel *interfaces* stay excluded above.
+            if gw_status:
+                db.save_tunnels(conn, device=dev_name, source=NAME,
+                                type_="wireguard", rows=wg_rows)
+
+            ovpn = get("api/v2/status/openvpn")
+            if ovpn is not None:
+                rows = []
+                for i, s in enumerate(ovpn if isinstance(ovpn, list) else []):
+                    nm = s.get("name") or f"openvpn {i}"
+                    conns = s.get("conns") or []
+                    raw = str(s.get("status") or "").lower()
+                    rows.append({
+                        "name": nm,
+                        "peer": s.get("remote_host") or None,
+                        "interface": None,
+                        # servers report no status word — being listed means
+                        # running; clients carry an explicit one
+                        "status": ("up" if raw in ("up", "connected", "ok", "")
+                                   else raw),
+                        "detail": (f"{len(conns)} clients" if conns else None),
+                    })
+                db.save_tunnels(conn, device=dev_name, source=NAME,
+                                type_="openvpn", rows=rows)
+
+            ipsec = get("api/v2/status/ipsec")
+            if ipsec is not None:
+                rows = []
+                for i, sa in enumerate(ipsec if isinstance(ipsec, list) else []):
+                    nm = (sa.get("con_id") or sa.get("con-id")
+                          or sa.get("name") or f"ipsec {i}")
+                    state = str(sa.get("state") or "").lower()
+                    rows.append({
+                        "name": str(nm),
+                        "peer": sa.get("remote_host") or None,
+                        "interface": None,
+                        "status": "up" if state == "established" else (state or None),
+                        "detail": (f"IKEv{sa['version']}"
+                                   if sa.get("version") else None),
+                    })
+                db.save_tunnels(conn, device=dev_name, source=NAME,
+                                type_="ipsec", rows=rows)
 
             # DHCP static mappings as endpoints (hostname + IP + MAC)
             dhcp_servers = get("api/v2/services/dhcp_servers") or []
