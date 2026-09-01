@@ -190,3 +190,66 @@ def test_wan_rail_falls_back_to_gateway_address(conn):
                  "('fw1', '0.0.0.0/0', '198.51.100.254', 'wan0', 'ipv4', 'UGS', 'test')")
     g = build_routed_graph(conn, _S())
     assert g["default"]["rail"] == "v20"
+
+
+def test_tunnel_routed_subnet_hangs_off_the_tunnel(conn):
+    """A route whose exit interface is a tunnel's puts its destination on
+    the map as that tunnel's rail — participation via reachability, even
+    with nothing local attached (#42)."""
+    seed_site(conn)
+    conn.execute("INSERT INTO tunnels (device, type, name, peer, interface, "
+                 "status, source, last_seen) VALUES "
+                 "('fw1', 'wireguard', 'site-b', '192.0.2.200:51820', 'wg1', "
+                 "'up', 'opnsense', ?)", (pdb.now(),))
+    conn.execute("INSERT INTO routes (device, destination, interface, proto, "
+                 "flags, source) VALUES "
+                 "('fw1', '172.16.44.0/24', 'wg1', 'ipv4', 'UGS', 'test')")
+    g = build_routed_graph(conn, _S())
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["net:172.16.44.0/24"]["via_tunnel"] == ["site-b"]
+    (t,) = g["tunnels"]
+    assert t["label"] == "WireGuard" and t["rails"] == ["net:172.16.44.0/24"]
+
+
+def test_tunnel_route_matches_unique_type_by_prefix(conn):
+    """openvpn/ipsec rows don't always know their interface name: a route
+    out ovpnc1 attaches to the only openvpn tunnel; with two candidates
+    nothing is guessed."""
+    seed_site(conn)
+    conn.execute("INSERT INTO tunnels (device, type, name, status, source, "
+                 "last_seen) VALUES ('fw1', 'openvpn', 'roadwarrior', 'up', "
+                 "'opnsense', ?)", (pdb.now(),))
+    conn.execute("INSERT INTO tunnels (device, type, name, status, source, "
+                 "last_seen) VALUES ('fw1', 'ipsec', 'sa-1', 'up', "
+                 "'opnsense', ?)", (pdb.now(),))
+    conn.execute("INSERT INTO tunnels (device, type, name, status, source, "
+                 "last_seen) VALUES ('fw1', 'ipsec', 'sa-2', 'up', "
+                 "'opnsense', ?)", (pdb.now(),))
+    conn.execute("INSERT INTO routes (device, destination, interface, proto, "
+                 "flags, source) VALUES "
+                 "('fw1', '172.16.45.0/24', 'ovpnc1', 'ipv4', 'UGS', 'test')")
+    conn.execute("INSERT INTO routes (device, destination, interface, proto, "
+                 "flags, source) VALUES "
+                 "('fw1', '172.16.46.0/24', 'ipsec1', 'ipv4', 'UGS', 'test')")
+    g = build_routed_graph(conn, _S())
+    by_name = {t["name"]: t for t in g["tunnels"]}
+    assert by_name["roadwarrior"]["rails"] == ["net:172.16.45.0/24"]
+    assert by_name["sa-1"]["rails"] == [] and by_name["sa-2"]["rails"] == []
+    assert not any(r["key"] == "net:172.16.46.0/24" for r in g["rails"])
+
+
+def test_tunnel_route_into_documented_rail_reuses_it(conn):
+    """A remote subnet already documented (IPAM) keeps its rail — the
+    tunnel attaches to it instead of inventing a net: twin."""
+    seed_site(conn)
+    conn.execute("INSERT INTO tunnels (device, type, name, interface, status, "
+                 "source, last_seen) VALUES ('fw1', 'wireguard', 'site-b', "
+                 "'wg1', 'up', 'opnsense', ?)", (pdb.now(),))
+    conn.execute("INSERT INTO routes (device, destination, interface, proto, "
+                 "flags, source) VALUES "
+                 "('fw1', '203.0.113.0/24', 'wg1', 'ipv4', 'UGS', 'test')")
+    g = build_routed_graph(conn, _S())
+    (t,) = g["tunnels"]
+    assert t["rails"] == ["v103"]           # the documented rail, not net:
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v103"]["via_tunnel"] == ["site-b"]

@@ -32,6 +32,17 @@
   #routed .raildot { fill: var(--accent); }
   #routed .raildot.unrouted { fill: var(--muted); }
   #routed .cloud { fill: var(--card); stroke: var(--line); }
+  /* VPN tunnels: dashed, firewall-purple — an egress that is not the
+     provider cloud, even though the encrypted transport rides it */
+  #routed .tuncloud { fill: var(--card); stroke: var(--r-firewall);
+                      stroke-dasharray: 6 4; }
+  #routed .tunpath { stroke: var(--r-firewall); stroke-width: 1.4;
+                     stroke-dasharray: 4 3; opacity: 0.65; }
+  #routed .tundrop { stroke: var(--r-firewall); stroke-width: 1.6;
+                     stroke-dasharray: 6 4; fill: none; }
+  #routed .tunstat.up { fill: var(--ok); }
+  #routed .tunstat.down { fill: var(--crit); }
+  #routed .tunstat.idle { fill: var(--warn); }
   #routed .router rect { fill: var(--card); stroke: var(--r-firewall);
                          stroke-width: 1.4; rx: 8; }
   #routed .vtag rect { fill: var(--vbox, var(--hover)); stroke: var(--line); }
@@ -67,6 +78,7 @@
   <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--accent)" stroke-width="2"/></svg> routed network</span>
   <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--muted)" stroke-width="2" opacity="0.75"/></svg> not routed</span>
   <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ok)" stroke-width="2"/></svg> internet uplink</span>
+  <span class="item"><svg width="26" height="14"><ellipse cx="13" cy="7" rx="12" ry="6" fill="none" stroke="var(--r-firewall)" stroke-width="1.2" stroke-dasharray="4 3"/></svg> VPN tunnel</span>
   <span class="item"><svg width="26" height="12"><rect x="0" y="0" width="26" height="12" fill="var(--hover)" stroke="var(--line)"/></svg> VLAN label</span>
   <span class="item"><svg width="14" height="14"><circle cx="7" cy="7" r="3.5" fill="var(--accent)" stroke="var(--card)" stroke-width="1.5"/></svg> attached at the rim</span>
   <span class="item"><svg width="30" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="var(--muted)" stroke-width="1.2"/><circle cx="26" cy="5" r="3" fill="var(--accent)"/></svg> attached beyond the box</span>
@@ -105,7 +117,8 @@ const G = { left: 90, gap: 55, railTop: 250, tagRow: [268, 292],
 const rails = rg.rails, nR = rails.length;
 // the viewBox hugs the content: rails span + margins, but never narrower
 // than the internet cloud over the routing tier
-const W = Math.max(G.left * 2 + (nR - 1) * G.gap + 40, 480);
+const W = Math.max(G.left * 2 + (nR - 1) * G.gap + 40, 480)
+        + ((rg.tunnels || []).length ? (rg.tunnels || []).length * 175 + 40 : 0);
 const maxRow = rg.hosts.length ? Math.max(...rg.hosts.map(h => h.row)) : 0;
 const H = Math.max(700, G.hostY0 + (maxRow + 1) * G.rowH + G.bottomPad);
 const railX = i => G.left + i * G.gap;
@@ -201,6 +214,33 @@ if (router) {
     track(fan, [r.key]);
   });
 }
+
+// VPN tunnels: egress nodes beside the cloud; the networks reached through
+// one hang off IT, not the provider cloud. The dashed path down to the
+// router is the encrypted transport terminating there.
+(rg.tunnels || []).forEach((t, i) => {
+  const tx = midX + 96 + 110 + i * 175;
+  const g = el("g", { class: "tunnel" });
+  if (router)
+    track(el("line", { x1: tx - 30, y1: 73, x2: midX + rw / 2 - 20, y2: ry + 6,
+                       class: "tunpath" }), t.rails);
+  t.rails.forEach(k => {
+    if (!(k in pos)) return;
+    track(el("line", { x1: tx, y1: 75, x2: railX(pos[k]), y2: G.railTop,
+                       class: "tundrop" }), [k]);
+  });
+  el("ellipse", { cx: tx, cy: 48, rx: 80, ry: 27, class: "tuncloud" }, g);
+  el("text", { x: tx, y: 45, "text-anchor": "middle", class: "rlabel" }, g, t.name);
+  el("text", { x: tx, y: 60, "text-anchor": "middle",
+               class: "gwlabel tunstat " + (t.status || "") }, g,
+     t.label + (t.status ? " · " + t.status : ""));
+  title(g, [`${t.label} tunnel · ${t.name}`,
+            t.peer ? `peer ${t.peer}` : "",
+            t.detail || "",
+            t.rails.length ? "" : "no routed networks recorded",
+            `status ${t.status || "unknown"}`].filter(Boolean).join("\n"));
+  if (t.rails.length) { track(g, t.rails); wireHover(g, t.rails); }
+});
 rails.forEach((r, i) => {
   const x = railX(i);
   const cls = "rail" + (r.routed ? "" : " unrouted") + (r.wan ? " wan" : "");
@@ -208,11 +248,13 @@ rails.forEach((r, i) => {
   const dot = el("circle", { cx: x, cy: G.railTop, r: 3.4,
                              class: "raildot" + (r.routed ? "" : " unrouted")
                                     + (r.wan ? " wan" : "") });
+  const viaTun = (r.via_tunnel || []).length;
   const tip = [`${r.name || "?"}${r.vid != null ? " · VLAN " + r.vid : ""}`,
                r.wan ? `internet uplink (${rg.wan_names[0] || "wan"})` : "",
+               viaTun ? `via tunnel ${r.via_tunnel.join(", ")}` : "",
                ...(r.subnets.length ? r.subnets : ["no subnet recorded"]),
                r.gateway ? `gateway ${r.gateway}`
-                         : (r.routed || r.wan ? "" : "not routed"),
+                         : (r.routed || r.wan || viaTun ? "" : "not routed"),
                `sources: ${r.sources.join(", ")}`].filter(Boolean).join("\n");
   [line, dot].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); title(e, tip); });
 

@@ -165,6 +165,60 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             wan_rail = rails.rail_of_ip(default["gateway"])
         default["rail"] = wan_rail
 
+    # VPN tunnels (#42): egress objects beside the internet cloud. A rail
+    # reached *through* a tunnel (a route whose exit interface is the
+    # tunnel's) hangs off the tunnel node, not the provider cloud — and it
+    # draws even when nothing local has a leg on it, because reachability
+    # through the tunnel is its participation. Routes are matched to a
+    # tunnel by exact interface first, else by interface-prefix type when
+    # exactly one tunnel of that type exists (openvpn/ipsec rows don't
+    # always know their interface name).
+    tun_rows = conn.execute(
+        "SELECT * FROM tunnels ORDER BY device, type, name").fetchall()
+    tunnels: list[dict] = []
+    if tun_rows:
+        type_label = {"wireguard": "WireGuard", "openvpn": "OpenVPN",
+                      "ipsec": "IPsec", "vpn": "VPN"}
+        tunnels = [{"name": t["name"], "type": t["type"],
+                    "label": type_label.get(t["type"], "VPN"),
+                    "status": t["status"], "device": t["device"],
+                    "peer": t["peer"], "detail": t["detail"],
+                    "rails": set()} for t in tun_rows]
+        by_iface = {t["interface"]: i for i, t in enumerate(tun_rows)
+                    if t["interface"]}
+        by_type: dict[str, list[int]] = {}
+        for i, t in enumerate(tun_rows):
+            by_type.setdefault(t["type"], []).append(i)
+        pfx_type = (("tun_wg", "wireguard"), ("wg", "wireguard"),
+                    ("ovpn", "openvpn"), ("ipsec", "ipsec"), ("enc", "ipsec"))
+        for r in conn.execute(
+                "SELECT destination, interface, flags FROM routes "
+                "WHERE destination NOT IN ('0.0.0.0/0', '::/0')"):
+            if any(f in (r["flags"] or "") for f in ("B", "R")):
+                continue
+            iface = r["interface"] or ""
+            idx = by_iface.get(iface)
+            if idx is None and iface:
+                for pfx, typ in pfx_type:
+                    if iface.startswith(pfx) and len(by_type.get(typ, [])) == 1:
+                        idx = by_type[typ][0]
+                        break
+            if idx is None:
+                continue
+            dest = _net(r["destination"])
+            if dest is None:
+                continue
+            # an existing rail containing the destination wins (the remote
+            # subnet may be documented in IPAM); else the route itself is
+            # the rail's reason to exist
+            key = rails.rail_of_ip(str(dest.network_address))
+            if key is None:
+                rails.add_subnet(r["destination"], None, None, "route")
+                key = f"net:{r['destination']}"
+            tunnels[idx]["rails"].add(key)
+        for t in tunnels:
+            t["rails"] = sorted(t["rails"])
+
     # hosts: multi-homed devices draw once; single-homed collapse to a count.
     # Routers live in the routing tier, never as host boxes.
     hosts, single = [], {k: 0 for k in rails.rails}
@@ -199,6 +253,9 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             if r["routed"] or single.get(k, 0) or k in attached}
     if wan_rail and wan_rail not in live:   # the way out always draws
         live[wan_rail] = rails.rails[wan_rail]
+    for t in tunnels:                       # so does the far side of a tunnel
+        for k in t["rails"]:
+            live.setdefault(k, rails.rails[k])
 
     order = order_rails(live, hosts, declared=getattr(
         settings, "routed_order", ()) or ())
@@ -210,17 +267,23 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     for h, row in zip(hosts, rows):
         h["row"] = row
 
+    via_tunnel: dict[str, list[str]] = {}
+    for t in tunnels:
+        for k in t["rails"]:
+            via_tunnel.setdefault(k, []).append(t["name"])
     out_rails = []
     for k in order:
         r = live[k]
         out_rails.append({**r, "sources": sorted(r["sources"]),
-                          "hosts": single.get(k, 0), "wan": k == wan_rail})
+                          "hosts": single.get(k, 0), "wan": k == wan_rail,
+                          "via_tunnel": via_tunnel.get(k, [])})
     return {
         "rails": out_rails,
         "routers": routers,
         "default": default,
         "gateways": gws,
         "hosts": hosts,
+        "tunnels": tunnels,
         "wan_names": list(getattr(settings, "wan_names", ()) or ()),
     }
 
