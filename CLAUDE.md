@@ -61,6 +61,14 @@ site-specific leaked into code, tests, or docs.
   `vmx0`). Upsert-only stores rot: nothing lies, things just never leave. The
   add-an-integration-later path is the only way to catch this; CONTRIBUTING.md
   has the method.
+- **Tunnels are objects, not interfaces**: firewall VPN tunnels live in the
+  `tunnels` table (type, peer, status — never key material, not even public
+  keys); tunnel interfaces (`wg*`, `ovpn*`, `ipsec*`, `tun_wg*`) stay out of
+  the port model. Each type refreshes-by-replace only when its endpoint
+  answered — `None` (403/404, missing plugin) keeps the last good rows;
+  answered-empty is truth and prunes. WireGuard status derives from handshake
+  age (fresh / idle / down). On the routed view a subnet reachable through a
+  tunnel rails off the tunnel node; that reachability *is* its participation.
 - **Merge rules in `normalize._merge_group`** encode "fresh beats stale, real beats
   placeholder": junk values (`generic`, `amd64`, …) count as absent; versioned OS
   beats a bare fingerprint; status comes from the row with the freshest `last_seen`;
@@ -93,6 +101,14 @@ site-specific leaked into code, tests, or docs.
   the two drift. The map lives in `templates/_topomap.html`, shared by both;
   set `snapshot = true` before including it. `font_url` is the one style knob
   the snapshot overrides (the bundled typeface as a data URI, like d3).
+- **The frontend stays frameworkless**: Jinja templates + vanilla JS + one
+  vendored d3, no build step, no npm. React Flow was evaluated (2026-09) and
+  declined — it wouldn't solve layout, and it would break the
+  snapshot-reuses-the-live-template guarantee. UI polish lives in issues
+  #43–#48 (edge chips, node-card refresh, detail side panel, nav totals,
+  derived group containers, hover-only port labels); each carries its
+  patchbay-fit constraints. Color = reporter on edges stays authoritative —
+  new visual channels must not reassign it.
 - **Navigation is data**: `NAV` and `NAV_ICONS` in `web.py`; the rail in
   `base.html` renders from them. Groups are named for the question a page
   answers (Network: what's out there and how it's wired; Records: what the

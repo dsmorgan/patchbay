@@ -102,8 +102,15 @@ and renders one navigable picture:
   switches are inferred from ports with many MACs and no LLDP neighbor, and
   drawn distinctly. Link thickness encodes speed, a load view recolors edges by
   24-hour utilization, and a service-capacity override renders as "10G (3G)".
+  Firewall VPN tunnels (WireGuard, OpenVPN, IPsec) draw as type-labeled
+  egress nodes hung off their firewall — status and peer, never key material.
+- **Routed view** — the L3 answer to the topology's L1: networks as rails,
+  who routes each one, the hosts that stand in several, and where the
+  default route leaves. Subnets reachable only through a VPN tunnel rail
+  off the tunnel itself.
 - **Health dashboard** — device up/down state, hardware, management IPs, and VM
-  placement on cards styled to match the topology nodes. Device pages embed
+  placement on cards styled to match the topology nodes, plus an alerts page
+  listing everything the checks flag and since when. Device pages embed
   LibreNMS graphs (traffic and errors per port; CPU, memory, storage, and
   temperature per device; 24-hour to 1-year windows) through a server-side
   proxy, so the API token never reaches the browser. The graphs are recolored
@@ -142,7 +149,7 @@ devices ──► LibreNMS  (SNMP metrics, LLDP links, graphs, alerting)
          normalizer → devices / interfaces / links / endpoints / subnets / VLANs
                  │
                  ▼
-         topology · health · VLAN overlay · config diffs · graph proxy · snapshots
+         topology · routed view · health · VLAN overlay · config diffs · graph proxy · snapshots
 ```
 
 The normalizer holds the correlation logic: it merges devices across sources
