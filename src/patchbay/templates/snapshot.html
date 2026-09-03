@@ -24,7 +24,7 @@
 <header>
   <h1>{% include "_mark.html" %}patchbay snapshot</h1>
   <nav class="muted">generated {{ generated }} · build {{ BUILD }}</nav>
-  <span class="ages">data age at generation: {% for s, m in ages.items() %}{{ s }} {{ m }}m{{ " · " if not loop.last }}{% endfor %}</span>
+  <span class="ages">data age at generation: {% for s, m in ages.items() %}{{ s }} {{ m | age }}{{ " · " if not loop.last }}{% endfor %}</span>
 </header>
 <main>
 <p class="muted" style="max-width: 76ch">{% if is_demo %}Demo snapshot of a
@@ -43,7 +43,7 @@ network.{% endif %}</p>
 <section class="dev" id="dev-{{ d.name }}">
   <div class="card {{ d.role }}" style="max-width: 560px">
     <div class="name"><span class="dot {{ d.status }}"></span>{{ d.name }}</div>
-    <div class="sub">{{ d.role or '?' }} · {{ d | hw or '?' }}</div>
+    <div class="sub">{{ d.role or '?' }}{% if d | hw %} · {{ d | hw }}{% endif %}</div>
     <div class="sub">{{ d.os or '' }}{% if d.serial %} · s/n {{ d.serial }}{% endif %}</div>
     <div class="sub mono">{{ d.mgmt_ip or '' }}{% if d.parent %} · on {{ d.parent }}{% endif %}</div>
   </div>
@@ -59,6 +59,24 @@ network.{% endif %}</p>
       <td class="mono">{{ p.speed_bps | speed }}</td>
       <td class="mono muted">{{ p.mac or '-' }}</td>
       <td class="muted">{{ p.description or '' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% endif %}
+  {% if d.tunnels %}
+  <div class="scroll" style="margin-top: 0.5rem">
+  <table>
+    <tr><th>Tunnel</th><th>Type</th><th>Status</th><th>Peer</th><th>Interface</th><th>Last handshake</th><th>Detail</th></tr>
+    {% for t in d.tunnels %}
+    <tr>
+      <td>{{ t.name }}</td>
+      <td class="muted">{{ tunnel_labels.get(t.type, 'VPN') }}</td>
+      <td><span class="dot {{ t.status or 'unknown' }}"></span>{{ t.status or '?' }}</td>
+      <td class="mono">{{ t.peer or '-' }}</td>
+      <td class="mono muted">{{ t.interface or '-' }}</td>
+      <td class="mono">{% if t.last_handshake %}{{ ((now - t.last_handshake) / 60) | age }} before generation{% else %}<span class="muted">-</span>{% endif %}</td>
+      <td class="muted">{{ t.detail or '' }}</td>
     </tr>
     {% endfor %}
   </table>

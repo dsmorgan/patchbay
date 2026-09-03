@@ -103,6 +103,9 @@ def generate(settings: Settings) -> str:
         endpoints = [dict(r) for r in conn.execute(
             "SELECT * FROM endpoints ORDER BY hostname IS NULL, hostname, mac")]
         gateways = [dict(r) for r in conn.execute("SELECT * FROM gateways ORDER BY name")]
+        tunnels_by_dev: dict[str, list[dict]] = {}
+        for r in conn.execute("SELECT * FROM tunnels ORDER BY device, type, name"):
+            tunnels_by_dev.setdefault(r["device"], []).append(dict(r))
         n_ipam = conn.execute("SELECT COUNT(*) FROM ipam_addresses").fetchone()[0]
         # patchbay-held firewall history (#23): the latest revision per
         # device. Stored text is already redacted at capture (secret tags +
@@ -159,6 +162,7 @@ def generate(settings: Settings) -> str:
 
     for d in devices:
         d["ports"] = ports_by_dev.get(d["name"], [])
+        d["tunnels"] = tunnels_by_dev.get(d["name"], [])
         d["graphs"] = graphs_by_dev.get(d["name"], [])
 
     d3_js = (Path(__file__).parent / "static" / "d3.v7.min.js").read_text(encoding="utf-8")
@@ -171,7 +175,8 @@ def generate(settings: Settings) -> str:
         generated=time.strftime("%Y-%m-%d %H:%M %Z"), ages=ages,
         devices=devices, links=links, vlans=vlans, subnets=subnets,
         endpoints=endpoints, gateways=gateways, configs=configs,
-        n_ipam=n_ipam, is_demo=is_demo, font_url=font_url)
+        n_ipam=n_ipam, is_demo=is_demo, font_url=font_url,
+        tunnel_labels=web.TUNNEL_TYPE_LABEL, now=db.now())
 
 
 class DeliveryError(Exception):

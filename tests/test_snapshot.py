@@ -63,6 +63,32 @@ def test_snapshot_generates_offline(clean_env, tmp_path):
     assert (tmp_path / "snaps" / "patchbay-latest.html").exists()
 
 
+def test_snapshot_carries_vpn_tunnels(clean_env, tmp_path):
+    """Tunnels ride the break-glass file: on the map (build_topology_graph is
+    shared) and as a table under the terminating firewall's device section."""
+    import sqlite3
+
+    from tests.test_web import seed
+
+    db_path = str(tmp_path / "test.db")
+    seed(db_path)
+    c = sqlite3.connect(db_path)
+    c.execute("INSERT INTO tunnels (device, type, name, peer, interface, "
+              "status, last_handshake, detail, source, last_seen) VALUES "
+              "('fw1', 'wireguard', 'site-b', '192.0.2.200:51820', 'wg1', "
+              "'up', strftime('%s','now') - 90, 'allowed 172.16.44.0/24', "
+              "'opnsense', strftime('%s','now'))")
+    c.commit(); c.close()
+    from patchbay.config import load_settings
+    from patchbay.snapshot import write_snapshot
+
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    t = write_snapshot(load_settings()).read_text()
+    assert "192.0.2.200:51820" in t
+    assert "WireGuard" in t
+    assert "before generation" in t          # handshake age is humanized
+
+
 def test_snapshot_retention(clean_env, tmp_path):
     from tests.test_web import seed
 
