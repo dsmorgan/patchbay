@@ -37,7 +37,9 @@ docker-compose.</p>
 
 <h2>Devices and their last backup</h2>
 <div class="scroll"><table>
-  <tr><th></th><th>device</th><th>ip</th><th>model</th><th>last backup</th></tr>
+  {# "address" not "ip": API-sourced rows carry the configured management
+     host, which may be a hostname #}
+  <tr><th></th><th>device</th><th>address</th><th>model</th><th>last backup</th></tr>
   {% for n in nodes %}
   <tr>
     <td><span class="dot {{ 'up' if n.status == 'success' else 'down' if n.status in ('no_connection', 'fail') else 'unknown' }}"></span></td>
