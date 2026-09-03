@@ -32,6 +32,16 @@ def _addr(ip: str):
         return None
 
 
+def _local_admin(mac: str) -> bool:
+    """Locally-administered MAC: randomized privacy addresses (phones,
+    tablets). Their hostnames are weak identity — four iPads all announce
+    "iPad" — so they never take part in hostname fusion."""
+    try:
+        return bool(int(mac[:2], 16) & 0x02)
+    except (ValueError, IndexError):
+        return False
+
+
 class _Rails:
     """Rail assembly: VLANs ∪ subnets, with containment lookup."""
 
@@ -226,8 +236,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # one place on the page.
     hyp_names = {n for n, d in devices.items() if d["role"] == "hypervisor"}
     ap_names = {n for n, d in devices.items() if d["role"] == "ap"}
-    hosts, single = [], {k: 0 for k in rails.rails}
-    hyp_groups: dict[str, dict[str, int]] = {n: {} for n in hyp_names}
+    hosts, single = [], {k: [] for k in rails.rails}
+    hyp_groups: dict[str, dict[str, list[str]]] = {n: {} for n in hyp_names}
     hyp_guests: dict[str, list[dict]] = {n: [] for n in hyp_names}
     for dev, dl in sorted(legs.items()):
         if dev in router_names or dev in hyp_names or dev in ap_names:
@@ -243,12 +253,12 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                 hyp_guests[parent].append(entry)
             elif len(dl) == 1:
                 k = next(iter(dl))
-                hyp_groups[parent][k] = hyp_groups[parent].get(k, 0) + 1
+                hyp_groups[parent].setdefault(k, []).append(dev)
             continue
         if entry:
             hosts.append(entry)
         elif len(dl) == 1:
-            single[next(iter(dl))] += 1
+            single[next(iter(dl))].append(dev)
 
     # endpoints with an address participate when they aren't already a
     # device. A wireless client counts inside the AP that learned it; a
@@ -260,10 +270,10 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     alias_map = dict(conn.execute("SELECT alias, canonical FROM aliases"))
     gw_ips = {r["gateway"].split("/")[0] for r in rails.rails.values()
               if r["gateway"]}
-    ap_clients: dict[str, dict[str, int]] = {n: {} for n in ap_names}
+    ap_clients: dict[str, dict[str, list[str]]] = {n: {} for n in ap_names}
     fused: dict[str, dict[str, dict]] = {}
     for r in conn.execute(
-            "SELECT hostname, ip, device FROM endpoints WHERE ip IS NOT NULL"):
+            "SELECT hostname, ip, mac, device FROM endpoints WHERE ip IS NOT NULL"):
         hn = (r["hostname"] or "").split(".")[0].lower()
         hn = alias_map.get(hn, hn)
         if hn in seen_devs or r["ip"].split("/")[0] in gw_ips:
@@ -271,20 +281,21 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         key = rails.rail_of_ip(r["ip"])
         if key is None:
             continue
+        label = r["hostname"] or r["ip"]
         if r["device"] in ap_names:
-            ap_clients[r["device"]][key] = ap_clients[r["device"]].get(key, 0) + 1
-        elif hn:
+            ap_clients[r["device"]].setdefault(key, []).append(label)
+        elif hn and not _local_admin(r["mac"] or ""):
             fused.setdefault(hn, {}).setdefault(key, {
                 "rail": key, "iface": "?", "ip": r["ip"], "speed": 0})
         else:
-            single[key] += 1
+            single[key].append(label)
     for hn, by_rail in sorted(fused.items()):
         if len(by_rail) >= 2:
             ordered = list(by_rail.values())
             hosts.append({"name": hn, "role": None, "legs": ordered,
                           "home": _home_rail(ordered, rails.rails)})
         else:
-            single[next(iter(by_rail))] += 1
+            single[next(iter(by_rail))].append(hn)
 
     # spanning boxes: a hypervisor's box covers every rail it or its guests
     # touch; an AP's covers its own addresses plus its clients'. A box with
@@ -297,7 +308,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         if span:
             hypervisors.append({
                 "name": hy, "role": "hypervisor", "legs": own,
-                "rails": sorted(span), "groups": hyp_groups[hy],
+                "rails": sorted(span),
+                "groups": {k: sorted(v) for k, v in hyp_groups[hy].items()},
                 "guests": hyp_guests[hy],
                 "status": devices.get(hy, {}).get("status")})
     aps = []
@@ -306,7 +318,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         span = {l["rail"] for l in own} | set(ap_clients[ap])
         if span:
             aps.append({"name": ap, "role": "ap", "legs": own,
-                        "rails": sorted(span), "groups": ap_clients[ap],
+                        "rails": sorted(span),
+                        "groups": {k: sorted(v) for k, v in ap_clients[ap].items()},
                         "status": devices.get(ap, {}).get("status")})
 
     # a rail earns its place by participating: a router routes it, a drawn
@@ -318,7 +331,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     for box in hypervisors + aps:
         attached |= set(box["rails"])
     live = {k: r for k, r in rails.rails.items()
-            if r["routed"] or single.get(k, 0) or k in attached}
+            if r["routed"] or single.get(k) or k in attached}
     if wan_rail and wan_rail not in live:   # the way out always draws
         live[wan_rail] = rails.rails[wan_rail]
     for t in tunnels:                       # so does the far side of a tunnel
@@ -361,8 +374,10 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     out_rails = []
     for k in order:
         r = live[k]
+        names = single.get(k, [])
         out_rails.append({**r, "sources": sorted(r["sources"]),
-                          "hosts": single.get(k, 0), "wan": k == wan_rail,
+                          "hosts": len(names), "host_names": sorted(names),
+                          "wan": k == wan_rail,
                           "via_tunnel": via_tunnel.get(k, [])})
     return {
         "rails": out_rails,

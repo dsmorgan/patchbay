@@ -267,7 +267,7 @@ def test_vms_live_inside_their_hypervisor(conn):
     assert [h["name"] for h in g["hosts"]] == ["nas1"]     # vm1 not outside
     hyp = g["hypervisors"][0]
     assert hyp["name"] == "hyp1"
-    assert hyp["groups"] == {"v20": 1}
+    assert hyp["groups"] == {"v20": ["vm1"]}
     assert set(hyp["rails"]) == {"v1", "v20"}
     by = {r["key"]: r for r in g["rails"]}
     assert by["v20"]["hosts"] == 1                          # web1 only
@@ -283,7 +283,7 @@ def test_wireless_clients_count_inside_their_ap(conn):
     g = build_routed_graph(conn, _S())
     a = g["aps"][0]
     assert a["name"] == "ap1"
-    assert a["groups"] == {"v20": 1}
+    assert a["groups"] == {"v20": ["phone"]}
     assert [l["rail"] for l in a["legs"]] == ["v1"]         # dot: AP's own IP
     by = {r["key"]: r for r in g["rails"]}
     assert by["v20"]["hosts"] == 1                          # web1; not phone
@@ -294,9 +294,9 @@ def test_dual_homed_endpoint_fuses_to_a_host_box(conn):
     host, fused by canonical short hostname exactly like the topology's
     wired hosts."""
     seed_site(conn)
-    pdb.upsert_endpoint(conn, mac="02:00:00:00:09:21", source="test",
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:21", source="test",
                         ip="192.0.2.80", hostname="nas9.lan")
-    pdb.upsert_endpoint(conn, mac="02:00:00:00:09:22", source="test",
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:22", source="test",
                         ip="198.51.100.80", hostname="NAS9")
     g = build_routed_graph(conn, _S())
     fused = next(h for h in g["hosts"] if h["name"] == "nas9")
@@ -315,3 +315,19 @@ def test_gateway_addresses_never_become_hosts(conn):
     assert all(h["name"] != "gateway" for h in g["hosts"])
     by = {r["key"]: r for r in g["rails"]}
     assert by["v1"]["hosts"] == 0
+
+
+def test_randomized_macs_never_fuse(conn):
+    """Four iPads all announce the hostname "iPad" from randomized
+    (locally-administered) MACs — fusing those invents one impossible
+    dual-homed tablet. Privacy MACs count as singles instead."""
+    seed_site(conn)
+    pdb.upsert_endpoint(conn, mac="be:e2:33:00:00:01", source="test",
+                        ip="192.0.2.91", hostname="ipad")
+    pdb.upsert_endpoint(conn, mac="c2:ea:3f:00:00:02", source="test",
+                        ip="198.51.100.91", hostname="ipad")
+    g = build_routed_graph(conn, _S())
+    assert all(h["name"] != "ipad" for h in g["hosts"])
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v1"]["hosts"] == 1 and by["v20"]["hosts"] == 2  # web1 + ipad
+    assert "ipad" in by["v1"]["host_names"]

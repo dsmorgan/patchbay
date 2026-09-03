@@ -48,8 +48,8 @@
   #routed .vtag rect { fill: var(--vbox, var(--hover)); stroke: var(--line); }
   #routed .vtag text { font: 10px var(--font-mono); fill: var(--ink); }
   #routed .vtag { cursor: pointer; }
-  #routed .gbox rect { fill: none; stroke: var(--accent); stroke-width: 1.1;
-                       stroke-dasharray: 5 4; rx: 8; }
+  #routed .gbox rect { fill: var(--card); stroke: var(--accent);
+                       stroke-width: 1.1; stroke-dasharray: 5 4; rx: 8; }
   #routed .gbox.unrouted rect { stroke: var(--muted); }
   #routed .gbox text { font: 10.5px var(--font-ui); fill: var(--muted); }
   #routed .gbox { cursor: pointer; }
@@ -125,13 +125,13 @@ function rwrite() {
 }
 
 // --- geometry ---------------------------------------------------------------
-const G = { left: 120, railTop: 250, tagRow: [268, 292],
-            groupRow: [330, 386], hostY0: 450, rowH: 62, bottomPad: 60 };
+const G = { left: 120, railTop: 250, tagRow: [268, 288],
+            groupRow: [312, 334], hostY0: 396, rowH: 56, bottomPad: 50 };
 const rails = rg.rails, nR = rails.length;
 // the rail gap is computed: spread toward a comfortable page width, with a
 // ceiling so two networks don't sit absurdly far apart and a floor so
 // twenty stay legible
-G.gap = nR > 1 ? Math.min(170, Math.max(70, Math.round(1250 / (nR - 1)))) : 0;
+G.gap = nR > 1 ? Math.min(130, Math.max(70, Math.round(1000 / (nR - 1)))) : 0;
 // the viewBox hugs the content: rails span + margins, but never narrower
 // than the internet cloud over the routing tier
 const W = Math.max(G.left * 2 + (nR - 1) * G.gap + 40, 480)
@@ -140,14 +140,27 @@ const hyps = rg.hypervisors || [], aps = rg.aps || [];
 const hostRows = rg.hosts.length ? Math.max(...rg.hosts.map(h => h.row)) + 1 : 0;
 const hostsEnd = G.hostY0 + hostRows * G.rowH;
 // hypervisor and wireless tiers stack below the host rows; each box owns a
-// row within its tier (assign_rows packed non-overlapping spans already)
-const HYP_H = 132, HYP_GAP = 26, AP_H = 96, AP_GAP = 24;
-const hypRows = hyps.length ? Math.max(...hyps.map(h => h.row)) + 1 : 0;
-const hypY0 = hostsEnd + (hypRows ? 46 : 0);
-const apRows = aps.length ? Math.max(...aps.map(a => a.row)) + 1 : 0;
-const apY0 = hypY0 + hypRows * (HYP_H + HYP_GAP) + (apRows ? 46 : 0);
-const H = Math.max(700, (apRows ? apY0 + apRows * (AP_H + AP_GAP)
-                        : hypRows ? hypY0 + hypRows * (HYP_H + HYP_GAP)
+// row within its tier (assign_rows packed non-overlapping spans already),
+// and rows are only as tall as the deepest box actually in them — a slim
+// guest-less frame doesn't reserve a full box of blank space
+function boxHeight(b, tall) {
+  if ((b.guests || []).length) return tall;
+  return Object.keys(b.groups).length ? 78 : 40;
+}
+function tierOffsets(boxes, tall, gap) {
+  const rows = boxes.length ? Math.max(...boxes.map(b => b.row)) + 1 : 0;
+  const rh = Array(rows).fill(0);
+  boxes.forEach(b => rh[b.row] = Math.max(rh[b.row], boxHeight(b, tall)));
+  const off = []; let y = 0;
+  for (let i = 0; i < rows; i++) { off.push(y); y += rh[i] + gap; }
+  return { off, total: y ? y - gap : 0 };
+}
+const hypT = tierOffsets(hyps, 124, 16), apT = tierOffsets(aps, 84, 14);
+const hypRows = hypT.off.length, apRows = apT.off.length;
+const hypY0 = hostsEnd + (hypRows ? 40 : 0);
+const apY0 = hypY0 + hypT.total + (apRows ? 40 : 0);
+const H = Math.max(700, (apRows ? apY0 + apT.total
+                        : hypRows ? hypY0 + hypT.total
                         : hostsEnd) + G.bottomPad);
 const railX = i => G.left + i * G.gap;
 const pos = {}; rails.forEach((r, i) => pos[r.key] = i);
@@ -189,6 +202,14 @@ function wireHover(e, keys) {
   });
   e.addEventListener("mouseleave", () =>
     members.forEach(([m]) => m.classList.remove("dim")));
+}
+
+// a ×N group's tooltip names what it stands for, capped so a 50-client
+// wifi group doesn't become a screen-length tooltip
+function nameList(names) {
+  const cap = 30;
+  return (names || []).slice(0, cap).join("\n")
+       + ((names || []).length > cap ? `\n…and ${names.length - cap} more` : "");
 }
 
 const router = rg.routers[0] || null;
@@ -321,9 +342,10 @@ rails.forEach((r, i) => {
     el("rect", { x: x - 37.5, y: gy, width: 75, height: 40, rx: 8 }, g);
     el("text", { x: x, y: gy + 24, "text-anchor": "middle" }, g,
        `×${r.hosts} host${r.hosts > 1 ? "s" : ""}`);
-    el("circle", { cx: x, cy: gy, r: 3.4,
+    el("circle", { cx: x, cy: gy, r: 4.2,
                    class: "rim" + (r.routed ? "" : " unrouted") }, g);
-    title(g, `${r.hosts} single-homed host${r.hosts > 1 ? "s" : ""} on ${r.name || r.key}`);
+    title(g, `${r.hosts} single-homed host${r.hosts > 1 ? "s" : ""} on ${r.name || r.key}\n`
+             + nameList(r.host_names));
     track(g, [r.key]); wireHover(g, [r.key]);
     if (r.vid != null)
       g.addEventListener("click", () => location.href = `/vlans#v${r.vid}`);
@@ -354,13 +376,13 @@ rg.hosts.forEach(h => {
     if (Math.abs(lx - cx) <= bw / 2) {
       // rail meets (or crosses) the box: a dot on the rim marks attachment;
       // an unattached rail crossing the box simply passes underneath
-      const d = el("circle", { cx: lx, cy: y, r: 3.4, class: rimCls }, grp);
+      const d = el("circle", { cx: lx, cy: y, r: 4.2, class: rimCls }, grp);
       track(d, [l.rail]);
     } else {
       const edgeX = lx > cx ? cx + bw / 2 : cx - bw / 2;
       const tap = el("line", { x1: edgeX, y1: y + 20, x2: lx, y2: y + 20,
                                class: "tap" }, tapLayer);
-      const d = el("circle", { cx: lx, cy: y + 20, r: 3.4, class: rimCls }, grp);
+      const d = el("circle", { cx: lx, cy: y + 20, r: 4.2, class: rimCls }, grp);
       track(tap, keys); track(d, [l.rail]);
     }
   });
@@ -373,12 +395,14 @@ rg.hosts.forEach(h => {
 // A hypervisor or AP is a box across every rail it (or its tenants) touches:
 // rails run through the open frame, guest/client groups sit inside on their
 // rails, and the box's own addresses are dots on its top edge.
-function miniGroup(parent, x, y, n, r, noun) {
+function miniGroup(parent, x, y, names, r, noun) {
+  const n = names.length;
   const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
                       "data-kind": "group" }, parent);
   el("rect", { x: x - 30, y: y, width: 60, height: 32, rx: 8 }, g);
   el("text", { x: x, y: y + 20, "text-anchor": "middle" }, g, `×${n}`);
-  title(g, `${n} ${noun}${n > 1 ? "s" : ""} on ${r.name || r.key}`);
+  title(g, `${n} ${noun}${n > 1 ? "s" : ""} on ${r.name || r.key}\n`
+           + nameList(names));
   track(g, [r.key]); wireHover(g, [r.key]);
   if (r.vid != null) g.addEventListener("click", ev => {
     ev.stopPropagation(); location.href = `/vlans#v${r.vid}`; });
@@ -399,13 +423,13 @@ function miniHost(parent, h, y, minX) {
     const r = rails[pos[l.rail]];
     const rimCls = "rim" + (r.routed ? "" : " unrouted");
     if (Math.abs(lx - cx) <= bw / 2) {
-      track(el("circle", { cx: lx, cy: y, r: 3.4, class: rimCls }, grp), [l.rail]);
+      track(el("circle", { cx: lx, cy: y, r: 4.2, class: rimCls }, grp), [l.rail]);
     } else {
       const edgeX = lx > cx ? cx + bw / 2 : cx - bw / 2;
       const tap = el("line", { x1: edgeX, y1: y + 17, x2: lx, y2: y + 17,
                                class: "tap" }, tapLayer);
       track(tap, keys);
-      track(el("circle", { cx: lx, cy: y + 17, r: 3.4, class: rimCls }, grp), [l.rail]);
+      track(el("circle", { cx: lx, cy: y + 17, r: 4.2, class: rimCls }, grp), [l.rail]);
     }
   });
   track(grp, keys); wireHover(grp, keys);
@@ -421,11 +445,6 @@ function spanBox(b, y, boxH, cls, noun, groupY, guestY) {
   let x1 = Math.max(...xs) + 40;
   // a one-rail box still fits its name, role, and icon side by side
   x1 = Math.max(x1, x0 + b.name.length * 7.4 + b.role.length * 6 + 60);
-  // the box is only as deep as what it holds: a slim frame with nothing
-  // inside ("this device stands on these rails"), one row for tenant
-  // groups, two only when named multi-homed tenants need their own row
-  if (!(b.guests || []).length)
-    boxH = Object.keys(b.groups).length ? Math.min(boxH, 92) : 40;
   const grp = el("g", { class: "spanbox " + cls });
   el("rect", { x: x0, y: y, width: x1 - x0, height: boxH, rx: 10 }, grp);
   el("text", { x: x0 + 12, y: y + 18, class: "rlabel" }, grp, b.name);
@@ -435,13 +454,13 @@ function spanBox(b, y, boxH, cls, noun, groupY, guestY) {
   b.legs.forEach(l => {
     if (!(l.rail in pos)) return;
     const r = rails[pos[l.rail]];
-    const d = el("circle", { cx: railX(pos[l.rail]), cy: y, r: 3.4,
+    const d = el("circle", { cx: railX(pos[l.rail]), cy: y, r: 4.2,
                              class: "rim" + (r.routed ? "" : " unrouted") }, grp);
     title(d, `${l.iface}${l.ip ? " " + l.ip : ""} → ${r.name || l.rail}`);
     track(d, [l.rail]);
   });
-  Object.entries(b.groups).forEach(([k, n]) => {
-    if (k in pos) miniGroup(grp, railX(pos[k]), groupY, n, rails[pos[k]], noun);
+  Object.entries(b.groups).forEach(([k, names]) => {
+    if (k in pos) miniGroup(grp, railX(pos[k]), groupY, names, rails[pos[k]], noun);
   });
   let right = x0;
   (b.guests || []).forEach(v => { right = miniHost(grp, v, guestY, right) + 8; });
@@ -453,18 +472,20 @@ function spanBox(b, y, boxH, cls, noun, groupY, guestY) {
     location.href = `/device/${encodeURIComponent(b.name)}`);
 }
 if (hypRows) {
-  el("line", { x1: 0, y1: hypY0 - 34, x2: W, y2: hypY0 - 34, class: "bandline" });
-  el("text", { x: 14, y: hypY0 - 20, class: "band" }, root, "HYPERVISORS");
-  hyps.forEach(hy => spanBox(hy, hypY0 + hy.row * (HYP_H + HYP_GAP), HYP_H,
-                             "hyp", "VM", hypY0 + hy.row * (HYP_H + HYP_GAP) + 34,
-                             hypY0 + hy.row * (HYP_H + HYP_GAP) + 86));
+  el("line", { x1: 0, y1: hypY0 - 30, x2: W, y2: hypY0 - 30, class: "bandline" });
+  el("text", { x: 14, y: hypY0 - 16, class: "band" }, root, "HYPERVISORS");
+  hyps.forEach(hy => {
+    const y = hypY0 + hypT.off[hy.row];
+    spanBox(hy, y, boxHeight(hy, 124), "hyp", "VM", y + 34, y + 86);
+  });
 }
 if (apRows) {
-  el("line", { x1: 0, y1: apY0 - 34, x2: W, y2: apY0 - 34, class: "bandline" });
-  el("text", { x: 14, y: apY0 - 20, class: "band" }, root, "WIRELESS");
-  aps.forEach(a => spanBox(a, apY0 + a.row * (AP_H + AP_GAP), AP_H,
-                           "ap", "client", apY0 + a.row * (AP_H + AP_GAP) + 40,
-                           apY0 + a.row * (AP_H + AP_GAP) + 58));
+  el("line", { x1: 0, y1: apY0 - 30, x2: W, y2: apY0 - 30, class: "bandline" });
+  el("text", { x: 14, y: apY0 - 16, class: "band" }, root, "WIRELESS");
+  aps.forEach(a => {
+    const y = apY0 + apT.off[a.row];
+    spanBox(a, y, boxHeight(a, 84), "ap", "client", y + 36, y + 52);
+  });
 }
 
 // --- chips, focus, zoom/pan/fit --------------------------------------------
