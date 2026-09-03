@@ -26,7 +26,8 @@ put.
   exactly as before. The demo network gains a site-b WireGuard peer so
   both maps show the feature out of the box. The OPNsense API user needs
   the VPN page privileges — optional, everything else degrades cleanly
-  without them.
+  without them. The terminating firewall's device page lists its tunnels
+  in their own section, separate from the port table.
 
 ## [0.11.2] — 2026-09-01
 

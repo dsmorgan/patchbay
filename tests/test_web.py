@@ -1224,8 +1224,31 @@ def test_topology_graph_draws_tunnel_nodes(clean_env, tmp_path, client):
     graph = _json.loads(m.group(1))
     node = next(n for n in graph["nodes"] if n["role"] == "tunnel")
     assert node["label"] == "site-b"
-    assert node["sub"].startswith("WireGuard")
+    # the oval shows the type alone (same footprint as the WAN cloud);
+    # the peer endpoint moves to the hover title
+    assert node["sub"] == "WireGuard"
+    assert "192.0.2.200:51820" in node["title"]
     assert node["status"] == "up"
     edge = next(l for l in graph["links"] if "tunnel" in l["cls"])
     assert {edge["source"], edge["target"]} == {"fw1", node["name"]}
     assert edge["alab"] == "wg1"
+
+
+def test_device_page_lists_vpn_tunnels(clean_env, tmp_path, client):
+    """The terminating firewall's page gets a VPN tunnels section separate
+    from the port table — tunnels are objects, not interfaces (#42)."""
+    db_path = str(tmp_path / "test.db")
+    seed(db_path)
+    c = sqlite3.connect(db_path)
+    c.execute("INSERT INTO tunnels (device, type, name, peer, interface, "
+              "status, last_handshake, detail, source, last_seen) VALUES "
+              "('fw1', 'wireguard', 'site-b', '192.0.2.200:51820', 'wg1', "
+              "'up', ?, 'allowed 172.16.44.0/24', 'opnsense', ?)",
+              (pdb.now() - 120, pdb.now()))
+    c.commit(); c.close()
+    body = client.get("/device/fw1").text
+    assert "VPN tunnels" in body
+    assert "192.0.2.200:51820" in body
+    assert "allowed 172.16.44.0/24" in body
+    # a device with no tunnels shows no section
+    assert "VPN tunnels" not in client.get("/device/core1").text

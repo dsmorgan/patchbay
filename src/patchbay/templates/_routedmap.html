@@ -222,7 +222,7 @@ if (router) {
   const tx = midX + 96 + 110 + i * 175;
   const g = el("g", { class: "tunnel" });
   if (router)
-    track(el("line", { x1: tx - 30, y1: 73, x2: midX + rw / 2 - 20, y2: ry + 6,
+    track(el("line", { x1: tx - 30, y1: 73, x2: midX + rw / 2 - 20, y2: ry,
                        class: "tunpath" }), t.rails);
   t.rails.forEach(k => {
     if (!(k in pos)) return;

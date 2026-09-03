@@ -653,13 +653,17 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
         if tun["device"] not in on_map:
             continue
         tlabel = TUNNEL_TYPE_LABEL.get(tun["type"], "VPN")
-        sub = tlabel + (f" · {tun['peer']}" if tun["peer"] else "")
+        # the visible sub is the type alone so the oval keeps the provider
+        # cloud's footprint; the peer endpoint lives in the hover title
         node_id = f"vpn:{tun['type']}:{tun['name']}"
         nodes.append({
             "name": node_id, "label": tun["name"], "role": "tunnel", "rank": -1,
-            "w": max(len(tun["name"]), len(sub)) * 7.2 + 34,
-            "sub": sub, "status": tun["status"] or "unknown",
+            # +54 not +34: the padlock icon sits inside the right edge and
+            # needs clearance the icon-less cloud doesn't
+            "w": max(len(tun["name"]), len(tlabel)) * 7.2 + 54,
+            "sub": tlabel, "status": tun["status"] or "unknown",
             "title": f"{tlabel} tunnel · {tun['name']}"
+                     + (f" · peer {tun['peer']}" if tun["peer"] else "")
                      + (f" · {tun['detail']}" if tun["detail"] else ""),
             "vlans": [],
             "px": saved.get(node_id, (None, None))[0],
@@ -2186,11 +2190,15 @@ def device(request: Request, name: str):
             "SELECT * FROM devices WHERE parent = ? ORDER BY status != 'up', name", (name,),
         ).fetchall()
         caps = {i: c for (d, i), c in load_settings().capacities.items() if d == name}
+        tunnels = conn.execute(
+            "SELECT * FROM tunnels WHERE device = ? ORDER BY type, name", (name,),
+        ).fetchall()
         return templates.TemplateResponse(request, "device.html", {
             "d": dev, "ports": ports, "hidden": hidden, "show_all": show_all,
             "port_vlans": port_vlans, "caps": caps, "port_roles": port_roles,
             "endpoints_by_port": endpoints_by_port, "endpoints_other": endpoints_other,
             "links": links, "children": children,
+            "tunnels": tunnels, "tunnel_labels": TUNNEL_TYPE_LABEL, "now": db.now(),
         })
     finally:
         conn.close()

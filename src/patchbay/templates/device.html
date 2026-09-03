@@ -128,6 +128,26 @@
 {% endif %}
 {% endif %}
 
+{% if tunnels %}
+<h2>VPN tunnels — {{ tunnels | length }}</h2>
+<div class="scroll">
+<table>
+  <tr><th>Tunnel</th><th>Type</th><th>Status</th><th>Peer</th><th>Interface</th><th>Last handshake</th><th>Detail</th></tr>
+  {% for t in tunnels %}
+  <tr>
+    <td>{{ t.name }}</td>
+    <td class="muted">{{ tunnel_labels.get(t.type, 'VPN') }}</td>
+    <td><span class="dot {{ t.status or 'unknown' }}"></span>{{ t.status or '?' }}</td>
+    <td class="mono">{{ t.peer or '-' }}</td>
+    <td class="mono muted">{{ t.interface or '-' }}</td>
+    <td class="mono">{% if t.last_handshake %}{{ ((now - t.last_handshake) / 60) | age }} ago{% else %}<span class="muted">-</span>{% endif %}</td>
+    <td class="muted">{{ t.detail or '' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+
 {% if links %}
 <h2>Cabled to</h2>
 <div class="scroll">
