@@ -25,6 +25,28 @@ def test_vendor_default_descr_scrubbed():
     assert _descr("uplink to core [3]") == "uplink to core [3]"
 
 
+def test_opnsense_403_notes_name_the_privilege():
+    """A 403 should tell the operator what to click under System → Access,
+    not just that a privilege is missing somewhere."""
+    from patchbay.collectors.opnsense import _forbidden_note
+
+    assert "'VPN: OpenVPN'" in _forbidden_note("openvpn/service/searchSessions")
+    assert "Status sub-privilege" in _forbidden_note("wireguard/service/show")
+    assert "'Diagnostics: ARP Table'" in _forbidden_note("diagnostics/interface/get_arp")
+    # unknown endpoints keep the generic hint
+    assert "matching page privilege" in _forbidden_note("some/new/endpoint")
+
+
+def test_ifname_echo_descr_scrubbed():
+    """FastIron echoes the long-form port name as ifAlias when no comment is
+    set — same port, different spelling, zero information."""
+    assert _descr("GigabitEthernet1/1/10", "ethernet1/1/10") == ""
+    assert _descr("10GigabitEthernet1/2/1", "ethernet1/2/1") == ""
+    # a real comment survives, and so does a name that isn't this port's
+    assert _descr("[1] bedroom4", "ethernet1/1/1") == "[1] bedroom4"
+    assert _descr("GigabitEthernet1/1/9", "ethernet1/1/10") == "GigabitEthernet1/1/9"
+
+
 # --- oxidized config parsers -------------------------------------------------
 
 IRONWARE = """\

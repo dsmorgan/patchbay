@@ -42,6 +42,12 @@ HARDWARE_ALIASES: dict[str, str] = {
 # as ifAlias when a port has no comment set — noise, not documentation.
 VENDOR_DEFAULT_DESCR = re.compile(r"^Unit: \d+ Slot: \d+ Port: \d+")
 
+# Brocade/Ruckus FastIron echoes the long-form port name ("GigabitEthernet
+# 1/1/10") as ifAlias when no comment is set: same port, different spelling
+# ("ethernet1/1/10" is the ifName). A description that is just an interface
+# word plus this port's own number path documents nothing.
+IFNAME_ECHO = re.compile(r"^[A-Za-z0-9.]*[Ee]thernet\s*([\d/]+)$")
+
 
 # LLDP's port-id TLV may carry a MAC address instead of a port name; as an
 # interface name it's noise that blocks same-cable fusion with the far
@@ -64,10 +70,13 @@ def _speed(raw: int | None) -> int | None:
     return WRAPPED_SPEED.get(raw, raw) if raw is not None else None
 
 
-def _descr(raw: str | None) -> str:
+def _descr(raw: str | None, ifname: str = "") -> str:
     # "" rather than None: upsert_interface drops None fields ("no opinion"),
     # so only an empty string can clear a stale or vendor-default description
     if not raw or VENDOR_DEFAULT_DESCR.match(raw):
+        return ""
+    echo = IFNAME_ECHO.match(raw.strip())
+    if echo and ifname.endswith(echo.group(1)):
         return ""
     return raw
 
@@ -128,7 +137,7 @@ class LibreNmsCollector:
                         oper_status=p.get("ifOperStatus"),
                         speed_bps=_speed(p.get("ifSpeed")),
                         mac=_colon_mac(p.get("ifPhysAddress")),
-                        description=_descr(p.get("ifAlias")),
+                        description=_descr(p.get("ifAlias"), p["ifName"]),
                         # librenms rates are octets/sec from the 5-min poller
                         in_bps=(int(p["ifInOctets_rate"] * 8)
                                 if p.get("ifInOctets_rate") is not None else None),

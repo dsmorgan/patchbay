@@ -124,6 +124,30 @@ def base_and_name(host: str) -> tuple[str, str]:
     return base, name
 
 
+# path prefix → the privilege page that guards it, so a 403 note names the
+# exact thing to click under System → Access instead of "the matching page
+# privilege". docs/configuration.md carries the same table. For the VPN
+# status reads, the page's Status sub-privilege is all patchbay needs.
+PRIV_HINT = {
+    "wireguard/": "grant 'VPN: WireGuard' — its Status sub-privilege is enough",
+    "openvpn/": "grant 'VPN: OpenVPN' — its Status sub-privilege is enough",
+    "ipsec/": "grant 'VPN: IPsec' — its Status sub-privilege is enough",
+    "diagnostics/interface/get_arp": "grant 'Diagnostics: ARP Table'",
+    "diagnostics/interface/getArp": "grant 'Diagnostics: ARP Table'",
+    "diagnostics/interface/get_routes": "grant 'Diagnostics: Routing Tables'",
+    "routes/gateway/": "grant 'System: Gateways'",
+    "interfaces/overview/": "grant 'Interfaces: Assign network ports'",
+    "dhcpv4/leases/": "grant 'DHCP: Leases'",
+    "core/backup/": "grant 'System: Configuration: Backups'",
+}
+
+
+def _forbidden_note(path: str) -> str:
+    hint = next((v for k, v in PRIV_HINT.items() if path.startswith(k)),
+                "grant the matching page privilege")
+    return f"{path}: 403 ({hint})"
+
+
 class OpnsenseCollector:
     name = NAME
 
@@ -139,7 +163,7 @@ class OpnsenseCollector:
         def get(path: str, optional: bool = False) -> Any | None:
             r = client.get(f"{base}/{path}", auth=auth)
             if r.status_code == 403:
-                notes.append(f"{path}: 403 (grant the matching page privilege)")
+                notes.append(_forbidden_note(path))
                 return None
             if optional and r.status_code in (400, 404):
                 # an endpoint this OPNsense doesn't have (older release,
@@ -152,7 +176,7 @@ class OpnsenseCollector:
         def get_text(path: str) -> str | None:
             r = client.get(f"{base}/{path}", auth=auth)
             if r.status_code == 403:
-                notes.append(f"{path}: 403 (grant the matching page privilege)")
+                notes.append(_forbidden_note(path))
                 return None
             r.raise_for_status()
             return r.text
