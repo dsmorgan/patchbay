@@ -61,7 +61,18 @@
   #routed .rim { fill: var(--accent); stroke: var(--card); stroke-width: 1.5; }
   #routed .rim.unrouted { fill: var(--muted); }
   #routed .rlabel { font: 600 11px var(--font-ui); fill: var(--ink); }
-  #routed .dim { opacity: 0.18; transition: opacity 0.12s; }
+  /* !important: an unrouted rail's own opacity rule outranks a bare class
+     (.rail.unrouted beats .dim), so gray rails never visibly dimmed and
+     hover-highlighting looked like it skipped the isolated networks */
+  #routed .dim { opacity: 0.18 !important; transition: opacity 0.12s; }
+  /* spanning boxes (hypervisors, APs): open frames, not filled cards — the
+     rails run through them and the tenants inside sit on the rails */
+  #routed .spanbox > rect { fill: none; stroke-width: 1.3; }
+  #routed .spanbox.hyp > rect { stroke: var(--r-hyp); }
+  #routed .spanbox.ap > rect { stroke: var(--r-ap); }
+  #routed .spanbox { cursor: pointer; }
+  #routed .ricon path { fill: none; stroke-width: 1.5;
+                        stroke-linecap: round; stroke-linejoin: round; }
   #routed .routerlabel { font: 600 11.5px var(--font-ui); fill: var(--ink); }
   #routed .gwlabel { font: 10px var(--font-mono); fill: var(--muted); }
 </style>
@@ -84,6 +95,8 @@
   <span class="item"><svg width="30" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="var(--muted)" stroke-width="1.2"/><circle cx="26" cy="5" r="3" fill="var(--accent)"/></svg> attached beyond the box</span>
   <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--accent)" stroke-width="1.1" stroke-dasharray="4 3" rx="4"/></svg> ×N single-homed hosts</span>
   <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="var(--card)" stroke="var(--ink)" stroke-width="1.2" rx="4"/></svg> multi-homed host</span>
+  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--r-hyp)" stroke-width="1.3" rx="4"/></svg> hypervisor (VMs inside)</span>
+  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--r-ap)" stroke-width="1.3" rx="4"/></svg> AP (clients inside)</span>
   <span class="item" style="color: var(--muted)">hover a rail or box for subnets, gateway &amp; sources · scroll zooms · background pans · click a network or host for its page</span>
 </div>
 
@@ -112,17 +125,44 @@ function rwrite() {
 }
 
 // --- geometry ---------------------------------------------------------------
-const G = { left: 90, gap: 55, railTop: 250, tagRow: [268, 292],
+const G = { left: 120, railTop: 250, tagRow: [268, 292],
             groupRow: [330, 386], hostY0: 450, rowH: 62, bottomPad: 60 };
 const rails = rg.rails, nR = rails.length;
+// the rail gap is computed: spread toward a comfortable page width, with a
+// ceiling so two networks don't sit absurdly far apart and a floor so
+// twenty stay legible
+G.gap = nR > 1 ? Math.min(170, Math.max(70, Math.round(1250 / (nR - 1)))) : 0;
 // the viewBox hugs the content: rails span + margins, but never narrower
 // than the internet cloud over the routing tier
 const W = Math.max(G.left * 2 + (nR - 1) * G.gap + 40, 480)
         + ((rg.tunnels || []).length ? (rg.tunnels || []).length * 175 + 40 : 0);
-const maxRow = rg.hosts.length ? Math.max(...rg.hosts.map(h => h.row)) : 0;
-const H = Math.max(700, G.hostY0 + (maxRow + 1) * G.rowH + G.bottomPad);
+const hyps = rg.hypervisors || [], aps = rg.aps || [];
+const hostRows = rg.hosts.length ? Math.max(...rg.hosts.map(h => h.row)) + 1 : 0;
+const hostsEnd = G.hostY0 + hostRows * G.rowH;
+// hypervisor and wireless tiers stack below the host rows; each box owns a
+// row within its tier (assign_rows packed non-overlapping spans already)
+const HYP_H = 132, HYP_GAP = 26, AP_H = 96, AP_GAP = 24;
+const hypRows = hyps.length ? Math.max(...hyps.map(h => h.row)) + 1 : 0;
+const hypY0 = hostsEnd + (hypRows ? 46 : 0);
+const apRows = aps.length ? Math.max(...aps.map(a => a.row)) + 1 : 0;
+const apY0 = hypY0 + hypRows * (HYP_H + HYP_GAP) + (apRows ? 46 : 0);
+const H = Math.max(700, (apRows ? apY0 + apRows * (AP_H + AP_GAP)
+                        : hypRows ? hypY0 + hypRows * (HYP_H + HYP_GAP)
+                        : hostsEnd) + G.bottomPad);
 const railX = i => G.left + i * G.gap;
 const pos = {}; rails.forEach((r, i) => pos[r.key] = i);
+
+// role icons + colors, shared with the topology's vocabulary
+const RICONS = {{ ICONS | tojson }};
+const RCOLOR = { firewall: "var(--r-firewall)", router: "var(--r-router)",
+                 switch: "var(--r-switch)", hypervisor: "var(--r-hyp)",
+                 ap: "var(--r-ap)" };
+function roleIcon(parent, role, x, y) {
+  const d = RICONS[role] || RICONS.host;
+  const g = el("g", { transform: `translate(${x},${y})`, class: "ricon" }, parent);
+  el("path", { d, stroke: RCOLOR[role] || "var(--muted)" }, g);
+  return g;
+}
 
 const svg = document.getElementById("routed");
 svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
@@ -197,10 +237,11 @@ if (router) {
   const rbx = midX - rw / 2;
   const rgrp = el("g", { class: "router" });
   el("rect", { x: rbx, y: ry, width: rw, height: rh, rx: 8 }, rgrp);
-  el("text", { x: midX, y: ry + 22, "text-anchor": "middle",
+  el("text", { x: midX - 8, y: ry + 22, "text-anchor": "middle",
                class: "routerlabel" }, rgrp, router.name);
-  el("text", { x: midX, y: ry + 38, "text-anchor": "middle", class: "gwlabel" },
+  el("text", { x: midX - 8, y: ry + 38, "text-anchor": "middle", class: "gwlabel" },
      rgrp, `${router.rails.length} networks`);
+  roleIcon(rgrp, "firewall", rbx + rw - 26, ry + 6);
   track(rgrp, router.rails); wireHover(rgrp, router.rails);
   rgrp.style.cursor = "pointer";
   rgrp.addEventListener("click", () =>
@@ -293,11 +334,13 @@ rails.forEach((r, i) => {
 // box, thin tap lines (under the rails) to rails beyond the footprint
 rg.hosts.forEach(h => {
   const cx = railX(pos[h.home]);
-  const bw = Math.max(84, h.name.length * 7.4 + 24);
+  const bw = Math.max(84, h.name.length * 7.4 + 48);
   const y = G.hostY0 + h.row * G.rowH;
   const grp = el("g", { class: "host", "data-kind": "host" });
-  el("rect", { x: cx - bw / 2, y: y, width: bw, height: 40, rx: 8 }, grp);
-  el("text", { x: cx, y: y + 24, "text-anchor": "middle" }, grp, h.name);
+  const rect = el("rect", { x: cx - bw / 2, y: y, width: bw, height: 40, rx: 8 }, grp);
+  if (RCOLOR[h.role]) rect.setAttribute("style", `stroke: ${RCOLOR[h.role]}`);
+  el("text", { x: cx - 9, y: y + 24, "text-anchor": "middle" }, grp, h.name);
+  roleIcon(grp, h.role || "host", cx + bw / 2 - 24, y + 11);
   const keys = h.legs.map(l => l.rail);
   const tips = h.legs.map(l => {
     const r = rails[pos[l.rail]];
@@ -325,6 +368,104 @@ rg.hosts.forEach(h => {
   grp.addEventListener("click", () =>
     location.href = `/device/${encodeURIComponent(h.name)}`);
 });
+
+// --- spanning tiers: hypervisors, then wireless -----------------------------
+// A hypervisor or AP is a box across every rail it (or its tenants) touches:
+// rails run through the open frame, guest/client groups sit inside on their
+// rails, and the box's own addresses are dots on its top edge.
+function miniGroup(parent, x, y, n, r, noun) {
+  const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
+                      "data-kind": "group" }, parent);
+  el("rect", { x: x - 30, y: y, width: 60, height: 32, rx: 8 }, g);
+  el("text", { x: x, y: y + 20, "text-anchor": "middle" }, g, `×${n}`);
+  title(g, `${n} ${noun}${n > 1 ? "s" : ""} on ${r.name || r.key}`);
+  track(g, [r.key]); wireHover(g, [r.key]);
+  if (r.vid != null) g.addEventListener("click", ev => {
+    ev.stopPropagation(); location.href = `/vlans#v${r.vid}`; });
+}
+function miniHost(parent, h, y, minX) {
+  const bw = Math.max(72, h.name.length * 7.4 + 44);
+  const cx = Math.max(railX(pos[h.home]), minX + bw / 2);
+  const grp = el("g", { class: "host", "data-kind": "host" }, parent);
+  const rect = el("rect", { x: cx - bw / 2, y: y, width: bw, height: 34, rx: 8 }, grp);
+  if (RCOLOR[h.role]) rect.setAttribute("style", `stroke: ${RCOLOR[h.role]}`);
+  el("text", { x: cx - 8, y: y + 21, "text-anchor": "middle" }, grp, h.name);
+  roleIcon(grp, h.role || "host", cx + bw / 2 - 22, y + 8);
+  const keys = h.legs.map(l => l.rail);
+  title(grp, `${h.name}\n` + h.legs.map(l =>
+    `${l.iface}${l.ip ? " " + l.ip : ""} → ${(rails[pos[l.rail]] || {}).name || l.rail}`).join("\n"));
+  h.legs.forEach(l => {
+    const lx = railX(pos[l.rail]);
+    const r = rails[pos[l.rail]];
+    const rimCls = "rim" + (r.routed ? "" : " unrouted");
+    if (Math.abs(lx - cx) <= bw / 2) {
+      track(el("circle", { cx: lx, cy: y, r: 3.4, class: rimCls }, grp), [l.rail]);
+    } else {
+      const edgeX = lx > cx ? cx + bw / 2 : cx - bw / 2;
+      const tap = el("line", { x1: edgeX, y1: y + 17, x2: lx, y2: y + 17,
+                               class: "tap" }, tapLayer);
+      track(tap, keys);
+      track(el("circle", { cx: lx, cy: y + 17, r: 3.4, class: rimCls }, grp), [l.rail]);
+    }
+  });
+  track(grp, keys); wireHover(grp, keys);
+  grp.addEventListener("click", ev => {
+    ev.stopPropagation();
+    location.href = `/device/${encodeURIComponent(h.name)}`;
+  });
+  return cx + bw / 2;
+}
+function spanBox(b, y, boxH, cls, noun, groupY, guestY) {
+  const xs = b.rails.map(k => railX(pos[k]));
+  const x0 = Math.min(...xs) - 40;
+  let x1 = Math.max(...xs) + 40;
+  // a one-rail box still fits its name, role, and icon side by side
+  x1 = Math.max(x1, x0 + b.name.length * 7.4 + b.role.length * 6 + 60);
+  // the box is only as deep as what it holds: a slim frame with nothing
+  // inside ("this device stands on these rails"), one row for tenant
+  // groups, two only when named multi-homed tenants need their own row
+  if (!(b.guests || []).length)
+    boxH = Object.keys(b.groups).length ? Math.min(boxH, 92) : 40;
+  const grp = el("g", { class: "spanbox " + cls });
+  el("rect", { x: x0, y: y, width: x1 - x0, height: boxH, rx: 10 }, grp);
+  el("text", { x: x0 + 12, y: y + 18, class: "rlabel" }, grp, b.name);
+  el("text", { x: x0 + 16 + b.name.length * 7.4, y: y + 18, class: "gwlabel" },
+     grp, b.role);
+  roleIcon(grp, b.role, x1 - 28, y + 4);
+  b.legs.forEach(l => {
+    if (!(l.rail in pos)) return;
+    const r = rails[pos[l.rail]];
+    const d = el("circle", { cx: railX(pos[l.rail]), cy: y, r: 3.4,
+                             class: "rim" + (r.routed ? "" : " unrouted") }, grp);
+    title(d, `${l.iface}${l.ip ? " " + l.ip : ""} → ${r.name || l.rail}`);
+    track(d, [l.rail]);
+  });
+  Object.entries(b.groups).forEach(([k, n]) => {
+    if (k in pos) miniGroup(grp, railX(pos[k]), groupY, n, rails[pos[k]], noun);
+  });
+  let right = x0;
+  (b.guests || []).forEach(v => { right = miniHost(grp, v, guestY, right) + 8; });
+  title(grp, `${b.name} · ${b.role}` + (b.legs.length ? "\n" + b.legs.map(l =>
+    `${l.iface}${l.ip ? " " + l.ip : ""} → ${(rails[pos[l.rail]] || {}).name || l.rail}`)
+    .join("\n") : "\nno addresses recorded"));
+  track(grp, b.rails); wireHover(grp, b.rails);
+  grp.addEventListener("click", () =>
+    location.href = `/device/${encodeURIComponent(b.name)}`);
+}
+if (hypRows) {
+  el("line", { x1: 0, y1: hypY0 - 34, x2: W, y2: hypY0 - 34, class: "bandline" });
+  el("text", { x: 14, y: hypY0 - 20, class: "band" }, root, "HYPERVISORS");
+  hyps.forEach(hy => spanBox(hy, hypY0 + hy.row * (HYP_H + HYP_GAP), HYP_H,
+                             "hyp", "VM", hypY0 + hy.row * (HYP_H + HYP_GAP) + 34,
+                             hypY0 + hy.row * (HYP_H + HYP_GAP) + 86));
+}
+if (apRows) {
+  el("line", { x1: 0, y1: apY0 - 34, x2: W, y2: apY0 - 34, class: "bandline" });
+  el("text", { x: 14, y: apY0 - 20, class: "band" }, root, "WIRELESS");
+  aps.forEach(a => spanBox(a, apY0 + a.row * (AP_H + AP_GAP), AP_H,
+                           "ap", "client", apY0 + a.row * (AP_H + AP_GAP) + 40,
+                           apY0 + a.row * (AP_H + AP_GAP) + 58));
+}
 
 // --- chips, focus, zoom/pan/fit --------------------------------------------
 function applyRouted() {

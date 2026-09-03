@@ -29,6 +29,16 @@ put.
   without them. The terminating firewall's device page lists its tunnels
   in their own section, separate from the port table.
 
+- **Routed view redesign**: rails spread to a computed gap (wider for
+  more networks, capped for few); hypervisors and APs draw as spanning
+  boxes in tiers of their own, with guest VMs grouped inside their
+  hypervisor and wireless clients inside their AP — every host counts in
+  exactly one place. Dual-homed hosts known only from ARP now fuse by
+  canonical hostname into real host boxes (rail gateway addresses are
+  excluded, so dnsmasq's per-VLAN "gateway" rows can't invent a phantom
+  host). Boxes carry the topology's role icons and colors, and hovering
+  a network now dims isolated (gray) rails too.
+
 ### Fixed
 
 - OPNsense 403 poll notes now name the exact privilege to grant (and note
