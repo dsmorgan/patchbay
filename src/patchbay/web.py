@@ -10,7 +10,7 @@ import ipaddress
 import json
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
 
@@ -1740,9 +1740,11 @@ def _ox_timeline(client: httpx.Client, nodes: list[dict]) -> tuple[list[dict], l
             href = f"/configs/{quote(name, safe='')}?v={quote(oid, safe='')}"
             if prev:
                 href += f"&prev={quote(prev, safe='')}"
+            ts = _ox_ts(date)
             entries.append({
-                "node": name, "oid": oid, "prev": prev, "date": date,
-                "ts": _ox_ts(date),
+                "node": name, "oid": oid, "prev": prev,
+                "date": _utc_str(ts) or date,
+                "ts": ts,
                 "message": (v.get("message") or v.get("subject") or "").strip(),
                 "author": author, "href": href,
             })
@@ -1797,6 +1799,15 @@ def _canonical_label(name: str, canon: set[str]) -> str:
     return short if short != name and short.lower() in canon else name
 
 
+def _utc_str(ts: float | None) -> str | None:
+    """Config history renders every timestamp the same way: UTC, labeled.
+    Oxidized hands out git dates (UTC) while patchbay-held revisions store
+    epochs; formatting locally left the page half local, half UTC."""
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
 def _canon_names(conn: sqlite3.Connection) -> set[str]:
     return {r["name"].lower() for r in conn.execute("SELECT name FROM devices")}
 
@@ -1807,7 +1818,7 @@ def _db_config_versions(conn: sqlite3.Connection, device: str) -> list[dict]:
         "WHERE device = ? ORDER BY fetched_at DESC, id DESC", (device,)).fetchall()
     return [{
         "oid": str(r["id"]), "num": i + 1,
-        "date": datetime.fromtimestamp(r["fetched_at"]).strftime("%Y-%m-%d %H:%M:%S"),
+        "date": _utc_str(r["fetched_at"]),
         "ts": r["fetched_at"],
         "message": r["message"] or "", "author": r["author"],
         "prev": str(rows[i + 1]["id"]) if i + 1 < len(rows) else None,
@@ -1848,8 +1859,8 @@ def configs(request: Request):
             nodes.append({"name": device, "label": device,
                           "ip": mgmt_ips.get(device),
                           "model": "config.xml", "group": "api", "status": "success",
-                          "time": datetime.fromtimestamp(latest["t"]).strftime(
-                              "%Y-%m-%d %H:%M:%S") if latest and latest["t"] else None})
+                          "time": _utc_str(latest["t"])
+                          if latest and latest["t"] else None})
         entries.extend(_db_config_timeline(conn))
     finally:
         conn.close()
@@ -1862,12 +1873,14 @@ def configs(request: Request):
                 for n in raw_nodes:
                     last = n.get("last") or {}
                     name = n.get("name") or ""
+                    raw_time = last.get("end") or n.get("time") or n.get("mtime")
                     nodes.append({
                         "name": name, "label": _canonical_label(name, canon),
                         "ip": n.get("ip"),
                         "model": n.get("model"), "group": n.get("group"),
                         "status": last.get("status") or n.get("status") or "never",
-                        "time": last.get("end") or n.get("time") or n.get("mtime"),
+                        "time": (_utc_str(_ox_ts(str(raw_time))) or raw_time
+                                 if raw_time else None),
                     })
                 ox_entries, problems = _ox_timeline(client, raw_nodes)
                 for e in ox_entries:

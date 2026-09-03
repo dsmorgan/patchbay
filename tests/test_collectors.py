@@ -30,8 +30,8 @@ def test_opnsense_403_notes_name_the_privilege():
     not just that a privilege is missing somewhere."""
     from patchbay.collectors.opnsense import _forbidden_note
 
-    assert "'VPN: OpenVPN'" in _forbidden_note("openvpn/service/searchSessions")
-    assert "Status sub-privilege" in _forbidden_note("wireguard/service/show")
+    assert "'Status: OpenVPN'" in _forbidden_note("openvpn/service/searchSessions")
+    assert "'VPN: Wireguard: Status'" in _forbidden_note("wireguard/service/show")
     assert "'Diagnostics: ARP Table'" in _forbidden_note("diagnostics/interface/get_arp")
     # unknown endpoints keep the generic hint
     assert "matching page privilege" in _forbidden_note("some/new/endpoint")

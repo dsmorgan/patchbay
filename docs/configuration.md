@@ -141,13 +141,17 @@ partial grants degrade gracefully:
 | Diagnostics: Routing Tables | Route table → subnet reachability |
 | System: Gateways | Gateway health and status |
 | DHCP: Leases | DHCPv4 lease table → hostname/IP mapping |
-| VPN: WireGuard | WireGuard peers → tunnel objects with handshake-based health |
-| VPN: OpenVPN | OpenVPN sessions → tunnel objects |
-| VPN: IPsec | IPsec phase-1 SAs → tunnel objects |
+| VPN: Wireguard: Status | WireGuard peers → tunnel objects with handshake-based health |
+| Status: OpenVPN | OpenVPN sessions → tunnel objects |
+| Status: IPSec | IPsec phase-1 SAs → tunnel objects |
 
 The three VPN privileges are optional: without them (or on releases whose
 API lacks the endpoints) tunnels simply stay off the maps — nothing else
-degrades.
+degrades. Their names are as verified on OPNsense 26.1 — upstream names
+them inconsistently (two under **Status:**, one under **VPN:**) and has
+renamed ACL pages across major releases, so if a 403 persists after a
+grant, search the privilege list for the page the logged endpoint path
+suggests.
 
 The interfaces overview endpoint (`interfaces/overview/export`) does not map
 to a named privilege in current OPNsense releases; if patchbay logs a 403 for

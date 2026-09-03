@@ -92,7 +92,11 @@
   .toolbar .grp[hidden] { display: none; }
   /* filter chips are pills already — no outer pill around the row; padding
      matches the mode labels so every pill in the row is the same height */
-  .toolbar .grp.filters { border: none; background: none; padding: 0; gap: 0.4rem; }
+  /* margin: 0 — the class also matches the page-level .filters rule in
+     _style.html, whose 1rem bottom margin inflated this row's flex line and
+     pushed every other control 8px off the shared baseline */
+  .toolbar .grp.filters { border: none; background: none; padding: 0;
+                          gap: 0.4rem; margin: 0; }
   .toolbar .fchip { padding: 0.24rem 0.7rem; }
   /* segmented view control: radios are visually hidden but stay focusable,
      the adjacent label carries the pill styling and the checked/focus state */

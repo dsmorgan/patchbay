@@ -126,12 +126,14 @@ def base_and_name(host: str) -> tuple[str, str]:
 
 # path prefix → the privilege page that guards it, so a 403 note names the
 # exact thing to click under System → Access instead of "the matching page
-# privilege". docs/configuration.md carries the same table. For the VPN
-# status reads, the page's Status sub-privilege is all patchbay needs.
+# privilege". docs/configuration.md carries the same table. The VPN entries
+# are the names verified live on OPNsense 26.1 (the three status pages are
+# named inconsistently upstream — two live under Status:, one under VPN:);
+# re-verify after a major OPNsense upgrade, the ACL names have moved before.
 PRIV_HINT = {
-    "wireguard/": "grant 'VPN: WireGuard' — its Status sub-privilege is enough",
-    "openvpn/": "grant 'VPN: OpenVPN' — its Status sub-privilege is enough",
-    "ipsec/": "grant 'VPN: IPsec' — its Status sub-privilege is enough",
+    "wireguard/": "grant 'VPN: Wireguard: Status'",
+    "openvpn/": "grant 'Status: OpenVPN'",
+    "ipsec/": "grant 'Status: IPSec'",
     "diagnostics/interface/get_arp": "grant 'Diagnostics: ARP Table'",
     "diagnostics/interface/getArp": "grant 'Diagnostics: ARP Table'",
     "diagnostics/interface/get_routes": "grant 'Diagnostics: Routing Tables'",
