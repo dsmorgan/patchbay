@@ -29,6 +29,25 @@ put.
   without them. The terminating firewall's device page lists its tunnels
   in their own section, separate from the port table.
 
+### Fixed
+
+- OPNsense 403 poll notes now name the exact privilege to grant (and note
+  that a Status sub-privilege covers the VPN reads) instead of "the
+  matching page privilege".
+- Brocade/Ruckus FastIron ports no longer show the long-form port name
+  ("GigabitEthernet1/1/10") as their description — that is the vendor
+  echoing the ifName when no comment is set, not documentation.
+- Snapshot polish: per-source data ages are humanized ("16 h", not
+  "967m"), VM cards drop the "· ?" when no hardware string exists, and
+  VPN tunnels now appear in the snapshot both on the map and as a table
+  under the terminating firewall.
+- Hypervisor device pages split vmk* kernel interfaces into their own
+  section — they carry the management addresses but no cable ends on
+  one, so they no longer pad the physical port list.
+- The configs page shows the firewall's management IP on its API-sourced
+  row, the patch-panel section header is just the panel's declared name,
+  and the topology toolbar controls share one height.
+
 ## [0.11.2] — 2026-09-01
 
 ### Fixed

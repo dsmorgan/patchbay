@@ -1839,11 +1839,14 @@ def configs(request: Request):
     try:
         db.init(conn)
         canon = _canon_names(conn)
+        mgmt_ips = dict(conn.execute(
+            "SELECT name, mgmt_ip FROM devices WHERE mgmt_ip IS NOT NULL"))
         for device in _db_config_devices(conn):
             latest = conn.execute(
                 "SELECT MAX(fetched_at) AS t FROM config_revisions WHERE device = ?",
                 (device,)).fetchone()
-            nodes.append({"name": device, "label": device, "ip": None,
+            nodes.append({"name": device, "label": device,
+                          "ip": mgmt_ips.get(device),
                           "model": "config.xml", "group": "api", "status": "success",
                           "time": datetime.fromtimestamp(latest["t"]).strftime(
                               "%Y-%m-%d %H:%M:%S") if latest and latest["t"] else None})
@@ -2160,7 +2163,14 @@ def device(request: Request, name: str):
                 ports.append(p)
             else:
                 hidden[kind] = hidden.get(kind, 0) + 1
-        port_vlans, port_roles = _port_vlan_views(conn, dev["name"], ports)
+        # hypervisor kernel ports (vmk*) carry the management addresses but
+        # ride the vSwitch — no cable ends on one. Their own section keeps
+        # the Ports table reading as the physical NICs it is.
+        kernel_ports = [p for p in ports if port_kind(p["name"]) == "kernel"]
+        if kernel_ports:
+            ports = [p for p in ports if port_kind(p["name"]) != "kernel"]
+        port_vlans, port_roles = _port_vlan_views(conn, dev["name"],
+                                                  ports + kernel_ports)
         endpoints = conn.execute(
             "SELECT * FROM endpoints WHERE device = ? ORDER BY interface, hostname",
             (name,),
@@ -2170,9 +2180,9 @@ def device(request: Request, name: str):
         # port_vlans/port_roles, so all three line up on one port identity.
         # AP clients (interface = SSID) and MAC-only rows land in "other".
         port_by_ifname: dict[str, str] = {}
-        for p in ports:
+        for p in ports + kernel_ports:
             port_by_ifname.setdefault(p["name"], p["name"])
-        for p in ports:
+        for p in ports + kernel_ports:
             port_by_ifname.setdefault(p["name"].removeprefix("ethernet"), p["name"])
         endpoints_by_port: dict[str, list] = {}
         endpoints_other: list = []
@@ -2194,7 +2204,8 @@ def device(request: Request, name: str):
             "SELECT * FROM tunnels WHERE device = ? ORDER BY type, name", (name,),
         ).fetchall()
         return templates.TemplateResponse(request, "device.html", {
-            "d": dev, "ports": ports, "hidden": hidden, "show_all": show_all,
+            "d": dev, "ports": ports, "kernel_ports": kernel_ports,
+            "hidden": hidden, "show_all": show_all,
             "port_vlans": port_vlans, "caps": caps, "port_roles": port_roles,
             "endpoints_by_port": endpoints_by_port, "endpoints_other": endpoints_other,
             "links": links, "children": children,

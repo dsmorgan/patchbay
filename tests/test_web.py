@@ -1234,6 +1234,24 @@ def test_topology_graph_draws_tunnel_nodes(clean_env, tmp_path, client):
     assert edge["alab"] == "wg1"
 
 
+def test_device_page_splits_kernel_interfaces(clean_env, tmp_path, client):
+    """Hypervisor vmk* interfaces get their own section: they carry the
+    management addresses but ride the vSwitch, so mixing them into Ports
+    made the physical NIC list read wrong."""
+    db_path = str(tmp_path / "test.db")
+    seed(db_path)
+    c = sqlite3.connect(db_path)
+    c.row_factory = sqlite3.Row
+    hid = c.execute("SELECT id FROM devices WHERE name = 'hyp1'").fetchone()[0]
+    pdb.upsert_interface(c, device_id=hid, name="vmk0", oper_status="up")
+    c.commit(); c.close()
+    body = client.get("/device/hyp1").text
+    assert "Kernel interfaces — 1" in body
+    assert "no cable ends here" in body
+    # a device without kernel ports gets no section
+    assert "Kernel interfaces" not in client.get("/device/sw1").text
+
+
 def test_device_page_lists_vpn_tunnels(clean_env, tmp_path, client):
     """The terminating firewall's page gets a VPN tunnels section separate
     from the port table — tunnels are objects, not interfaces (#42)."""

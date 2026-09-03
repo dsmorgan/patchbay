@@ -81,6 +81,12 @@
   .toolbar .grp { display: inline-flex; align-items: center; gap: 0.55rem;
                   padding: 0.25rem 0.6rem; border: 1px solid var(--line);
                   border-radius: 999px; background: var(--card); }
+  /* one control height across the row — the segmented group, the bare
+     filter chips, the selects, and the fit button all sit on the same
+     baseline instead of each deriving a height from its own padding */
+  .toolbar .grp, .toolbar .fchip, .toolbar .fitbtn {
+    box-sizing: border-box; height: 2.1rem; }
+  .toolbar .fchip, .toolbar .fitbtn { display: inline-flex; align-items: center; }
   /* the mode-specific groups toggle the `hidden` attribute; an author
      display rule outranks the browser default for [hidden], so say it here */
   .toolbar .grp[hidden] { display: none; }

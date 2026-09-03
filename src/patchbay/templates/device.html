@@ -102,12 +102,31 @@
   {% endfor %}
 </table>
 </div>
+{% if kernel_ports %}
+<h2>Kernel interfaces — {{ kernel_ports | length }}
+  <span style="text-transform: none; letter-spacing: 0; font-weight: 400">; vSwitch-side (vmk), carry addresses — no cable ends here</span></h2>
+<div class="scroll">
+<table>
+  <tr><th>Interface</th><th>Oper</th><th>Admin</th><th>Speed</th><th>802.1Q</th><th>MAC</th><th>Description</th><th>Endpoints</th></tr>
+  {% for p in kernel_ports %}
+  {% set vp = port_vlans.get(p.name.removeprefix("ethernet")) or port_vlans.get(p.name) %}
+  {% set pr = port_roles.get(p.name.removeprefix("ethernet")) or port_roles.get(p.name) %}
+  {% set eps = endpoints_by_port.get(p.name) %}
+  <tr>
+    <td class="mono">{{ p.name }}</td>
+    {{ ui.port_cells(p, vp, pr, caps.get(p.name)) }}
+    <td class="mono">{% if eps %}<a href="#" class="ep" data-if="{{ p.name }}" title="toggle endpoints seen on this port">{{ eps | length }}</a>{% else %}<span class="muted">·</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
 {% if endpoints_by_port %}
 {# hidden fragments for the Endpoints toggle: cloned into a .eprow beneath a
    port on click, same open/close mechanism as .graphrow below — nothing to
    fetch, so no need to build it from JS the way the graphs are #}
 <template id="eptemplates">
-  {% for p in ports %}{% set eps = endpoints_by_port.get(p.name) %}{% if eps %}
+  {% for p in ports + kernel_ports %}{% set eps = endpoints_by_port.get(p.name) %}{% if eps %}
   <tr class="eprow" data-if="{{ p.name }}">
     <td>
       <table>
