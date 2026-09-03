@@ -253,3 +253,65 @@ def test_tunnel_route_into_documented_rail_reuses_it(conn):
     assert t["rails"] == ["v103"]           # the documented rail, not net:
     by = {r["key"]: r for r in g["rails"]}
     assert by["v103"]["via_tunnel"] == ["site-b"]
+
+
+# --- spanning tiers: hypervisors, APs, endpoint fusion (routed redesign) ----
+
+def test_vms_live_inside_their_hypervisor(conn):
+    seed_site(conn)
+    hy = dev(conn, "hyp1", role="hypervisor")
+    iface(conn, hy, "vmk0", ip="192.0.2.60", speed_bps=10_000_000_000)
+    vm = dev(conn, "vm1", role="vm", parent="hyp1")
+    iface(conn, vm, "eth0", ip="198.51.100.60")
+    g = build_routed_graph(conn, _S())
+    assert [h["name"] for h in g["hosts"]] == ["nas1"]     # vm1 not outside
+    hyp = g["hypervisors"][0]
+    assert hyp["name"] == "hyp1"
+    assert hyp["groups"] == {"v20": 1}
+    assert set(hyp["rails"]) == {"v1", "v20"}
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v20"]["hosts"] == 1                          # web1 only
+
+
+def test_wireless_clients_count_inside_their_ap(conn):
+    seed_site(conn)
+    ap = dev(conn, "ap1", role="ap")
+    iface(conn, ap, "eth0", ip="192.0.2.70")
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:09:11", source="unifi",
+                        ip="198.51.100.90", hostname="phone",
+                        device="ap1", interface="ssid-home")
+    g = build_routed_graph(conn, _S())
+    a = g["aps"][0]
+    assert a["name"] == "ap1"
+    assert a["groups"] == {"v20": 1}
+    assert [l["rail"] for l in a["legs"]] == ["v1"]         # dot: AP's own IP
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v20"]["hosts"] == 1                          # web1; not phone
+
+
+def test_dual_homed_endpoint_fuses_to_a_host_box(conn):
+    """Two ARP rows sharing a hostname on two networks are one dual-homed
+    host, fused by canonical short hostname exactly like the topology's
+    wired hosts."""
+    seed_site(conn)
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:09:21", source="test",
+                        ip="192.0.2.80", hostname="nas9.lan")
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:09:22", source="test",
+                        ip="198.51.100.80", hostname="NAS9")
+    g = build_routed_graph(conn, _S())
+    fused = next(h for h in g["hosts"] if h["name"] == "nas9")
+    assert {l["rail"] for l in fused["legs"]} == {"v1", "v20"}
+
+
+def test_gateway_addresses_never_become_hosts(conn):
+    """dnsmasq hands the router's per-VLAN addresses one hostname; fusing
+    those would invent a phantom multi-homed host spanning every network."""
+    seed_site(conn)
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:09:31", source="test",
+                        ip="192.0.2.1", hostname="gateway")
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:09:32", source="test",
+                        ip="198.51.100.1", hostname="gateway")
+    g = build_routed_graph(conn, _S())
+    assert all(h["name"] != "gateway" for h in g["hosts"])
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v1"]["hosts"] == 0

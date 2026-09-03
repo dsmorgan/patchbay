@@ -220,28 +220,94 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             t["rails"] = sorted(t["rails"])
 
     # hosts: multi-homed devices draw once; single-homed collapse to a count.
-    # Routers live in the routing tier, never as host boxes.
+    # Routers live in the routing tier. Hypervisors and APs get spanning
+    # boxes in tiers of their own, and their tenants — guest VMs, wireless
+    # clients — live inside those boxes, so every host counts in exactly
+    # one place on the page.
+    hyp_names = {n for n, d in devices.items() if d["role"] == "hypervisor"}
+    ap_names = {n for n, d in devices.items() if d["role"] == "ap"}
     hosts, single = [], {k: 0 for k in rails.rails}
+    hyp_groups: dict[str, dict[str, int]] = {n: {} for n in hyp_names}
+    hyp_guests: dict[str, list[dict]] = {n: [] for n in hyp_names}
     for dev, dl in sorted(legs.items()):
-        if dev in router_names:
+        if dev in router_names or dev in hyp_names or dev in ap_names:
             continue
+        parent = devices.get(dev, {}).get("parent")
+        entry = None
         if len(dl) >= 2:
             ordered = list(dl.values())
-            hosts.append({
-                "name": dev, "role": devices.get(dev, {}).get("role"),
-                "legs": ordered, "home": _home_rail(ordered, rails.rails)})
+            entry = {"name": dev, "role": devices.get(dev, {}).get("role"),
+                     "legs": ordered, "home": _home_rail(ordered, rails.rails)}
+        if parent in hyp_names:
+            if entry:
+                hyp_guests[parent].append(entry)
+            elif len(dl) == 1:
+                k = next(iter(dl))
+                hyp_groups[parent][k] = hyp_groups[parent].get(k, 0) + 1
+            continue
+        if entry:
+            hosts.append(entry)
         elif len(dl) == 1:
             single[next(iter(dl))] += 1
 
-    # endpoints with an address land in their rail's count when they aren't
-    # already a device (their MAC would have made them one)
+    # endpoints with an address participate when they aren't already a
+    # device. A wireless client counts inside the AP that learned it; a
+    # hostname with addresses on two networks is a dual-homed host worth a
+    # box of its own (fused by canonical short hostname, the same rule the
+    # topology's wired hosts use). A rail's gateway address is the router
+    # wearing a per-VLAN hat, never a host.
     seen_devs = {d.lower() for d in devices}
-    for r in conn.execute("SELECT hostname, ip FROM endpoints WHERE ip IS NOT NULL"):
-        if (r["hostname"] or "").lower() in seen_devs:
+    alias_map = dict(conn.execute("SELECT alias, canonical FROM aliases"))
+    gw_ips = {r["gateway"].split("/")[0] for r in rails.rails.values()
+              if r["gateway"]}
+    ap_clients: dict[str, dict[str, int]] = {n: {} for n in ap_names}
+    fused: dict[str, dict[str, dict]] = {}
+    for r in conn.execute(
+            "SELECT hostname, ip, device FROM endpoints WHERE ip IS NOT NULL"):
+        hn = (r["hostname"] or "").split(".")[0].lower()
+        hn = alias_map.get(hn, hn)
+        if hn in seen_devs or r["ip"].split("/")[0] in gw_ips:
             continue
         key = rails.rail_of_ip(r["ip"])
-        if key:
+        if key is None:
+            continue
+        if r["device"] in ap_names:
+            ap_clients[r["device"]][key] = ap_clients[r["device"]].get(key, 0) + 1
+        elif hn:
+            fused.setdefault(hn, {}).setdefault(key, {
+                "rail": key, "iface": "?", "ip": r["ip"], "speed": 0})
+        else:
             single[key] += 1
+    for hn, by_rail in sorted(fused.items()):
+        if len(by_rail) >= 2:
+            ordered = list(by_rail.values())
+            hosts.append({"name": hn, "role": None, "legs": ordered,
+                          "home": _home_rail(ordered, rails.rails)})
+        else:
+            single[next(iter(by_rail))] += 1
+
+    # spanning boxes: a hypervisor's box covers every rail it or its guests
+    # touch; an AP's covers its own addresses plus its clients'. A box with
+    # no rail contact at all (nothing learned yet) stays off the map.
+    hypervisors = []
+    for hy in sorted(hyp_names):
+        own = list(legs.get(hy, {}).values())
+        span = ({l["rail"] for l in own} | set(hyp_groups[hy])
+                | {l["rail"] for h in hyp_guests[hy] for l in h["legs"]})
+        if span:
+            hypervisors.append({
+                "name": hy, "role": "hypervisor", "legs": own,
+                "rails": sorted(span), "groups": hyp_groups[hy],
+                "guests": hyp_guests[hy],
+                "status": devices.get(hy, {}).get("status")})
+    aps = []
+    for ap in sorted(ap_names):
+        own = list(legs.get(ap, {}).values())
+        span = {l["rail"] for l in own} | set(ap_clients[ap])
+        if span:
+            aps.append({"name": ap, "role": "ap", "legs": own,
+                        "rails": sorted(span), "groups": ap_clients[ap],
+                        "status": devices.get(ap, {}).get("status")})
 
     # a rail earns its place by participating: a router routes it, a drawn
     # host has a leg on it, or single-homed hosts count against it. IPAM
@@ -249,6 +315,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # VLANs nothing claims are /vlans material, where documentation vs
     # reality is the point.
     attached = {l["rail"] for h in hosts for l in h["legs"]}
+    for box in hypervisors + aps:
+        attached |= set(box["rails"])
     live = {k: r for k, r in rails.rails.items()
             if r["routed"] or single.get(k, 0) or k in attached}
     if wan_rail and wan_rail not in live:   # the way out always draws
@@ -257,7 +325,13 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         for k in t["rails"]:
             live.setdefault(k, rails.rails[k])
 
-    order = order_rails(live, hosts, declared=getattr(
+    # spanning boxes pull their rails together harder than a two-legged
+    # host does — a hypervisor covering scattered rails stretches across
+    # the whole picture, so its adjacency is worth more
+    pullers = hosts + [
+        {"legs": [{"rail": k} for k in b["rails"]], "weight": 3}
+        for b in hypervisors + aps]
+    order = order_rails(live, pullers, declared=getattr(
         settings, "routed_order", ()) or ())
     pos = {k: i for i, k in enumerate(order)}
     for h in hosts:
@@ -266,6 +340,19 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     rows = assign_rows(hosts, pos)
     for h, row in zip(hosts, rows):
         h["row"] = row
+    for boxes in (hypervisors, aps):
+        for b in boxes:
+            b["rails"].sort(key=lambda k: pos.get(k, 0))
+            b["legs"].sort(key=lambda l: pos.get(l["rail"], 0))
+            for h in b.get("guests", ()):
+                h["legs"].sort(key=lambda l: pos.get(l["rail"], 0))
+        for b in boxes:
+            b.setdefault("guests", [])
+            b["guests"].sort(key=lambda h: pos.get(h["home"], 0))
+        spans = assign_rows(
+            [{"legs": [{"rail": k} for k in b["rails"]]} for b in boxes], pos)
+        for b, row in zip(boxes, spans):
+            b["row"] = row
 
     via_tunnel: dict[str, list[str]] = {}
     for t in tunnels:
@@ -283,6 +370,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         "default": default,
         "gateways": gws,
         "hosts": hosts,
+        "hypervisors": hypervisors,
+        "aps": aps,
         "tunnels": tunnels,
         "wan_names": list(getattr(settings, "wan_names", ()) or ()),
     }
@@ -316,7 +405,7 @@ def order_rails(rails: dict[str, dict], hosts: list[dict],
         for h in hosts:
             ps = [pos[l["rail"]] for l in h["legs"] if l["rail"] in pos]
             if len(ps) > 1:
-                total += max(ps) - min(ps)
+                total += h.get("weight", 1) * (max(ps) - min(ps))
         return total
 
     improved = True
