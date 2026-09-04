@@ -6,7 +6,7 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.12.0] — 2026-09-03
 
 ### Added
 

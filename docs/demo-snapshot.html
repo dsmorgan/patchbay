@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>patchbay snapshot — 2026-09-01 11:47 EDT</title>
+<title>patchbay snapshot — 2026-09-03 20:54 EDT</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
 <style>
   /* IBM Plex Sans, variable weight, Latin subset, self-hosted (SIL OFL 1.1 —
@@ -244,7 +244,7 @@
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
          margin-right: 0.45rem; vertical-align: baseline; }
   .up { background: var(--ok); } .down { background: var(--crit); }
-  .unknown, .disabled, .notResponding { background: var(--warn); }
+  .unknown, .disabled, .notResponding, .idle { background: var(--warn); }
   /* rule tiers: the header row keeps the panel-edge weight, cell rules drop
      to the faint one, so a table reads as one region with rows in it */
   table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
@@ -305,8 +305,8 @@
     <rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/>
   </g>
 </svg>patchbay snapshot</h1>
-  <nav class="muted">generated 2026-09-01 11:47 EDT · build 0.11.2</nav>
-  <span class="ages">data age at generation: librenms 0.0m · opnsense 0.0m · oxidized 0.0m · phpipam 0.0m · unifi 0.0m · vsphere 0.0m</span>
+  <nav class="muted">generated 2026-09-03 20:54 EDT · build 0.12.0</nav>
+  <span class="ages">data age at generation: librenms 0 min · opnsense 0 min · oxidized 0 min · phpipam 0 min · unifi 0 min · vsphere 0 min</span>
 </header>
 <main>
 <p class="muted" style="max-width: 76ch">Demo snapshot of a
@@ -333,6 +333,9 @@ from your own network.</p>
   .edge.fdbinference { stroke-dasharray: 5 4; }
   .edge.virtualized { stroke-dasharray: 3 5; opacity: 0.65; stroke: var(--r-hyp); }
   .edge.wan { stroke-dasharray: 8 4; }
+  /* a tunnel edge is the encrypted path, not a cable — firewall purple,
+     tight dash, same non-cable standing as wan/virtualized */
+  .edge.tunnel { stroke-dasharray: 4 3; stroke: var(--r-firewall); }
   .edge.oob { stroke-dasharray: 2 4; opacity: 0.6; }
   .edge.fdbhost { opacity: 0.45; }
   .portlab, .speedlab { font: 10.5px var(--font-mono); fill: var(--muted);
@@ -360,6 +363,9 @@ from your own network.</p>
   .node text.nm { font: 600 12.5px var(--font-ui); fill: var(--ink); }
   .node text.sub { font: 10.5px var(--font-ui); fill: var(--muted); }
   .node.unmanaged-switch rect { stroke-dasharray: 5 4; stroke: var(--muted); }
+  /* VPN tunnels: cloud-shaped but dashed and firewall-purple — an egress,
+     never mistakable for the provider cloud */
+  .node.tunnel ellipse { stroke-dasharray: 6 4; stroke: var(--r-firewall) !important; }
   .node { cursor: pointer; }
   .ricon { fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: 0.5;
            stroke-linecap: round; stroke-linejoin: round; }
@@ -370,9 +376,10 @@ from your own network.</p>
   .node.firewall .ricon { stroke: var(--r-firewall); opacity: 1; }
   .node.hypervisor .ricon { stroke: var(--r-hyp); opacity: 1; }
   .node.ap .ricon { stroke: var(--r-ap); opacity: 1; }
+  .node.tunnel .ricon { stroke: var(--r-firewall); opacity: 1; }
   .legend svg.licon { width: 16px; height: 16px; vertical-align: -3px; }
   .sdot.up { fill: var(--ok); } .sdot.down { fill: var(--crit); }
-  .sdot.unknown, .sdot.notResponding, .sdot.disabled { fill: var(--warn); }
+  .sdot.unknown, .sdot.notResponding, .sdot.disabled, .sdot.idle { fill: var(--warn); }
   .toolbar { display: flex; align-items: center; gap: 0.4rem 1rem; flex-wrap: wrap;
              margin-bottom: 0.55rem; font-size: 0.8rem; }
   .toolbar label { display: inline-flex; align-items: center; gap: 0.35rem;
@@ -383,12 +390,22 @@ from your own network.</p>
   .toolbar .grp { display: inline-flex; align-items: center; gap: 0.55rem;
                   padding: 0.25rem 0.6rem; border: 1px solid var(--line);
                   border-radius: 999px; background: var(--card); }
+  /* one control height across the row — the segmented group, the bare
+     filter chips, the selects, and the fit button all sit on the same
+     baseline instead of each deriving a height from its own padding */
+  .toolbar .grp, .toolbar .fchip, .toolbar .fitbtn {
+    box-sizing: border-box; height: 2.1rem; }
+  .toolbar .fchip, .toolbar .fitbtn { display: inline-flex; align-items: center; }
   /* the mode-specific groups toggle the `hidden` attribute; an author
      display rule outranks the browser default for [hidden], so say it here */
   .toolbar .grp[hidden] { display: none; }
   /* filter chips are pills already — no outer pill around the row; padding
      matches the mode labels so every pill in the row is the same height */
-  .toolbar .grp.filters { border: none; background: none; padding: 0; gap: 0.4rem; }
+  /* margin: 0 — the class also matches the page-level .filters rule in
+     _style.html, whose 1rem bottom margin inflated this row's flex line and
+     pushed every other control 8px off the shared baseline */
+  .toolbar .grp.filters { border: none; background: none; padding: 0;
+                          gap: 0.4rem; margin: 0; }
   .toolbar .fchip { padding: 0.24rem 0.7rem; }
   /* segmented view control: radios are visually hidden but stay focusable,
      the adjacent label carries the pill styling and the checked/focus state */
@@ -492,7 +509,8 @@ from your own network.</p>
     <svg class="licon" data-role="hypervisor" style="color: var(--r-hyp)"></svg> VM host
     <svg class="licon" data-role="ap" style="color: var(--r-ap)"></svg> AP
     <svg class="licon" data-role="unmanaged-switch" style="color: var(--muted)"></svg> unmanaged
-    <svg class="licon" data-role="host" style="color: var(--muted)"></svg> wired host</span>
+    <svg class="licon" data-role="host" style="color: var(--muted)"></svg> wired host
+    <svg class="licon" data-role="tunnel" style="color: var(--r-firewall)"></svg> VPN tunnel</span>
   <span class="item" id="leg-heat" data-modes="load">load:
     <span class="swatch" style="background: var(--line)"></span>no data
     <span class="swatch" style="background: #5b84a8"></span>idle
@@ -512,7 +530,7 @@ from your own network.</p>
 
 <script>
 const SNAPSHOT = true;
-const graph = {"nodes": [{"name": "ap-attic", "label": "ap-attic", "w": 134.8, "sub": "1 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-attic", "vlans": [1], "px": null, "py": null}, {"name": "ap-den", "label": "ap-den", "w": 119.6, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-den", "vlans": [1], "px": null, "py": null}, {"name": "ap-garage", "label": "ap-garage", "w": 142.39999999999998, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-garage", "vlans": [1], "px": null, "py": null}, {"name": "core1", "label": "core1", "w": 180.0, "sub": "192.0.2.2", "status": "up", "role": "switch", "rank": 1, "title": "core1", "vlans": [1], "px": null, "py": null}, {"name": "edge1", "label": "edge1", "w": 180.0, "sub": "192.0.2.3", "status": "up", "role": "switch", "rank": 1, "title": "edge1", "vlans": [1], "px": null, "py": null}, {"name": "fw1", "label": "fw1", "w": 107.4, "sub": "192.0.2.1", "status": "up", "role": "firewall", "rank": 0, "title": "fw1", "vlans": [1, 20, 30], "px": null, "py": null}, {"name": "hyp1", "label": "hyp1", "w": 180.0, "sub": "192.0.2.10 \u00b7 4/4 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp1", "vlans": [1], "px": null, "py": null}, {"name": "hyp2", "label": "hyp2", "w": 180.0, "sub": "192.0.2.11 \u00b7 3/3 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp2", "vlans": [1], "px": null, "py": null}, {"name": "unmanaged@edge1:e1/0/8", "label": "unmanaged", "w": 142.39999999999998, "sub": "5 MACs", "status": "up", "role": "unmanaged-switch", "rank": 2, "title": "unmanaged@edge1:e1/0/8 \u00b7 ~5 MACs behind edge1 e1/0/8", "vlans": [30], "px": null, "py": null}, {"name": "internet", "role": "cloud", "rank": -1, "w": 127.60000000000001, "sub": "WAN_GW Online", "status": "up", "vlans": [], "px": null, "py": null}, {"name": "console", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "203.0.113.61", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "nas1", "role": "host", "rank": 2, "viaUn": false, "w": 114.0, "sub": "wired host", "status": "up", "vlans": [20], "px": null, "py": null}, {"name": "pi-hole", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.62", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "printer", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.61", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "shelly-plug", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.62", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "tv-basement", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.60", "status": "up", "vlans": [30], "px": null, "py": null}], "links": [{"source": "core1", "target": "hyp1", "alab": "1/0/1 [1]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.2, "putil": 33.6, "vlans": [1], "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/2 [2]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 0.7, "putil": 33.0, "vlans": [1], "note": null}, {"source": "core1", "target": "edge1", "alab": "1/0/3 [3]", "blab": "e1/0/1", "amode": "trunk", "bmode": "trunk", "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.5, "putil": 33.8, "vlans": [1], "note": null}, {"source": "ap-attic", "target": "edge1", "alab": "eth0", "blab": "e1/0/2", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 4.4, "putil": 33.1, "vlans": null, "note": null}, {"source": "ap-den", "target": "edge1", "alab": "eth0", "blab": "e1/0/3", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 9.4, "putil": 33.7, "vlans": null, "note": null}, {"source": "ap-garage", "target": "edge1", "alab": "eth0", "blab": "e1/0/4", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 10.3, "putil": 33.8, "vlans": null, "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/4", "blab": "vmnic1", "amode": null, "bmode": null, "cls": "vspherehint", "sw": 7.4, "speed": "10G", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "edge1", "target": "unmanaged@edge1:e1/0/8", "alab": "e1/0/8", "blab": "", "amode": "access", "bmode": null, "cls": "fdbinference", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "fw1", "target": "hyp1", "alab": "vm", "blab": "", "amode": null, "bmode": null, "cls": "virtualized", "sw": 2.5, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "internet", "alab": "WAN", "blab": "", "amode": null, "bmode": null, "cls": "wan", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "console", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "edge1", "target": "nas1", "alab": "e1/0/10", "blab": "lan1", "amode": "access", "bmode": null, "cls": "fdbhost", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [20], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "pi-hole", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "printer", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "shelly-plug", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "tv-basement", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}], "vlans": [{"vid": 1, "name": "mgmt"}, {"vid": 20, "name": "servers"}, {"vid": 30, "name": "iot"}]};
+const graph = {"nodes": [{"name": "ap-attic", "label": "ap-attic", "w": 134.8, "sub": "1 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-attic", "vlans": [1], "px": null, "py": null}, {"name": "ap-den", "label": "ap-den", "w": 119.6, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-den", "vlans": [1], "px": null, "py": null}, {"name": "ap-garage", "label": "ap-garage", "w": 142.39999999999998, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-garage", "vlans": [1], "px": null, "py": null}, {"name": "core1", "label": "core1", "w": 180.0, "sub": "192.0.2.2", "status": "up", "role": "switch", "rank": 1, "title": "core1", "vlans": [1], "px": null, "py": null}, {"name": "edge1", "label": "edge1", "w": 180.0, "sub": "192.0.2.3", "status": "up", "role": "switch", "rank": 1, "title": "edge1", "vlans": [1], "px": null, "py": null}, {"name": "fw1", "label": "fw1", "w": 107.4, "sub": "192.0.2.1", "status": "up", "role": "firewall", "rank": 0, "title": "fw1", "vlans": [1, 20, 30], "px": null, "py": null}, {"name": "hyp1", "label": "hyp1", "w": 180.0, "sub": "192.0.2.10 \u00b7 4/4 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp1", "vlans": [1], "px": null, "py": null}, {"name": "hyp2", "label": "hyp2", "w": 180.0, "sub": "192.0.2.11 \u00b7 3/3 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp2", "vlans": [1], "px": null, "py": null}, {"name": "unmanaged@edge1:e1/0/8", "label": "unmanaged", "w": 142.39999999999998, "sub": "5 MACs", "status": "up", "role": "unmanaged-switch", "rank": 2, "title": "unmanaged@edge1:e1/0/8 \u00b7 ~5 MACs behind edge1 e1/0/8", "vlans": [30], "px": null, "py": null}, {"name": "internet", "role": "cloud", "rank": -1, "w": 127.60000000000001, "sub": "WAN_GW Online", "status": "up", "vlans": [], "px": null, "py": null}, {"name": "vpn:wireguard:site-b \u00b7 wg-peer", "label": "site-b \u00b7 wg-peer", "role": "tunnel", "rank": -1, "w": 169.2, "sub": "WireGuard", "status": "up", "title": "WireGuard tunnel \u00b7 site-b \u00b7 wg-peer \u00b7 peer 192.0.2.200:51820 \u00b7 allowed 172.16.44.0/24", "vlans": [], "px": null, "py": null}, {"name": "console", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "203.0.113.61", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "nas1", "role": "host", "rank": 2, "viaUn": false, "w": 114.0, "sub": "wired host", "status": "up", "vlans": [20], "px": null, "py": null}, {"name": "pi-hole", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.62", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "printer", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.61", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "shelly-plug", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.62", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "tv-basement", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.60", "status": "up", "vlans": [30], "px": null, "py": null}], "links": [{"source": "core1", "target": "hyp1", "alab": "1/0/1 [1]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.2, "putil": 33.7, "vlans": [1], "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/2 [2]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 0.7, "putil": 33.5, "vlans": [1], "note": null}, {"source": "core1", "target": "edge1", "alab": "1/0/3 [3]", "blab": "e1/0/1", "amode": "trunk", "bmode": "trunk", "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.5, "putil": 33.7, "vlans": [1], "note": null}, {"source": "ap-attic", "target": "edge1", "alab": "eth0", "blab": "e1/0/2", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 4.4, "putil": 33.8, "vlans": null, "note": null}, {"source": "ap-den", "target": "edge1", "alab": "eth0", "blab": "e1/0/3", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 9.4, "putil": 33.8, "vlans": null, "note": null}, {"source": "ap-garage", "target": "edge1", "alab": "eth0", "blab": "e1/0/4", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 10.3, "putil": 33.5, "vlans": null, "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/4", "blab": "vmnic1", "amode": null, "bmode": null, "cls": "vspherehint", "sw": 7.4, "speed": "10G", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "edge1", "target": "unmanaged@edge1:e1/0/8", "alab": "e1/0/8", "blab": "", "amode": "access", "bmode": null, "cls": "fdbinference", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "fw1", "target": "hyp1", "alab": "vm", "blab": "", "amode": null, "bmode": null, "cls": "virtualized", "sw": 2.5, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "internet", "alab": "WAN", "blab": "", "amode": null, "bmode": null, "cls": "wan", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "vpn:wireguard:site-b \u00b7 wg-peer", "alab": "wg1", "blab": "", "amode": null, "bmode": null, "cls": "tunnel", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "console", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "edge1", "target": "nas1", "alab": "e1/0/10", "blab": "lan1", "amode": "access", "bmode": null, "cls": "fdbhost", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [20], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "pi-hole", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "printer", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "shelly-plug", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "tv-basement", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}], "vlans": [{"vid": 1, "name": "mgmt"}, {"vid": 20, "name": "servers"}, {"vid": 30, "name": "iot"}]};
 const svg = d3.select("#topo");
 let W, H;
 ({ width: W, height: H } = svg.node().getBoundingClientRect());
@@ -557,7 +575,7 @@ const TIERS = (() => {
   }
   return p.get("layout") === "tiers";
 })();
-const CORE_ROLES = new Set(["cloud", "firewall", "router", "switch", "hypervisor"]);
+const CORE_ROLES = new Set(["cloud", "tunnel", "firewall", "router", "switch", "hypervisor"]);
 const OFF_STATUS = new Set(["down", "notresponding", "disabled"]);
 
 // degree from the raw data, before d3 rewrites link endpoints into objects
@@ -635,14 +653,14 @@ const slab = gContent.append("g").selectAll("text").data(graph.links.filter(d =>
     .attr("text-anchor", "middle").text(d => d.speed);
 
 // role icons come from the shared server-side dictionary (web.py ICONS)
-const ICONS = {"ap": "M9 13.2a1.2 1.2 0 100 .01 M5.5 10a5 5 0 017 0 M3 7a8.5 8.5 0 0112 0", "firewall": "M1 3h16v12H1z M1 9h16 M9 3v6 M5 9v6 M13 9v6", "host": "M3 2h12v7h-2.5v3H10v2H8v-2H5.5V9H3z M6 2v3 M9 2v3 M12 2v3", "hypervisor": "M9 2l7 3.5L9 9 2 5.5z M2 9l7 3.5 7-3.5 M2 12.5L9 16l7-3.5", "router": "M2 9a7 7 0 0014 0A7 7 0 002 9z M5 6.6h6.8 M11.8 6.6L10 4.8 M11.8 6.6L10 8.4 M13 11.4H6.2 M6.2 11.4L8 9.6 M6.2 11.4L8 13.2", "switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5", "unmanaged-switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5"};
+const ICONS = {"ap": "M9 13.2a1.2 1.2 0 100 .01 M5.5 10a5 5 0 017 0 M3 7a8.5 8.5 0 0112 0", "firewall": "M1 3h16v12H1z M1 9h16 M9 3v6 M5 9v6 M13 9v6", "host": "M3 2h12v7h-2.5v3H10v2H8v-2H5.5V9H3z M6 2v3 M9 2v3 M12 2v3", "hypervisor": "M9 2l7 3.5L9 9 2 5.5z M2 9l7 3.5 7-3.5 M2 12.5L9 16l7-3.5", "router": "M2 9a7 7 0 0014 0A7 7 0 002 9z M5 6.6h6.8 M11.8 6.6L10 4.8 M11.8 6.6L10 8.4 M13 11.4H6.2 M6.2 11.4L8 9.6 M6.2 11.4L8 13.2", "switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5", "tunnel": "M5 8V6a4 4 0 018 0v2 M3 8h12v7H3z M9 11v2", "unmanaged-switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5"};
 
 const node = gContent.append("g").selectAll("g").data(graph.nodes).join("g")
     .attr("class", d => `node ${d.role}` + (d.px != null ? " pinned" : ""));
-node.filter(d => d.role !== "cloud").append("rect")
+node.filter(d => d.role !== "cloud" && d.role !== "tunnel").append("rect")
     .attr("x", d => -d.w / 2).attr("y", -24).attr("width", d => d.w).attr("height", 48)
     .attr("rx", 8);
-node.filter(d => d.role === "cloud").append("ellipse")
+node.filter(d => d.role === "cloud" || d.role === "tunnel").append("ellipse")
     .attr("rx", d => d.w / 2 + 8).attr("ry", 30)
     .attr("fill", "var(--card)").attr("stroke", "var(--line)");
 node.filter(d => ICONS[d.role]).append("path")
@@ -665,7 +683,7 @@ node.on("click", (e, d) => {
     sim.alpha(0.3).restart();
     return;
   }
-  if (d.role !== "cloud" && d.role !== "host") {
+  if (d.role !== "cloud" && d.role !== "host" && d.role !== "tunnel") {
     if (SNAPSHOT) window.location.hash = "dev-" + d.name;
     else window.location = `/device/${encodeURIComponent(d.name)}`;
   }
@@ -952,7 +970,7 @@ function heat(u) {
 // a "cable" is a physical link; virtualized/oob/wan aren't one. Of the
 // cables, fdb-derived ones are inferred (dashed in wiring/vlan), the rest
 // (lldp, declared, vsphere-hint, unifi) are confirmed (solid).
-const NON_CABLE = new Set(["virtualized", "oob", "wan"]);
+const NON_CABLE = new Set(["virtualized", "oob", "wan", "tunnel"]);
 const INFERRED_CABLE = new Set(["fdbuplink", "fdbinference", "fdbhost"]);
 const edgeSourceCls = d => d.cls.split(" ")[0];
 const isCable = d => !NON_CABLE.has(edgeSourceCls(d));
@@ -1208,6 +1226,24 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  <div class="scroll" style="margin-top: 0.5rem">
+  <table>
+    <tr><th>Tunnel</th><th>Type</th><th>Status</th><th>Peer</th><th>Interface</th><th>Last handshake</th><th>Detail</th></tr>
+    
+    <tr>
+      <td>site-b · wg-peer</td>
+      <td class="muted">WireGuard</td>
+      <td><span class="dot up"></span>up</td>
+      <td class="mono">192.0.2.200:51820</td>
+      <td class="mono muted">wg1</td>
+      <td class="mono">1 min before generation</td>
+      <td class="muted">allowed 172.16.44.0/24</td>
+    </tr>
+    
+  </table>
+  </div>
+  
+  
 </section>
 
 <section class="dev" id="dev-core1">
@@ -1442,6 +1478,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-edge1">
@@ -1568,6 +1605,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-hyp1">
@@ -1620,6 +1658,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
     
   </table>
   </div>
+  
   
   
 </section>
@@ -1676,6 +1715,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-ap-attic">
@@ -1701,6 +1741,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
     
   </table>
   </div>
+  
   
   
 </section>
@@ -1730,6 +1771,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-ap-garage">
@@ -1757,6 +1799,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-unmanaged@edge1:e1/0/8">
@@ -1766,6 +1809,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
     <div class="sub"></div>
     <div class="sub mono"></div>
   </div>
+  
   
   
 </section>
@@ -1813,12 +1857,13 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-vm-backup">
   <div class="card vm" style="max-width: 560px">
     <div class="name"><span class="dot up"></span>vm-backup</div>
-    <div class="sub">vm · ?</div>
+    <div class="sub">vm</div>
     <div class="sub">debian 13</div>
     <div class="sub mono">198.51.100.15 · on hyp1</div>
   </div>
@@ -1840,12 +1885,13 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-vm-db1">
   <div class="card vm" style="max-width: 560px">
     <div class="name"><span class="dot up"></span>vm-db1</div>
-    <div class="sub">vm · ?</div>
+    <div class="sub">vm</div>
     <div class="sub">debian 13</div>
     <div class="sub mono">198.51.100.12 · on hyp2</div>
   </div>
@@ -1867,12 +1913,13 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-vm-git">
   <div class="card vm" style="max-width: 560px">
     <div class="name"><span class="dot up"></span>vm-git</div>
-    <div class="sub">vm · ?</div>
+    <div class="sub">vm</div>
     <div class="sub">debian 13</div>
     <div class="sub mono">198.51.100.13 · on hyp1</div>
   </div>
@@ -1894,12 +1941,13 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-vm-media">
   <div class="card vm" style="max-width: 560px">
     <div class="name"><span class="dot up"></span>vm-media</div>
-    <div class="sub">vm · ?</div>
+    <div class="sub">vm</div>
     <div class="sub">debian 13</div>
     <div class="sub mono">198.51.100.14 · on hyp2</div>
   </div>
@@ -1921,12 +1969,13 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-vm-monitor">
   <div class="card vm" style="max-width: 560px">
     <div class="name"><span class="dot up"></span>vm-monitor</div>
-    <div class="sub">vm · ?</div>
+    <div class="sub">vm</div>
     <div class="sub">debian 13</div>
     <div class="sub mono">198.51.100.16 · on hyp2</div>
   </div>
@@ -1948,12 +1997,13 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   </div>
   
   
+  
 </section>
 
 <section class="dev" id="dev-vm-web1">
   <div class="card vm" style="max-width: 560px">
     <div class="name"><span class="dot up"></span>vm-web1</div>
-    <div class="sub">vm · ?</div>
+    <div class="sub">vm</div>
     <div class="sub">debian 13</div>
     <div class="sub mono">198.51.100.11 · on hyp1</div>
   </div>
@@ -1973,6 +2023,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
     
   </table>
   </div>
+  
   
   
 </section>
