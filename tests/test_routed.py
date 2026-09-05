@@ -331,3 +331,55 @@ def test_randomized_macs_never_fuse(conn):
     by = {r["key"]: r for r in g["rails"]}
     assert by["v1"]["hosts"] == 1 and by["v20"]["hosts"] == 2  # web1 + ipad
     assert "ipad" in by["v1"]["host_names"]
+
+
+def test_tunnel_source_supernet_never_becomes_a_network(conn):
+    """A tunnel route whose destination CONTAINS local networks (WireGuard
+    allowed-ips for the home supernet) is the tunnel's source side, not
+    somewhere it leads — named on hover, never drawn as a lane."""
+    seed_site(conn)
+    conn.execute("INSERT INTO tunnels (device, type, name, interface, status, "
+                 "source, last_seen) VALUES ('fw1', 'wireguard', 'egress', "
+                 "'wg0', 'up', 'test', strftime('%s','now'))")
+    conn.execute("INSERT INTO routes (device, destination, interface, source, "
+                 "last_seen) VALUES ('fw1', '192.0.0.0/16', 'wg0', 'test', "
+                 "strftime('%s','now'))")
+    g = build_routed_graph(conn, _S())
+    t = g["tunnels"][0]
+    assert t["rails"] == []
+    assert t["local_nets"] == ["192.0.0.0/16"]
+    assert all(r["key"] != "net:192.0.0.0/16" for r in g["rails"])
+
+
+def test_ipam_enriches_a_live_hosts_legs(conn):
+    """An IPAM address matching a drawn host's hostname adds a leg on a
+    network no observer can report (isolated storage VLAN: no ARP there);
+    IPAM alone still draws nothing."""
+    seed_site(conn)
+    vlan(conn, 200, "backup"); subnet(conn, "198.18.0.0/24", vlan=200)
+    conn.execute("INSERT INTO ipam_addresses (ip, hostname) VALUES "
+                 "('198.18.0.40', 'nas1.lan')")
+    conn.execute("INSERT INTO ipam_addresses (ip, hostname) VALUES "
+                 "('198.18.0.90', 'ghost.lan')")
+    g = build_routed_graph(conn, _S())
+    nas = next(h for h in g["hosts"] if h["name"] == "nas1")
+    doc = next(l for l in nas["legs"] if l["rail"] == "v200")
+    assert doc["iface"] == "ipam" and doc["ip"] == "198.18.0.40"
+    assert all(h["name"] != "ghost" for h in g["hosts"])
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v200"]["hosts"] == 0                  # doc adds legs, not hosts
+
+
+def test_ipam_leg_promotes_a_one_legged_sighting(conn):
+    """One live observation plus an IPAM address on another network is a
+    dual-homed host: documentation supplies identity, the sighting supplies
+    liveness."""
+    seed_site(conn)
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:60", source="fdb",
+                        ip="192.0.2.60", hostname="tape1")
+    conn.execute("INSERT INTO ipam_addresses (ip, hostname) VALUES "
+                 "('203.0.113.60', 'tape1.lan')")
+    g = build_routed_graph(conn, _S())
+    tape = next(h for h in g["hosts"] if h["name"] == "tape1")
+    assert {l["rail"] for l in tape["legs"]} == {"v1", "v103"}
+    assert next(l for l in tape["legs"] if l["rail"] == "v103")["iface"] == "ipam"

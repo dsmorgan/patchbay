@@ -234,6 +234,26 @@ class UnifiCollector:
                     "INSERT OR IGNORE INTO fdb (device, interface, mac, source) VALUES (?, ?, ?, 'unifi')",
                     fdb_rows,
                 )
+                # a client absent from the controller's current station list
+                # is no longer on any of these APs: clear the stale AP
+                # attribution but keep the endpoint — its identity (and any
+                # ARP-refreshed liveness) is still real. Without this, a
+                # laptop that went wired kept counting as a wireless client
+                # until the endpoint TTL fired.
+                seen_macs = {(c.get("mac") or "").lower() for c in clients}
+                ap_names = [d["name"] for d in conn.execute(
+                    "SELECT name FROM devices WHERE source = ? AND role = 'ap'",
+                    (NAME,))]
+                if ap_names:
+                    q = ",".join("?" * len(ap_names))
+                    stale = [r["mac"] for r in conn.execute(
+                        f"SELECT mac FROM endpoints WHERE device IN ({q})",
+                        ap_names) if r["mac"] not in seen_macs]
+                    if stale:
+                        qm = ",".join("?" * len(stale))
+                        conn.execute(
+                            f"UPDATE endpoints SET device = NULL, interface = NULL "
+                            f"WHERE mac IN ({qm})", stale)
         parts = []
         if n_switches:
             parts.append(f"{n_switches} switches")

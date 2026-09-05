@@ -20,6 +20,21 @@ put.
   tunnels at the far right. Height is fixed by network count, width grows
   with devices — landscape-native, made to read at a distance.
 
+### Changed
+
+- **IPAM is identity, never liveness.** phpIPAM no longer writes endpoint
+  rows (it re-stamped `last_seen` every poll, so documented-but-gone
+  hosts never aged out and ghost hosts haunted the routed view); it now
+  only lends hostnames to endpoints real observers saw, and legacy
+  doc-rows are retired on the next poll. On the routed view, IPAM
+  addresses matching an observed host add "ipam" legs — including
+  networks nothing can observe, like an isolated storage VLAN — but IPAM
+  alone never draws a host. UniFi clears stale AP attribution for
+  clients gone from the controller's station list, so ex-wireless hosts
+  stop counting as clients. A tunnel route whose destination contains
+  local networks (WireGuard allowed-ips for the home supernet) is the
+  tunnel's source side: named on hover, never drawn as a network.
+
 ## [0.12.0] — 2026-09-03
 
 ### Added

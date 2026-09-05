@@ -193,7 +193,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                     "label": type_label.get(t["type"], "VPN"),
                     "status": t["status"], "device": t["device"],
                     "peer": t["peer"], "detail": t["detail"],
-                    "rails": set()} for t in tun_rows]
+                    "rails": set(), "local_nets": []} for t in tun_rows]
         by_iface = {t["interface"]: i for i, t in enumerate(tun_rows)
                     if t["interface"]}
         by_type: dict[str, list[int]] = {}
@@ -217,6 +217,14 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                 continue
             dest = _net(r["destination"])
             if dest is None:
+                continue
+            # a destination that CONTAINS local networks is the tunnel's
+            # source side — WireGuard allowed-ips for the home supernet,
+            # say: who may ride the tunnel, not somewhere it leads. Named
+            # on hover, never drawn as a network of its own.
+            if any(n.version == dest.version and n != dest and n.subnet_of(dest)
+                   for n, _ in rails._nets):
+                tunnels[idx]["local_nets"].append(r["destination"])
                 continue
             # an existing rail containing the destination wins (the remote
             # subnet may be documented in IPAM); else the route itself is
@@ -289,13 +297,37 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                 "rail": key, "iface": "?", "ip": r["ip"], "speed": 0})
         else:
             single[key].append(label)
+    # documentation may enrich a live host's identity: an IPAM address
+    # whose (canonicalized) hostname matches a host seen by a real observer
+    # adds a leg on a network nothing can report — an isolated storage VLAN
+    # has no ARP to learn from. Doc legs carry iface "ipam" and can promote
+    # a one-legged sighting to a drawn multi-homed box; liveness still
+    # comes only from observation, so IPAM alone never draws a host.
+    ipam_legs: dict[str, list[tuple[str, str]]] = {}
+    for r in conn.execute("SELECT hostname, ip FROM ipam_addresses "
+                          "WHERE hostname IS NOT NULL AND ip IS NOT NULL"):
+        hn = r["hostname"].split(".")[0].lower()
+        hn = alias_map.get(hn, hn)
+        key = rails.rail_of_ip(r["ip"])
+        if key:
+            ipam_legs.setdefault(hn, []).append((key, r["ip"]))
     for hn, by_rail in sorted(fused.items()):
+        for key, ip in ipam_legs.get(hn, []):
+            by_rail.setdefault(key, {"rail": key, "iface": "ipam",
+                                     "ip": ip, "speed": 0})
         if len(by_rail) >= 2:
             ordered = list(by_rail.values())
             hosts.append({"name": hn, "role": None, "legs": ordered,
                           "home": _home_rail(ordered, rails.rails)})
         else:
             single[next(iter(by_rail))].append(hn)
+    for h in hosts:
+        have = {l["rail"] for l in h["legs"]}
+        for key, ip in ipam_legs.get(h["name"].lower(), []):
+            if key not in have:
+                have.add(key)
+                h["legs"].append({"rail": key, "iface": "ipam", "ip": ip,
+                                  "speed": 0})
 
     # spanning boxes: a hypervisor's box covers every rail it or its guests
     # touch; an AP's covers its own addresses plus its clients'. A box with

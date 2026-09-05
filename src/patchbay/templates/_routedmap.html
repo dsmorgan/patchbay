@@ -310,6 +310,8 @@ if (router) {
   title(g, [`${t.label} tunnel · ${t.name}`,
             t.peer ? `peer ${t.peer}` : "",
             t.detail || "",
+            (t.local_nets || []).length
+              ? `local side: ${t.local_nets.join(", ")}` : "",
             t.rails.length ? "" : "no routed networks recorded",
             `status ${t.status || "unknown"}`].filter(Boolean).join("\n"));
   if (t.rails.length) { track(g, t.rails); wireHover(g, t.rails); }
@@ -766,6 +768,8 @@ function drawLanes() {
          t.label + (t.status ? " · " + t.status : ""));
       title(g, [`${t.label} tunnel · ${t.name}`,
                 t.peer ? `peer ${t.peer}` : "", t.detail || "",
+                (t.local_nets || []).length
+                  ? `local side: ${t.local_nets.join(", ")}` : "",
                 `status ${t.status || "unknown"}`].filter(Boolean).join("\n"));
       if (t.rails.length) { track(g, t.rails); wireHover(g, t.rails); }
     });

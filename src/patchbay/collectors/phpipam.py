@@ -81,6 +81,11 @@ class PhpIpamCollector:
                 # empty" — keep the last good address book
                 return "phpipam returned no subnets; kept previous data"
             conn.execute("DELETE FROM ipam_addresses")  # full refresh: IPAM is the master here
+            # migration guard (no-op once clean): rows this collector wrote
+            # as full endpoints under the old behavior are documentation
+            # wearing an observation's timestamps — drop them; real
+            # observers re-create the live ones within a poll
+            conn.execute("DELETE FROM endpoints WHERE source = ?", (NAME,))
             seen_cidrs: list[str] = []
             for s, addrs in fetched:
                 cidr = f"{s['subnet']}/{s['mask']}"
@@ -108,13 +113,18 @@ class PhpIpamCollector:
                          a.get("id"), s.get("id"), s.get("sectionId")),
                     )
                     n_addrs += 1
-                    # ...but only MAC-keyed ones can join the endpoints table
+                    # ...and IPAM lends a *name* to an endpoint some real
+                    # observer (ARP, FDB, the controller) already saw.
+                    # Documentation contributes identity, never liveness:
+                    # writing whole endpoint rows here re-stamped last_seen
+                    # every poll, so documented-but-gone hosts never aged
+                    # out and stale device attribution never cleared.
                     mac = (a.get("mac") or "").strip().lower()
-                    if mac:
-                        db.upsert_endpoint(
-                            conn, mac=mac, source=NAME,
-                            ip=a.get("ip"), hostname=a.get("hostname"),
-                        )
+                    if mac and a.get("hostname"):
+                        conn.execute(
+                            "UPDATE endpoints SET hostname = ? "
+                            "WHERE mac = ? AND hostname IS NULL",
+                            (a["hostname"], mac))
             # Retire subnets phpIPAM no longer documents. The address book
             # above gets a full refresh, but subnets were upsert-only, so one
             # deleted in phpIPAM stayed on the VLAN pages and in drift for

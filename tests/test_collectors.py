@@ -1728,3 +1728,55 @@ def test_pfsense_absent_vpn_status_endpoints_keep_rows(conn, clean_env, monkeypa
     PfsenseCollector().collect(_pf_settings(clean_env), conn)
     assert conn.execute("SELECT COUNT(*) FROM tunnels WHERE type='openvpn'"
                         ).fetchone()[0] == 1
+
+
+class _IpamAddresses(ShrinkingClient):
+    """One documented address carrying a MAC and hostname."""
+
+    def get(self, url, **kw):
+        if url.endswith("/addresses/"):
+            return FakeResponse([{"ip": "192.0.2.40", "hostname": "nas1.lan",
+                                  "mac": "00:00:5e:00:53:40", "id": 9}])
+        return super().get(url, **kw)
+
+
+def test_phpipam_endpoints_are_identity_not_liveness(conn, clean_env, monkeypatch):
+    """IPAM lends names; it never counts as a sighting. The old full-row
+    upsert re-stamped last_seen every poll, so documented-but-gone hosts
+    never aged out of the endpoint TTL and stale device attribution never
+    cleared."""
+    from patchbay.collectors.phpipam import PhpIpamCollector
+    from patchbay.config import load_settings
+
+    clean_env.setenv("IPAM_URL", "https://ipam.example/api")
+    clean_env.setenv("IPAM_APP_ID", "app")
+    clean_env.setenv("IPAM_TOKEN", "t")
+    monkeypatch.setattr(httpx, "Client", _IpamAddresses)
+    # a leftover doc-only row from the old behavior, and a real observation
+    # that IPAM knows a name for
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:99", source="phpipam",
+                        ip="192.0.2.99")
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:40", source="fdb")
+    PhpIpamCollector().collect(load_settings(), conn)
+    macs = {r[0] for r in conn.execute("SELECT mac FROM endpoints")}
+    assert "00:00:5e:00:53:99" not in macs           # doc-only row retired
+    row = conn.execute("SELECT hostname, source FROM endpoints "
+                       "WHERE mac='00:00:5e:00:53:40'").fetchone()
+    assert row["hostname"] == "nas1.lan"             # identity filled in
+    assert row["source"] == "fdb"                    # the observer keeps the row
+
+
+def test_unifi_clears_stale_ap_attribution(conn, clean_env, monkeypatch):
+    """A client absent from the controller's current station list is no
+    longer on any AP: the endpoint survives (ARP may still see it) but the
+    AP attribution goes, so it stops counting as a wireless client."""
+    from patchbay.collectors.unifi import UnifiCollector
+
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:77", source="unifi",
+                        ip="192.0.2.77", device="ap-floor1", interface="ssid-home")
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    row = conn.execute("SELECT device, interface FROM endpoints "
+                       "WHERE mac='00:00:5e:00:53:77'").fetchone()
+    assert row is not None
+    assert row["device"] is None and row["interface"] is None
