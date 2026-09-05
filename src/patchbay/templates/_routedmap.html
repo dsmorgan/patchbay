@@ -73,6 +73,8 @@
   #routed .spanbox { cursor: pointer; }
   #routed .ricon path { fill: none; stroke-width: 1.5;
                         stroke-linecap: round; stroke-linejoin: round; }
+  /* lanes layout: faint alternating bands keep rows readable at a glance */
+  #routed .laneband { fill: var(--hover); opacity: 0.28; }
   #routed .routerlabel { font: 600 11.5px var(--font-ui); fill: var(--ink); }
   #routed .gwlabel { font: 10px var(--font-mono); fill: var(--muted); }
 </style>
@@ -81,6 +83,8 @@
   <span class="grp filters">
     <button type="button" class="fchip" id="r-hosts" aria-pressed="true">multi-homed hosts</button>
     <button type="button" class="fchip" id="r-groups" aria-pressed="true">single-homed groups</button>
+    <button type="button" class="fchip" id="r-axis" aria-pressed="false"
+            title="switch between horizontal network lanes and vertical rails">vertical rails</button>
   </span>
   <button type="button" class="fchip fitbtn" id="r-fit" title="fit the whole map">fit ⤢</button>
 </div>
@@ -212,8 +216,17 @@ function nameList(names) {
        + ((names || []).length > cap ? `\n…and ${names.length - cap} more` : "");
 }
 
+// networks-as-lanes is the default; ?axis=v keeps the original vertical
+// rails for comparison while the redesign settles
+const AXIS = (new URLSearchParams(location.search)).get("axis") === "v"
+  ? "v" : "lanes";
+
 const router = rg.routers[0] || null;
 const routedKeys = new Set(router ? router.rails : []);
+// taps draw first so they pass underneath rails and boxes in either layout
+const tapLayer = el("g", {});
+
+function drawRails() {
 const midX = nR ? (railX(0) + railX(nR - 1)) / 2 : W / 2;
 
 // bands
@@ -250,8 +263,6 @@ if (router) {
   if (rg.default && rg.default.gateway) title(cloud, `default via ${rg.default.gateway}`);
 }
 
-// taps (before rails so they pass underneath), collected per host below
-const tapLayer = el("g", {});
 // rails + fan
 const rw = 150, rh = 54, ry = 128;
 if (router) {
@@ -487,6 +498,281 @@ if (apRows) {
     spanBox(a, y, boxHeight(a, 84), "ap", "client", y + 36, y + 52);
   });
 }
+}  // drawRails
+
+// --- lanes layout: networks as horizontal lanes, edge → internet ------------
+// The landscape-native reading: lane labels at the left, then the edge
+// (loose hosts, one wireless container), infrastructure (multi-homed hosts,
+// hypervisors), the router spanning its lanes, and the internet at the far
+// right. Height is fixed by network count; width grows with devices.
+function drawLanes() {
+  const labelW = 180, laneH = 74, laneTop = 70, colGap = 22, chipW = 56;
+  const laneY = i => laneTop + i * laneH + laneH / 2;
+  const laneBot = laneTop + nR * laneH;
+
+  // one logical wireless container: every AP folded together — the map
+  // shows the wireless *network*; which AP saw a client is tooltip detail
+  let wifi = null;
+  if (aps.length) {
+    const groups = {};
+    const legs = [];
+    aps.forEach(a => {
+      Object.entries(a.groups).forEach(([k, names]) =>
+        (groups[k] = groups[k] || []).push(...names.map(n => `${n} (${a.name})`)));
+      a.legs.forEach(l => legs.push({ ...l, ap: a.name }));
+    });
+    const span = new Set([...Object.keys(groups),
+                          ...legs.map(l => l.rail)].filter(k => k in pos));
+    if (span.size) wifi = {
+      name: aps.length > 1 ? "wireless" : aps[0].name, role: "ap",
+      rails: [...span], groups, legs,
+      aps: aps.map(a => a.name) };
+  }
+
+  function slabW(b) {
+    let w = Math.max(96, b.name.length * 7.4 + (b.role || "").length * 6 + 56);
+    let gsum = 8;
+    (b.guests || []).forEach(v => gsum += Math.max(64, v.name.length * 7.4 + 40) + 10);
+    if (gsum > 20) w = Math.max(w, gsum + 8);
+    if (Object.keys(b.groups || {}).length) w = Math.max(w, chipW + 28);
+    return w;
+  }
+  function hostW(h) { return Math.max(72, h.name.length * 7.4 + 48); }
+
+  // columns, left → right
+  let x = labelW + 34;
+  const hasLoose = rails.some(r => r.hosts > 0);
+  const looseX = x;
+  if (hasLoose) x += chipW + colGap + 6;
+  const wifiX = wifi ? x : 0;
+  if (wifi) x += slabW(wifi) + colGap;
+  const hostsSorted = rg.hosts;
+  const hostXs = hostsSorted.map(h => { const p = x; x += hostW(h) + colGap; return p; });
+  const hypsSorted = [...hyps].sort((a, b) => pos[a.rails[0]] - pos[b.rails[0]]);
+  const hypXs = hypsSorted.map(hy => { const p = x; x += slabW(hy) + colGap; return p; });
+  x += 26;
+  const routerX = x, routerW = router
+    ? Math.max(130, router.name.length * 7.4 + 60) : 0;
+  x += routerW;
+  const cloudX = x + 150;
+  const tuns = rg.tunnels || [];
+  const LW = cloudX + 130 + (tuns.length ? 30 : 0);
+  const LH = Math.max(laneBot + 46,
+                      laneTop + 90 + tuns.length * 78);
+  svg.setAttribute("viewBox", `0 0 ${LW} ${LH}`);
+
+  // faint alternating lane bands make the rows scannable at a distance
+  rails.forEach((r, i) => {
+    if (i % 2 === 0)
+      el("rect", { x: 0, y: laneY(i) - laneH / 2, width: LW, height: laneH,
+                   class: "laneband" });
+  });
+
+  // lane lines + left-gutter labels
+  rails.forEach((r, i) => {
+    const y = laneY(i);
+    const cls = "rail" + (r.routed ? "" : " unrouted") + (r.wan ? " wan" : "");
+    const endX = r.routed || r.wan ? routerX : routerX - 18;
+    const line = el("line", { x1: labelW + 10, y1: y, x2: endX, y2: y, class: cls });
+    const viaTun = (r.via_tunnel || []).length;
+    const tip = [`${r.name || "?"}${r.vid != null ? " · VLAN " + r.vid : ""}`,
+                 r.wan ? `internet uplink (${rg.wan_names[0] || "wan"})` : "",
+                 viaTun ? `via tunnel ${r.via_tunnel.join(", ")}` : "",
+                 ...(r.subnets.length ? r.subnets : ["no subnet recorded"]),
+                 r.gateway ? `gateway ${r.gateway}`
+                           : (r.routed || r.wan || viaTun ? "" : "not routed"),
+                 `sources: ${r.sources.join(", ")}`].filter(Boolean).join("\n");
+    const label = (r.name || (r.vid != null ? "vlan" : r.key)).slice(0, 14)
+                  + ((r.name || "").length > 14 ? "…" : "");
+    const text = r.vid != null ? `${label} ${r.vid}` : label;
+    const tag = el("g", { class: "vtag" });
+    el("rect", { x: 10, y: y - 14, width: labelW - 16, height: 28, rx: 4 }, tag);
+    el("text", { x: 20, y: y - 1 }, tag, text);
+    el("text", { x: 20, y: y + 11, class: "gwlabel" }, tag,
+       (r.subnets[0] || "") + (r.subnets.length > 1 ? " +" + (r.subnets.length - 1) : ""));
+    title(tag, tip); title(line, tip);
+    [line, tag].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); });
+    if (r.vid != null)
+      tag.addEventListener("click", () => location.href = `/vlans#v${r.vid}`);
+    // loose single-homed hosts: a ×N chip riding the lane at the edge column
+    if (r.hosts > 0) {
+      const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
+                          "data-kind": "group" });
+      el("rect", { x: looseX, y: y - 15, width: chipW, height: 30, rx: 8 }, g);
+      el("text", { x: looseX + chipW / 2, y: y + 4, "text-anchor": "middle" }, g,
+         `×${r.hosts}`);
+      title(g, `${r.hosts} single-homed host${r.hosts > 1 ? "s" : ""} on `
+               + `${r.name || r.key}\n` + nameList(r.host_names));
+      track(g, [r.key]); wireHover(g, [r.key]);
+      if (r.vid != null)
+        g.addEventListener("click", () => location.href = `/vlans#v${r.vid}`);
+    }
+  });
+
+  function laneChip(parent, cx, cy, names, r, noun) {
+    const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
+                        "data-kind": "group" }, parent);
+    el("rect", { x: cx - chipW / 2, y: cy - 15, width: chipW, height: 30, rx: 8 }, g);
+    el("text", { x: cx, y: cy + 4, "text-anchor": "middle" }, g, `×${names.length}`);
+    title(g, `${names.length} ${noun}${names.length > 1 ? "s" : ""} on `
+             + `${r.name || r.key}\n` + nameList(names));
+    track(g, [r.key]); wireHover(g, [r.key]);
+    if (r.vid != null) g.addEventListener("click", ev => {
+      ev.stopPropagation(); location.href = `/vlans#v${r.vid}`; });
+  }
+  // a named box on its home lane; a vertical stem reaches its other lanes
+  function laneHost(parent, h, x0) {
+    const bw = hostW(h);
+    const cx = x0 + bw / 2;
+    const hy = laneY(pos[h.home]);
+    const homeLane = pos[h.home];
+    const grp = el("g", { class: "host", "data-kind": "host" }, parent);
+    const keys = h.legs.map(l => l.rail);
+    const ys = h.legs.map(l => laneY(pos[l.rail]));
+    if (ys.length > 1) {
+      const stem = el("line", { x1: cx, y1: Math.min(...ys), x2: cx,
+                                y2: Math.max(...ys), class: "tap" }, tapLayer);
+      track(stem, keys);
+    }
+    const rect = el("rect", { x: x0, y: hy - 20, width: bw, height: 40, rx: 8 }, grp);
+    if (RCOLOR[h.role]) rect.setAttribute("style", `stroke: ${RCOLOR[h.role]}`);
+    el("text", { x: cx - 9, y: hy + 4, "text-anchor": "middle" }, grp, h.name);
+    roleIcon(grp, h.role || "host", x0 + bw - 24, hy - 9);
+    title(grp, `${h.name}\n` + h.legs.map(l =>
+      `${l.iface}${l.ip ? " " + l.ip : ""} → ${(rails[pos[l.rail]] || {}).name || l.rail}`).join("\n"));
+    h.legs.forEach(l => {
+      const r = rails[pos[l.rail]];
+      // the box rides its home lane, so that attachment dot moves to the
+      // box edge instead of landing on the name
+      const d = pos[l.rail] === homeLane
+        ? el("circle", { cx: x0, cy: hy, r: 4.2,
+                         class: "rim" + (r.routed ? "" : " unrouted") }, grp)
+        : el("circle", { cx: cx, cy: laneY(pos[l.rail]), r: 4.2,
+                         class: "rim" + (r.routed ? "" : " unrouted") }, grp);
+      track(d, [l.rail]);
+    });
+    track(grp, keys); wireHover(grp, keys);
+    grp.addEventListener("click", ev => {
+      ev.stopPropagation();
+      location.href = `/device/${encodeURIComponent(h.name)}`;
+    });
+  }
+  // hypervisor / wireless container: a tall slab across its lanes
+  function laneSlab(b, x0, cls, noun) {
+    const w = slabW(b);
+    const lanes = b.rails.map(k => pos[k]);
+    // 48 above the first lane: the name row lives in its own headroom
+    // instead of colliding with a chip riding that lane
+    const yTop = laneY(Math.min(...lanes)) - 48;
+    const yBot = laneY(Math.max(...lanes)) + 30;
+    const grp = el("g", { class: "spanbox " + cls });
+    el("rect", { x: x0, y: yTop, width: w, height: yBot - yTop, rx: 10 }, grp);
+    el("text", { x: x0 + 10, y: yTop + 17, class: "rlabel" }, grp, b.name);
+    el("text", { x: x0 + 14 + b.name.length * 7.4, y: yTop + 17, class: "gwlabel" },
+       grp, b.role === "ap" ? "" : b.role);
+    roleIcon(grp, b.role, x0 + w - 26, yTop + 5);
+    b.legs.forEach(l => {
+      if (!(l.rail in pos)) return;
+      const r = rails[pos[l.rail]];
+      const d = el("circle", { cx: x0, cy: laneY(pos[l.rail]), r: 4.2,
+                               class: "rim" + (r.routed ? "" : " unrouted") }, grp);
+      title(d, `${l.ap ? l.ap + " " : ""}${l.iface}${l.ip ? " " + l.ip : ""} → `
+               + `${r.name || l.rail}`);
+      track(d, [l.rail]);
+    });
+    Object.entries(b.groups).forEach(([k, names]) => {
+      if (k in pos) laneChip(grp, x0 + w / 2, laneY(pos[k]), names,
+                             rails[pos[k]], noun);
+    });
+    let gx = x0 + 8;
+    (b.guests || []).forEach(v => { laneHost(grp, v, gx); gx += hostW(v) + 10; });
+    title(grp, `${b.name}` + (b.aps ? `\nAPs: ${b.aps.join(", ")}` : ` · ${b.role}`));
+    track(grp, b.rails); wireHover(grp, b.rails);
+    if (!b.aps || b.aps.length === 1)
+      grp.addEventListener("click", () =>
+        location.href = `/device/${encodeURIComponent(b.aps ? b.aps[0] : b.name)}`);
+  }
+
+  if (wifi) laneSlab(wifi, wifiX, "ap", "client");
+  hostsSorted.forEach((h, i) => laneHost(root, h, hostXs[i]));
+  hypsSorted.forEach((hy, i) => laneSlab(hy, hypXs[i], "hyp", "VM"));
+
+  // router: one slab spanning every lane it routes; the internet at right
+  if (router) {
+    const lanes = router.rails.filter(k => k in pos).map(k => pos[k]);
+    const yTop = lanes.length ? laneY(Math.min(...lanes)) - 52 : laneTop;
+    const yBot = lanes.length ? laneY(Math.max(...lanes)) + 30 : laneBot;
+    const rgrp = el("g", { class: "router" });
+    el("rect", { x: routerX, y: yTop, width: routerW, height: yBot - yTop, rx: 8 }, rgrp);
+    el("text", { x: routerX + routerW / 2 - 8, y: yTop + 18, "text-anchor": "middle",
+                 class: "routerlabel" }, rgrp, router.name);
+    el("text", { x: routerX + routerW / 2 - 8, y: yTop + 33, "text-anchor": "middle",
+                 class: "gwlabel" }, rgrp, `${router.rails.length} networks`);
+    roleIcon(rgrp, "firewall", routerX + routerW - 26, yTop + 6);
+    router.rails.forEach(k => {
+      if (!(k in pos)) return;
+      const d = el("circle", { cx: routerX, cy: laneY(pos[k]), r: 4.2,
+                               class: "rim" }, rgrp);
+      const r = rails[pos[k]];
+      title(d, r.gateway ? `gateway ${r.gateway}` : (r.name || k));
+      track(d, [k]);
+    });
+    track(rgrp, router.rails); wireHover(rgrp, router.rails);
+    rgrp.style.cursor = "pointer";
+    rgrp.addEventListener("click", () =>
+      location.href = `/device/${encodeURIComponent(router.name)}`);
+
+    const wanRail = rg.default && rg.default.rail
+      ? rails.find(r => r.key === rg.default.rail) : null;
+    const cloudY = wanRail ? laneY(pos[wanRail.key])
+                 : (yTop + yBot) / 2;
+    const cloud = el("g", {});
+    if (rg.default) {
+      const drop = el("line", { x1: routerX + routerW, y1: cloudY,
+                                x2: cloudX - 100, y2: cloudY, class: "defroute" });
+      if (wanRail) track(drop, [wanRail.key]);
+    }
+    el("ellipse", { cx: cloudX, cy: cloudY, rx: 96, ry: 30, class: "cloud" }, cloud);
+    el("text", { x: cloudX, y: cloudY - 3, "text-anchor": "middle", class: "rlabel" },
+       cloud, rg.wan_names[0] || "internet");
+    const gw = rg.gateways[0];
+    if (gw) el("text", { x: cloudX, y: cloudY + 12, "text-anchor": "middle",
+                         class: "gwlabel" }, cloud, `${gw.name} ${gw.status || ""}`.trim());
+    if (wanRail) {
+      el("text", { x: routerX + routerW + 12, y: cloudY - 8, class: "gwlabel" },
+         cloud, wanRail.vid != null ? `via VLAN ${wanRail.vid}` : `via ${wanRail.name}`);
+      track(cloud, [wanRail.key]); wireHover(cloud, [wanRail.key]);
+    }
+    if (rg.default && rg.default.gateway)
+      title(cloud, `default via ${rg.default.gateway}`);
+
+    // tunnels stack under the cloud; a lane reached through one connects
+    // to the tunnel, not the provider cloud
+    tuns.forEach((t, i) => {
+      const ty = cloudY + 84 + i * 78;
+      const g = el("g", { class: "tunnel" });
+      track(el("line", { x1: routerX + routerW, y1: ty,
+                         x2: cloudX - 86, y2: ty, class: "tunpath" }), t.rails);
+      t.rails.forEach(k => {
+        if (!(k in pos)) return;
+        track(el("line", { x1: routerX - 18, y1: laneY(pos[k]),
+                           x2: cloudX - 86, y2: ty, class: "tundrop" }), [k]);
+      });
+      el("ellipse", { cx: cloudX, cy: ty, rx: 86, ry: 27, class: "tuncloud" }, g);
+      el("text", { x: cloudX, y: ty - 3, "text-anchor": "middle", class: "rlabel" },
+         g, t.name);
+      el("text", { x: cloudX, y: ty + 12, "text-anchor": "middle",
+                   class: "gwlabel tunstat " + (t.status || "") }, g,
+         t.label + (t.status ? " · " + t.status : ""));
+      title(g, [`${t.label} tunnel · ${t.name}`,
+                t.peer ? `peer ${t.peer}` : "", t.detail || "",
+                `status ${t.status || "unknown"}`].filter(Boolean).join("\n"));
+      if (t.rails.length) { track(g, t.rails); wireHover(g, t.rails); }
+    });
+  }
+}
+
+if (AXIS === "lanes" && nR) drawLanes(); else drawRails();
 
 // --- chips, focus, zoom/pan/fit --------------------------------------------
 function applyRouted() {
@@ -503,6 +789,7 @@ function applyRouted() {
   };
   setChip("r-hosts", rstate.hosts);
   setChip("r-groups", rstate.groups);
+  setChip("r-axis", AXIS === "v");
   // a focus naming no drawn rail (filtered documentation-only VLAN, stale
   // link) is ignored — dimming everything would leave a dead-looking map
   if (rstate.focus && members.some(([, ks]) => ks.has(rstate.focus))) {
@@ -515,6 +802,11 @@ document.getElementById("r-hosts").addEventListener("click", () => {
   rstate.hosts = !rstate.hosts; rwrite(); applyRouted(); });
 document.getElementById("r-groups").addEventListener("click", () => {
   rstate.groups = !rstate.groups; rwrite(); applyRouted(); });
+document.getElementById("r-axis").addEventListener("click", () => {
+  const p = new URLSearchParams(location.search);
+  if (AXIS === "lanes") p.set("axis", "v"); else p.delete("axis");
+  location.search = p.toString();
+});
 applyRouted();
 
 let view = { x: 0, y: 0, k: 1 };

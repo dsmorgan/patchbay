@@ -6,6 +6,20 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+
+- **Routed view: networks-as-lanes layout** (default; the `vertical rails`
+  chip keeps the original for comparison). VLANs are horizontal lanes
+  reading edge → internet, left to right: lane labels with subnets in a
+  left gutter, loose single-homed chips at the edge, one logical
+  **wireless** container holding every AP's clients (per-AP attribution in
+  tooltips), hypervisor slabs spanning their lanes with tenants inside,
+  the router spanning everything it routes, and the internet cloud plus
+  tunnels at the far right. Height is fixed by network count, width grows
+  with devices — landscape-native, made to read at a distance.
+
 ## [0.12.0] — 2026-09-03
 
 ### Added
