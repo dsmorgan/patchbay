@@ -383,3 +383,48 @@ def test_ipam_leg_promotes_a_one_legged_sighting(conn):
     tape = next(h for h in g["hosts"] if h["name"] == "tape1")
     assert {l["rail"] for l in tape["legs"]} == {"v1", "v103"}
     assert next(l for l in tape["legs"] if l["rail"] == "v103")["iface"] == "ipam"
+
+
+def test_fdb_access_port_sighting_counts_on_the_vlan(conn):
+    """The switch MAC table sees hosts ARP can't: a MAC on a pure access
+    port counts on that port's VLAN. Trunks and device-owned MACs don't,
+    and IPAM's MAC column supplies the name for fusion."""
+    seed_site(conn)
+    conn.executemany(
+        "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+        "VALUES (?, ?, ?, ?, 'test')",
+        [("sw9", "1/0/4", 103, 0),               # pure access on iscsi
+         ("sw9", "1/0/9", 103, 0), ("sw9", "1/0/9", 1, 1)])  # trunk
+    conn.executemany(
+        "INSERT INTO fdb (device, interface, mac, source) VALUES (?, ?, ?, 'test')",
+        [("sw9", "1/0/4", "00:00:5e:00:53:73"),  # unknown host on access
+         ("sw9", "1/0/9", "00:00:5e:00:53:74")])  # trunk: ambiguous, ignored
+    conn.execute("INSERT INTO ipam_addresses (ip, hostname, mac) VALUES "
+                 "('203.0.113.73', 'nas1ten103.lan', '00:00:5e:00:53:73')")
+    conn.execute("INSERT INTO aliases (alias, canonical) VALUES "
+                 "('nas1ten103', 'nas1')")
+    g = build_routed_graph(conn, _S())
+    nas = next(h for h in g["hosts"] if h["name"] == "nas1")
+    # nas1 already had a v103 leg from its own interface; the fdb sighting
+    # must not duplicate it — but the trunk MAC never appears anywhere
+    assert sum(1 for l in nas["legs"] if l["rail"] == "v103") == 1
+    by = {r["key"]: r for r in g["rails"]}
+    assert "00:00:5e:00:53:74" not in by["v103"]["host_names"]
+
+
+def test_fdb_access_sighting_draws_nameless_macs_as_singles(conn):
+    seed_site(conn)
+    conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, "
+                 "source) VALUES ('sw9', '1/0/5', 103, 0, 'test')")
+    conn.execute("INSERT INTO fdb (device, interface, mac, source) VALUES "
+                 "('sw9', '1/0/5', '00:00:5e:00:53:75', 'test')")
+    g = build_routed_graph(conn, _S())
+    by = {r["key"]: r for r in g["rails"]}
+    assert "00:00:5e:00:53:75" in by["v103"]["host_names"]
+
+
+def test_router_carries_its_parent(conn):
+    seed_site(conn)
+    conn.execute("UPDATE devices SET parent = 'hyp1' WHERE name = 'fw1'")
+    g = build_routed_graph(conn, _S())
+    assert g["routers"][0]["parent"] == "hyp1"

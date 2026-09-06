@@ -75,6 +75,10 @@
                         stroke-linecap: round; stroke-linejoin: round; }
   /* lanes layout: faint alternating bands keep rows readable at a glance */
   #routed .laneband { fill: var(--hover); opacity: 0.28; }
+  /* a down / not-responding infrastructure box stays on the map — its
+     cabling and tenants are still facts — but reads as asleep */
+  #routed .spanbox.down > rect { opacity: 0.55; stroke-dasharray: 6 4; }
+  #routed .spanbox.down text { opacity: 0.7; }
   #routed .routerlabel { font: 600 11.5px var(--font-ui); fill: var(--ink); }
   #routed .gwlabel { font: 10px var(--font-mono); fill: var(--muted); }
 </style>
@@ -458,11 +462,12 @@ function spanBox(b, y, boxH, cls, noun, groupY, guestY) {
   let x1 = Math.max(...xs) + 40;
   // a one-rail box still fits its name, role, and icon side by side
   x1 = Math.max(x1, x0 + b.name.length * 7.4 + b.role.length * 6 + 60);
-  const grp = el("g", { class: "spanbox " + cls });
+  const down = b.status && b.status !== "up";
+  const grp = el("g", { class: "spanbox " + cls + (down ? " down" : "") });
   el("rect", { x: x0, y: y, width: x1 - x0, height: boxH, rx: 10 }, grp);
   el("text", { x: x0 + 12, y: y + 18, class: "rlabel" }, grp, b.name);
   el("text", { x: x0 + 16 + b.name.length * 7.4, y: y + 18, class: "gwlabel" },
-     grp, b.role);
+     grp, b.role + (down ? ` · ${b.status}` : ""));
   roleIcon(grp, b.role, x1 - 28, y + 4);
   b.legs.forEach(l => {
     if (!(l.rail in pos)) return;
@@ -532,7 +537,9 @@ function drawLanes() {
   }
 
   function slabW(b) {
-    let w = Math.max(96, b.name.length * 7.4 + (b.role || "").length * 6 + 56);
+    let w = Math.max(96, b.name.length * 7.4 + (b.role || "").length * 6 + 56
+                         + (b.status && b.status !== "up"
+                            ? (b.status.length + 3) * 6 : 0));
     let gsum = 8;
     (b.guests || []).forEach(v => gsum += Math.max(64, v.name.length * 7.4 + 40) + 10);
     if (gsum > 20) w = Math.max(w, gsum + 8);
@@ -667,11 +674,12 @@ function drawLanes() {
     // instead of colliding with a chip riding that lane
     const yTop = laneY(Math.min(...lanes)) - 48;
     const yBot = laneY(Math.max(...lanes)) + 30;
-    const grp = el("g", { class: "spanbox " + cls });
+    const down = b.status && b.status !== "up";
+    const grp = el("g", { class: "spanbox " + cls + (down ? " down" : "") });
     el("rect", { x: x0, y: yTop, width: w, height: yBot - yTop, rx: 10 }, grp);
     el("text", { x: x0 + 10, y: yTop + 17, class: "rlabel" }, grp, b.name);
     el("text", { x: x0 + 14 + b.name.length * 7.4, y: yTop + 17, class: "gwlabel" },
-       grp, b.role === "ap" ? "" : b.role);
+       grp, (b.role === "ap" ? "" : b.role) + (down ? ` · ${b.status}` : ""));
     roleIcon(grp, b.role, x0 + w - 26, yTop + 5);
     b.legs.forEach(l => {
       if (!(l.rail in pos)) return;
@@ -710,7 +718,14 @@ function drawLanes() {
                  class: "routerlabel" }, rgrp, router.name);
     el("text", { x: routerX + routerW / 2 - 8, y: yTop + 33, "text-anchor": "middle",
                  class: "gwlabel" }, rgrp, `${router.rails.length} networks`);
+    // a router that is itself a guest says so — common enough at home
+    if (router.parent)
+      el("text", { x: routerX + routerW / 2 - 8, y: yTop + 46,
+                   "text-anchor": "middle", class: "gwlabel" }, rgrp,
+         `on ${router.parent}`);
     roleIcon(rgrp, "firewall", routerX + routerW - 26, yTop + 6);
+    title(rgrp, `${router.name} · routes ${router.rails.length} networks`
+                + (router.parent ? `\nruns as a VM on ${router.parent}` : ""));
     router.rails.forEach(k => {
       if (!(k in pos)) return;
       const d = el("circle", { cx: routerX, cy: laneY(pos[k]), r: 4.2,
@@ -753,7 +768,9 @@ function drawLanes() {
     tuns.forEach((t, i) => {
       const ty = cloudY + 84 + i * 78;
       const g = el("g", { class: "tunnel" });
-      track(el("line", { x1: routerX + routerW, y1: ty,
+      // the encrypted transport terminates at the router: meet the box on
+      // its edge even when the tunnel stacks below the box's bottom
+      track(el("line", { x1: routerX + routerW, y1: Math.min(ty, yBot - 12),
                          x2: cloudX - 86, y2: ty, class: "tunpath" }), t.rails);
       t.rails.forEach(k => {
         if (!(k in pos)) return;

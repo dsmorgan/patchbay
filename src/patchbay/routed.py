@@ -143,7 +143,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             rl["routed"] = True
             rl["gateway"] = leg["ip"]
             claimed.append(leg["rail"])
-        routers.append({"name": name, "rails": sorted(claimed)})
+        routers.append({"name": name, "rails": sorted(claimed),
+                        "parent": devices.get(name, {}).get("parent")})
 
     # default route + WAN health
     default = None
@@ -280,6 +281,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
               if r["gateway"]}
     ap_clients: dict[str, dict[str, list[str]]] = {n: {} for n in ap_names}
     fused: dict[str, dict[str, dict]] = {}
+    seen_mac_rails: set[tuple[str, str]] = set()
+    ep_names: dict[str, str] = {}
     for r in conn.execute(
             "SELECT hostname, ip, mac, device FROM endpoints WHERE ip IS NOT NULL"):
         hn = (r["hostname"] or "").split(".")[0].lower()
@@ -289,14 +292,58 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         key = rails.rail_of_ip(r["ip"])
         if key is None:
             continue
+        mac = (r["mac"] or "").lower()
+        seen_mac_rails.add((mac, key))
+        if r["hostname"]:
+            ep_names.setdefault(mac, r["hostname"])
         label = r["hostname"] or r["ip"]
         if r["device"] in ap_names:
             ap_clients[r["device"]].setdefault(key, []).append(label)
-        elif hn and not _local_admin(r["mac"] or ""):
+        elif hn and not _local_admin(mac):
             fused.setdefault(hn, {}).setdefault(key, {
                 "rail": key, "iface": "?", "ip": r["ip"], "speed": 0})
         else:
             single[key].append(label)
+
+    # the switch MAC table sees hosts ARP can't — an isolated VLAN has no
+    # router to ask. A MAC learned on a pure access port is a sighting on
+    # that port's VLAN: trunks are ambiguous and mirror destinations lie,
+    # so both stay out, and device-owned MACs already have interface legs.
+    # Names come from the MAC's endpoint row or IPAM's MAC column.
+    tagged_ports: set[tuple[str, str]] = set()
+    access_vlan: dict[tuple[str, str], int] = {}
+    for r in conn.execute("SELECT device, interface, vid, tagged FROM port_vlans"):
+        k = (r["device"], r["interface"])
+        if r["tagged"]:
+            tagged_ports.add(k)
+        else:
+            access_vlan.setdefault(k, r["vid"])
+    mirror_ports = {(r["device"], r["interface"]) for r in conn.execute(
+        "SELECT device, interface FROM port_roles WHERE role = 'monitor-dst'")}
+    ipam_names = {r["mac"].lower(): r["hostname"] for r in conn.execute(
+        "SELECT mac, hostname FROM ipam_addresses "
+        "WHERE mac IS NOT NULL AND hostname IS NOT NULL")}
+    for r in conn.execute("SELECT device, interface, mac FROM fdb"):
+        k = (r["device"], r["interface"])
+        if k in tagged_ports or k in mirror_ports or k not in access_vlan:
+            continue
+        mac = r["mac"].lower()
+        if mac in mac_owner:
+            continue
+        key = f"v{access_vlan[k]}"
+        if key not in rails.rails or (mac, key) in seen_mac_rails:
+            continue
+        seen_mac_rails.add((mac, key))
+        raw_hn = ep_names.get(mac) or ipam_names.get(mac) or ""
+        hn = alias_map.get(raw_hn.split(".")[0].lower(),
+                           raw_hn.split(".")[0].lower())
+        if hn in seen_devs:
+            continue
+        if hn and not _local_admin(mac):
+            fused.setdefault(hn, {}).setdefault(key, {
+                "rail": key, "iface": "fdb", "ip": None, "speed": 0})
+        else:
+            single[key].append(raw_hn or mac)
     # documentation may enrich a live host's identity: an IPAM address
     # whose (canonicalized) hostname matches a host seen by a real observer
     # adds a leg on a network nothing can report — an isolated storage VLAN
