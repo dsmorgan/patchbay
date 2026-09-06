@@ -19,6 +19,12 @@ put.
   the router spanning everything it routes, and the internet cloud plus
   tunnels at the far right. Height is fixed by network count, width grows
   with devices — landscape-native, made to read at a distance.
+- **Routed view: one virtualization container.** All hypervisors draw
+  inside a single dashed frame — the controller's view, the wireless
+  container's sibling — named for the platform when a guest-aware
+  collector owns a hypervisor row (`vsphere`), else generically. A router
+  that runs as a guest of one of those hypervisors draws inside the frame
+  too, so its tenancy reads at a glance.
 
 ### Changed
 

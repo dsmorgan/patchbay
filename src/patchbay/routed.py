@@ -96,7 +96,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         rails.add_subnet(r["cidr"], r["vlan"], r["description"], r["source"])
 
     devices = {r["name"]: dict(r) for r in conn.execute(
-        "SELECT name, role, parent, status FROM devices")}
+        "SELECT name, role, parent, status, source FROM devices")}
     router_names = [n for n, d in devices.items()
                     if d["role"] in ("firewall", "router")]
 
@@ -244,6 +244,13 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # clients — live inside those boxes, so every host counts in exactly
     # one place on the page.
     hyp_names = {n for n, d in devices.items() if d["role"] == "hypervisor"}
+    # the hypervisors form one logical unit — the controller's view — and
+    # the lanes layout draws one container around all of them. It is named
+    # for the platform when a guest-aware collector owns any hypervisor row
+    # (a generic poller like librenms may co-own others after a merge).
+    virt_platform = ("vsphere" if any(
+        (devices[n].get("source") or "") == "vsphere" for n in hyp_names)
+        else None)
     ap_names = {n for n, d in devices.items() if d["role"] == "ap"}
     hosts, single = [], {k: [] for k in rails.rails}
     hyp_groups: dict[str, dict[str, list[str]]] = {n: {} for n in hyp_names}
@@ -465,6 +472,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         "gateways": gws,
         "hosts": hosts,
         "hypervisors": hypervisors,
+        "virt_platform": virt_platform,
         "aps": aps,
         "tunnels": tunnels,
         "wan_names": list(getattr(settings, "wan_names", ()) or ()),

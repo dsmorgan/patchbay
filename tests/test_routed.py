@@ -428,3 +428,18 @@ def test_router_carries_its_parent(conn):
     conn.execute("UPDATE devices SET parent = 'hyp1' WHERE name = 'fw1'")
     g = build_routed_graph(conn, _S())
     assert g["routers"][0]["parent"] == "hyp1"
+
+
+def test_virt_platform_named_when_a_guest_aware_collector_owns_a_hypervisor(conn):
+    """The lanes layout draws one container around all hypervisors; it is
+    named for the platform only when a guest-aware collector (vsphere) owns
+    at least one hypervisor row — a generic poller alone can't name it."""
+    seed_site(conn)
+    hid = dev(conn, "hyp1", role="hypervisor")
+    iface(conn, hid, "vmk0", ip="192.0.2.9")
+    g = build_routed_graph(conn, _S())
+    assert g["virt_platform"] is None            # source "test" names nothing
+    pdb.upsert_device(conn, name="hyp2", source="vsphere", role="hypervisor",
+                      status="up", last_seen=pdb.now())
+    g = build_routed_graph(conn, _S())
+    assert g["virt_platform"] == "vsphere"
