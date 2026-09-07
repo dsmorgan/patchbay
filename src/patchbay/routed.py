@@ -244,13 +244,22 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # clients — live inside those boxes, so every host counts in exactly
     # one place on the page.
     hyp_names = {n for n, d in devices.items() if d["role"] == "hypervisor"}
-    # the hypervisors form one logical unit — the controller's view — and
-    # the lanes layout draws one container around all of them. It is named
-    # for the platform when a guest-aware collector owns any hypervisor row
-    # (a generic poller like librenms may co-own others after a merge).
+    # the hypervisors form one logical unit and the lanes layout draws ONE
+    # box for the whole virtualization domain — the routed view is logical,
+    # so which physical host a VM runs on is tooltip detail there. The box
+    # is named after the vSphere server (VSPHERE_HOST's short label) when
+    # the guest-aware collector owns any hypervisor row; a generic poller
+    # like librenms may co-own others after a merge, so any-match.
     virt_platform = ("vsphere" if any(
         (devices[n].get("source") or "") == "vsphere" for n in hyp_names)
         else None)
+    virt_name = None
+    if virt_platform:
+        host = (getattr(settings, "vsphere_host", None) or "").strip()
+        host = host.split("//")[-1].split("/")[0].split(":")[0]
+        if host:
+            # short label for an FQDN; an IP address stays whole
+            virt_name = host if _addr(host) else host.split(".")[0]
     ap_names = {n for n, d in devices.items() if d["role"] == "ap"}
     hosts, single = [], {k: [] for k in rails.rails}
     hyp_groups: dict[str, dict[str, list[str]]] = {n: {} for n in hyp_names}
@@ -473,6 +482,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         "hosts": hosts,
         "hypervisors": hypervisors,
         "virt_platform": virt_platform,
+        "virt_name": virt_name,
         "aps": aps,
         "tunnels": tunnels,
         "wan_names": list(getattr(settings, "wan_names", ()) or ()),

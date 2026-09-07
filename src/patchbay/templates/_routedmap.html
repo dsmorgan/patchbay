@@ -75,11 +75,6 @@
                         stroke-linecap: round; stroke-linejoin: round; }
   /* lanes layout: faint alternating bands keep rows readable at a glance */
   #routed .laneband { fill: var(--hover); opacity: 0.28; }
-  /* the virtualization container: one logical unit around every hypervisor
-     (and a router running as a guest) — a derived grouping, so it draws as
-     a dashed open frame, never a filled card */
-  #routed .vgroup > rect { fill: none; stroke: var(--r-hyp); stroke-width: 1.2;
-                           stroke-dasharray: 7 5; opacity: 0.75; }
   /* a down / not-responding infrastructure box stays on the map — its
      cabling and tenants are still facts — but reads as asleep */
   #routed .spanbox.down > rect { opacity: 0.55; stroke-dasharray: 6 4; }
@@ -108,8 +103,7 @@
   <span class="item"><svg width="30" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="var(--muted)" stroke-width="1.2"/><circle cx="26" cy="5" r="3" fill="var(--accent)"/></svg> attached beyond the box</span>
   <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--accent)" stroke-width="1.1" stroke-dasharray="4 3" rx="4"/></svg> ×N single-homed hosts</span>
   <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="var(--card)" stroke="var(--ink)" stroke-width="1.2" rx="4"/></svg> multi-homed host</span>
-  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--r-hyp)" stroke-width="1.3" rx="4"/></svg> hypervisor (VMs inside)</span>
-  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--r-hyp)" stroke-width="1.2" stroke-dasharray="5 4" rx="4"/></svg> virtualization platform</span>
+  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--r-hyp)" stroke-width="1.3" rx="4"/></svg> virtualization (VMs inside)</span>
   <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--r-ap)" stroke-width="1.3" rx="4"/></svg> AP (clients inside)</span>
   <span class="item" style="color: var(--muted)">hover a rail or box for subnets, gateway &amp; sources · scroll zooms · background pans · click a network or host for its page</span>
 </div>
@@ -563,19 +557,46 @@ function drawLanes() {
   if (wifi) x += slabW(wifi) + colGap;
   const hostsSorted = rg.hosts;
   const hostXs = hostsSorted.map(h => { const p = x; x += hostW(h) + colGap; return p; });
-  const hypsSorted = [...hyps].sort((a, b) => pos[a.rails[0]] - pos[b.rails[0]]);
-  // one logical virtualization container around every hypervisor — the
-  // controller's view, the wireless container's sibling. A router that runs
-  // as a guest of one of them belongs inside the frame too.
-  const hypNames = new Set(hypsSorted.map(h => h.name));
-  const routerInside = !!(router && router.parent && hypNames.has(router.parent));
-  if (hypsSorted.length) x += 14;
-  const hypXs = hypsSorted.map(hy => { const p = x; x += slabW(hy) + colGap; return p; });
+  // one logical virtualization box: every hypervisor folded together, the
+  // wireless container's sibling. This view is logical — which physical
+  // host a VM runs on is tooltip detail, like which AP saw a client. The
+  // box is named after the vSphere server; a router that runs as a guest
+  // draws inside the box.
+  let virt = null;
+  if (hyps.length) {
+    const groups = {};
+    const legs = [];
+    const guests = [];
+    hyps.forEach(hy => {
+      Object.entries(hy.groups).forEach(([k, names]) =>
+        (groups[k] = groups[k] || []).push(...names.map(n => `${n} (${hy.name})`)));
+      hy.legs.forEach(l => legs.push({ ...l, ap: hy.name }));
+      (hy.guests || []).forEach(v => guests.push(v));
+    });
+    const span = new Set([...Object.keys(groups), ...legs.map(l => l.rail),
+                          ...guests.flatMap(v => v.legs.map(l => l.rail))]
+                         .filter(k => k in pos));
+    const name = rg.virt_name
+      || (hyps.length === 1 ? hyps[0].name : "virtualization");
+    if (span.size) virt = {
+      name, role: "hypervisor", rails: [...span], groups, legs, guests,
+      sub: (rg.virt_platform ? rg.virt_platform + " · " : "")
+           + `${hyps.length} hypervisor${hyps.length > 1 ? "s" : ""}`,
+      status: hyps.every(h => h.status && h.status !== "up") ? "down" : "up",
+      members: hyps.map(h => h.name
+        + (h.status && h.status !== "up" ? ` · ${h.status}` : "")),
+      noclick: !rg.virt_name && hyps.length > 1 };
+  }
+  const hypNames = new Set(hyps.map(h => h.name));
+  const routerInside = !!(virt && router && router.parent
+                          && hypNames.has(router.parent));
+  const virtX = virt ? x : 0;
+  if (virt) x += slabW(virt) + colGap;
   x += 26;
   const routerX = x, routerW = router
     ? Math.max(130, router.name.length * 7.4 + 60) : 0;
   x += routerW;
-  if (hypsSorted.length) x += 14;
+  if (routerInside) x += 14;
   const cloudX = x + 150;
   const tuns = rg.tunnels || [];
   const LW = cloudX + 130 + (tuns.length ? 30 : 0);
@@ -679,20 +700,26 @@ function drawLanes() {
       location.href = `/device/${encodeURIComponent(h.name)}`;
     });
   }
-  // hypervisor / wireless container: a tall slab across its lanes
-  function laneSlab(b, x0, cls, noun) {
-    const w = slabW(b);
+  // hypervisor / wireless container: a tall slab across its lanes. opts can
+  // widen the box and stretch its vertical extent past the lane span — the
+  // virtualization box does both to take the router slab inside.
+  function laneSlab(b, x0, cls, noun, opts = {}) {
+    const w = opts.w || slabW(b);
+    const cw = slabW(b);               // content column: chips stay left even in a wide box
     const lanes = b.rails.map(k => pos[k]);
     // 48 above the first lane: the name row lives in its own headroom
     // instead of colliding with a chip riding that lane
-    const yTop = laneY(Math.min(...lanes)) - 48;
-    const yBot = laneY(Math.max(...lanes)) + 30;
+    const yTop = Math.min(laneY(Math.min(...lanes)) - 48,
+                          opts.yTop != null ? opts.yTop : Infinity);
+    const yBot = Math.max(laneY(Math.max(...lanes)) + 30,
+                          opts.yBot != null ? opts.yBot : -Infinity);
     const down = b.status && b.status !== "up";
     const grp = el("g", { class: "spanbox " + cls + (down ? " down" : "") });
     el("rect", { x: x0, y: yTop, width: w, height: yBot - yTop, rx: 10 }, grp);
     el("text", { x: x0 + 10, y: yTop + 17, class: "rlabel" }, grp, b.name);
     el("text", { x: x0 + 14 + b.name.length * 7.4, y: yTop + 17, class: "gwlabel" },
-       grp, (b.role === "ap" ? "" : b.role) + (down ? ` · ${b.status}` : ""));
+       grp, b.sub || ((b.role === "ap" ? "" : b.role)
+                      + (down ? ` · ${b.status}` : "")));
     roleIcon(grp, b.role, x0 + w - 26, yTop + 5);
     b.legs.forEach(l => {
       if (!(l.rail in pos)) return;
@@ -704,55 +731,32 @@ function drawLanes() {
       track(d, [l.rail]);
     });
     Object.entries(b.groups).forEach(([k, names]) => {
-      if (k in pos) laneChip(grp, x0 + w / 2, laneY(pos[k]), names,
+      if (k in pos) laneChip(grp, x0 + cw / 2, laneY(pos[k]), names,
                              rails[pos[k]], noun);
     });
     let gx = x0 + 8;
     (b.guests || []).forEach(v => { laneHost(grp, v, gx); gx += hostW(v) + 10; });
-    title(grp, `${b.name}` + (b.aps ? `\nAPs: ${b.aps.join(", ")}` : ` · ${b.role}`));
+    title(grp, `${b.name}`
+      + (b.aps ? `\nAPs: ${b.aps.join(", ")}`
+         : b.members ? `\n${b.members.join("\n")}` : ` · ${b.role}`));
     track(grp, b.rails); wireHover(grp, b.rails);
-    if (!b.aps || b.aps.length === 1)
+    if (!b.noclick && (!b.aps || b.aps.length === 1))
       grp.addEventListener("click", () =>
         location.href = `/device/${encodeURIComponent(b.aps ? b.aps[0] : b.name)}`);
   }
 
-  // router vertical extent is needed by the container frame too
+  // router vertical extent is needed by the virtualization box too
   const rLanes = router ? router.rails.filter(k => k in pos).map(k => pos[k]) : [];
   const ryTop = rLanes.length ? laneY(Math.min(...rLanes)) - 52 : laneTop;
   const ryBot = rLanes.length ? laneY(Math.max(...rLanes)) + 30 : laneBot;
 
-  // the virtualization container draws first so the slabs paint on top
-  if (hypsSorted.length) {
-    const vName = rg.virt_platform
-      || (hypsSorted.length > 1 ? "virtualization" : hypsSorted[0].name);
-    const ext = hypsSorted.map(hy => {
-      const ls = hy.rails.filter(k => k in pos).map(k => pos[k]);
-      return [laneY(Math.min(...ls)) - 48, laneY(Math.max(...ls)) + 30];
-    });
-    if (routerInside) ext.push([ryTop, ryBot]);
-    const vy0 = Math.min(...ext.map(p => p[0])) - 28;
-    const vy1 = Math.max(...ext.map(p => p[1])) + 12;
-    const vx0 = hypXs[0] - 14;
-    const vx1 = routerInside
-      ? routerX + routerW + 14
-      : hypXs[hypXs.length - 1] + slabW(hypsSorted[hypsSorted.length - 1]) + 14;
-    const g = el("g", { class: "vgroup" });
-    el("rect", { x: vx0, y: vy0, width: vx1 - vx0, height: vy1 - vy0, rx: 12 }, g);
-    el("text", { x: vx0 + 12, y: vy0 + 17, class: "rlabel" }, g, vName);
-    el("text", { x: vx0 + 16 + vName.length * 7.4, y: vy0 + 17,
-                 class: "gwlabel" }, g,
-       `${hypsSorted.length} hypervisor${hypsSorted.length > 1 ? "s" : ""}`
-       + (routerInside ? ` · ${router.name}` : ""));
-    title(g, [vName,
-              ...hypsSorted.map(hy => `${hy.name}`
-                + (hy.status && hy.status !== "up" ? ` · ${hy.status}` : "")),
-              routerInside ? `${router.name} runs here as a VM` : ""]
-             .filter(Boolean).join("\n"));
-  }
-
   if (wifi) laneSlab(wifi, wifiX, "ap", "client");
   hostsSorted.forEach((h, i) => laneHost(root, h, hostXs[i]));
-  hypsSorted.forEach((hy, i) => laneSlab(hy, hypXs[i], "hyp", "VM"));
+  // the virtualization box draws before the router so the router's slab
+  // paints on top of it; a guest router stretches the box around itself
+  if (virt) laneSlab(virt, virtX, "hyp", "VM", routerInside
+    ? { w: routerX + routerW + 14 - virtX, yTop: ryTop - 26, yBot: ryBot + 12 }
+    : {});
 
   // router: one slab spanning every lane it routes; the internet at right
   if (router) {
@@ -763,8 +767,10 @@ function drawLanes() {
                  class: "routerlabel" }, rgrp, router.name);
     el("text", { x: routerX + routerW / 2 - 8, y: yTop + 33, "text-anchor": "middle",
                  class: "gwlabel" }, rgrp, `${router.rails.length} networks`);
-    // a router that is itself a guest says so — common enough at home
-    if (router.parent)
+    // a router that is itself a guest says so — common enough at home. When
+    // the virtualization box already encloses it, the enclosure says it and
+    // the physical host stays a tooltip detail (this view is logical).
+    if (router.parent && !routerInside)
       el("text", { x: routerX + routerW / 2 - 8, y: yTop + 46,
                    "text-anchor": "middle", class: "gwlabel" }, rgrp,
          `on ${router.parent}`);

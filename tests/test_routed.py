@@ -430,16 +430,23 @@ def test_router_carries_its_parent(conn):
     assert g["routers"][0]["parent"] == "hyp1"
 
 
-def test_virt_platform_named_when_a_guest_aware_collector_owns_a_hypervisor(conn):
-    """The lanes layout draws one container around all hypervisors; it is
-    named for the platform only when a guest-aware collector (vsphere) owns
-    at least one hypervisor row — a generic poller alone can't name it."""
+def test_virt_domain_named_after_the_vsphere_server(conn):
+    """The lanes layout folds all hypervisors into one logical box named
+    after the vSphere server — but only when the guest-aware collector
+    (vsphere) owns at least one hypervisor row; a generic poller alone
+    can't name the domain."""
     seed_site(conn)
     hid = dev(conn, "hyp1", role="hypervisor")
     iface(conn, hid, "vmk0", ip="192.0.2.9")
-    g = build_routed_graph(conn, _S())
+    s = _S()
+    s.vsphere_host = "vcsa.example.net"
+    g = build_routed_graph(conn, s)
     assert g["virt_platform"] is None            # source "test" names nothing
+    assert g["virt_name"] is None
     pdb.upsert_device(conn, name="hyp2", source="vsphere", role="hypervisor",
                       status="up", last_seen=pdb.now())
-    g = build_routed_graph(conn, _S())
+    g = build_routed_graph(conn, s)
     assert g["virt_platform"] == "vsphere"
+    assert g["virt_name"] == "vcsa"              # FQDN shortens to its label
+    s.vsphere_host = "192.0.2.200"
+    assert build_routed_graph(conn, s)["virt_name"] == "192.0.2.200"
