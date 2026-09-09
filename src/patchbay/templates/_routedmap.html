@@ -140,7 +140,7 @@ function rwrite() {
 // One renderer, two axes. Everything is laid out in lane space — u runs
 // along the networks from the edge toward the internet, v runs across
 // them — and P()/box() map that onto the screen: lanes (u→x, v→y) or
-// vertical rails (u→y, v→x). Boxes that carry text keep their screen
+// vertical rails (u→y upward, v→x). Boxes that carry text keep their screen
 // proportions on both axes; only placement and what they span transposes,
 // so the two views share every grouping, box, and rule.
 const rails = rg.rails, nR = rails.length;
@@ -195,7 +195,7 @@ function nameList(names) {
 const clip = (s, n) => s.length > n ? s.slice(0, Math.max(1, n - 1)) + "…" : s;
 
 // networks-as-lanes is the default; ?axis=v turns the same drawing on its
-// side — vertical rails, edge at the top, internet at the bottom
+// side — vertical rails, edge at the bottom, internet at the top
 const AXIS = (new URLSearchParams(location.search)).get("axis") === "v"
   ? "v" : "lanes";
 const HZ = AXIS === "lanes";
@@ -212,9 +212,12 @@ function draw() {
     : nR > 1 ? Math.min(130, Math.max(72, Math.round(1000 / (nR - 1)))) : 130;
   const across0 = HZ ? 60 : 40;
   const laneV = i => across0 + i * pitch + pitch / 2;
-  const P = (u, v) => HZ ? { x: u, y: v } : { x: v, y: u };
+  // vertical rails run upward — the internet at the top — so u flips
+  // against a constant fixed once the layout knows how far it reaches
+  let flip = 0;
+  const P = (u, v) => HZ ? { x: u, y: v } : { x: v, y: flip - u };
   const box = (u0, v0, du, dv) => HZ ? { x: u0, y: v0, w: du, h: dv }
-                                     : { x: v0, y: u0, w: dv, h: du };
+                                     : { x: v0, y: flip - u0 - du, w: dv, h: du };
   const rectEl = (parent, R, attrs) =>
     el("rect", { x: R.x, y: R.y, width: R.w, height: R.h, ...attrs }, parent);
   const lineEl = (parent, u1, v1, u2, v2, attrs) => {
@@ -224,7 +227,7 @@ function draw() {
   const colGap = HZ ? 16 : 12, chipW = 56, chipH = 30, hostH = 40;
   const chipAlong = HZ ? chipW : chipH;
   const labelW = 176;          // lanes: the left gutter holding lane tags
-  const tagAlong = 44;         // rails: the tag row across the top
+  const tagAlong = 44;         // rails: the tag row along the bottom edge
 
   // one logical wireless container: every AP folded together — the map
   // shows the wireless *network*; which AP saw a client is tooltip detail
@@ -346,7 +349,9 @@ function draw() {
   const routerAlong = HZ ? routerW : (showParent ? 70 : 58);
   const routerU = u;
   u += routerAlong;
-  if (routerInside) u += 14;
+  // inside the virtualization box the router sits at the internet end;
+  // on rails that is the box's top, where its name row needs headroom
+  if (routerInside) u += HZ ? 14 : 40;
   const routerEnd = u;
   // the router spans every lane it routes, with headroom for its label
   const rLanes = router ? router.rails.filter(k => k in pos).map(k => pos[k]) : [];
@@ -357,6 +362,7 @@ function draw() {
   if (!HZ) rV1 = Math.max(rV1, rV0 + routerW);
   const cloudRx = 96, cloudRy = 30, tunRx = 86, tunRy = 27;
   const cloudU = routerEnd + (HZ ? 150 : 84);
+  flip = HZ ? 0 : cloudU + cloudRy + 8;
   const cloudEdge = HZ ? cloudRx : cloudRy;    // the ellipse's half-extent along
   const tunEdge = HZ ? tunRx : tunRy;
   const tuns = rg.tunnels || [];
@@ -391,9 +397,11 @@ function draw() {
       const vid = r.vid != null ? ` ${r.vid}` : "";   // the id survives the clip
       const nm = clip(r.name || (r.vid != null ? "vlan" : r.key),
                       Math.max(3, maxCh - vid.length));
-      el("rect", { x: v - tw / 2, y: 6, width: tw, height: tagAlong - 6, rx: 4 }, tag);
-      el("text", { x: v - tw / 2 + 6, y: 21 }, tag, nm + vid);
-      el("text", { x: v - tw / 2 + 6, y: 35, class: "gwlabel" }, tag, clip(sub, maxCh));
+      const ty = flip - tagAlong;
+      el("rect", { x: v - tw / 2, y: ty, width: tw, height: tagAlong - 6, rx: 4 }, tag);
+      el("text", { x: v - tw / 2 + 6, y: ty + 15 }, tag, nm + vid);
+      el("text", { x: v - tw / 2 + 6, y: ty + 29, class: "gwlabel" }, tag,
+         clip(sub, maxCh));
     }
     title(tag, tip); title(line, tip);
     [line, tag].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); });
@@ -497,13 +505,18 @@ function draw() {
                + `${r.name || l.rail}`);
       track(d, [l.rail]);
     });
-    // chips ride the content column (lanes) or a row under the name (rails)
-    const chipU = u0 + (HZ ? content / 2 : 45);
+    // chips ride the content column (lanes) or a row under the name row
+    // (rails, measured down from the content's screen top — high u)
+    const chipU = u0 + (HZ ? content / 2 : content - 45);
     Object.entries(b.groups).forEach(([k, names]) => {
       if (k in pos) laneChip(grp, chipU, laneV(pos[k]), names, rails[pos[k]], noun);
     });
-    let gu = HZ ? u0 + 8 : u0 + 30 + (hasGroups(b) ? 40 : 0) + 6;
-    (b.guests || []).forEach(v => { laneHost(grp, v, gu); gu += hostAlong(v) + 10; });
+    let gu = HZ ? u0 + 8
+                : u0 + content - 30 - (hasGroups(b) ? 40 : 0) - 6 - hostH;
+    (b.guests || []).forEach(v => {
+      laneHost(grp, v, gu);
+      gu += HZ ? hostAlong(v) + 10 : -(hostAlong(v) + 10);
+    });
     title(grp, `${b.name}`
       + (b.aps ? `\nAPs: ${b.aps.join(", ")}`
          : b.members ? `\n${b.members.join("\n")}` : ` · ${b.role}`));
@@ -616,10 +629,10 @@ function draw() {
   // faint alternating bands make the rows scannable at a distance; sized
   // to the finished drawing and slipped underneath it
   const bb = root.getBBox();
-  const uMax = HZ ? bb.x + bb.width : bb.y + bb.height;
   rails.forEach((r, i) => {
     if (i % 2) return;
-    const R = box(0, laneV(i) - pitch / 2, uMax + 16, pitch);
+    const R = HZ ? { x: bb.x - 8, y: laneV(i) - pitch / 2, w: bb.width + 16, h: pitch }
+                 : { x: laneV(i) - pitch / 2, y: bb.y - 8, w: pitch, h: bb.height + 16 };
     const band = el("rect", { x: R.x, y: R.y, width: R.w, height: R.h,
                               class: "laneband" });
     root.insertBefore(band, root.firstChild);

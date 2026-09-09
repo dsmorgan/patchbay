@@ -25,8 +25,9 @@ put.
   view is logical, so which physical host a VM runs on becomes tooltip
   detail, and a router that runs as a guest draws inside the box.
 - **Routed view: one renderer, two axes.** The vertical-rails view is the
-  lanes drawing transposed — same containers, boxes, chips, and rules —
-  instead of the earlier tiered layout. Lanes sit tighter, multi-homed
+  lanes drawing turned upright — same containers, boxes, chips, and
+  rules, edge at the bottom and the internet at the top — instead of the
+  earlier tiered layout. Lanes sit tighter, multi-homed
   hosts share a column when their spans don't overlap, and VPN tunnels
   sit beside the internet cloud so the transport leaves the router
   straight from its edge. The viewBox hugs the drawing, so **fit** means
