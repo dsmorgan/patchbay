@@ -460,8 +460,11 @@ function draw() {
     el("text", { x: R.x + R.w / 2 - 9, y: R.y + R.h / 2 + 4,
                  "text-anchor": "middle" }, grp, h.name);
     roleIcon(grp, h.role || "host", R.x + R.w - 24, R.y + R.h / 2 - 9);
+    // a leg lists every address it carries on that network (bond + trunk
+    // sub-interface both on mgmt, say)
     title(grp, `${h.name}\n` + h.legs.map(l =>
-      `${l.iface}${l.ip ? " " + l.ip : ""} → ${(rails[pos[l.rail]] || {}).name || l.rail}`).join("\n"));
+      `${l.iface}${(l.ips || (l.ip ? [l.ip] : [])).map(i => " " + i).join("")} → `
+      + `${(rails[pos[l.rail]] || {}).name || l.rail}`).join("\n"));
     h.legs.forEach(l => {
       const r = rails[pos[l.rail]];
       // the box rides its home lane, so that attachment dot moves to the

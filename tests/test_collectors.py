@@ -837,11 +837,34 @@ def test_fdb_pk_migration_rebuilds_old_table(tmp_path):
     c.commit()
     pdb.init(c)
     pk = {r[1]: r[5] for r in c.execute("PRAGMA table_info(fdb)")}
-    assert pk["source"] > 0, pk
+    assert pk["source"] > 0 and pk["vlan"] > 0, pk
     row = c.execute("SELECT * FROM fdb").fetchone()
-    assert row == ("sw1", "1/0/2", "02:00:00:00:07:01", "librenms")
+    assert row == ("sw1", "1/0/2", "02:00:00:00:07:01", "librenms", 0)
     pdb.init(c)  # idempotent
     assert c.execute("SELECT COUNT(*) FROM fdb").fetchone()[0] == 1
+
+
+def test_fdb_vlan_migration_keys_rows_by_learned_vlan(tmp_path):
+    """A database from before fdb carried the learned VLAN gains the column
+    in the key (0 = not reported) and keeps its rows; afterwards one MAC on
+    a trunk can hold a row per VLAN it was learned in."""
+    import sqlite3 as s3
+    from patchbay import db as pdb
+    p = str(tmp_path / "old.db")
+    c = s3.connect(p)
+    c.execute("CREATE TABLE fdb (device TEXT NOT NULL, interface TEXT NOT NULL, "
+              "mac TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'librenms', "
+              "PRIMARY KEY (device, interface, mac, source))")
+    c.execute("INSERT INTO fdb VALUES ('sw1', '1/0/11', '02:00:00:00:07:02', 'librenms')")
+    c.commit()
+    pdb.init(c)
+    pk = {r[1]: r[5] for r in c.execute("PRAGMA table_info(fdb)")}
+    assert pk["vlan"] > 0, pk
+    assert c.execute("SELECT vlan FROM fdb").fetchone()[0] == 0
+    c.executemany("INSERT OR IGNORE INTO fdb (device, interface, mac, source, vlan) "
+                  "VALUES ('sw1', '1/0/11', '02:00:00:00:07:02', 'librenms', ?)",
+                  [(1,), (24,), (73,)])
+    assert c.execute("SELECT COUNT(*) FROM fdb").fetchone()[0] == 4
 
 
 class _OnsClientEmptyExport(_OnsClient):
@@ -1492,6 +1515,51 @@ def test_librenms_vlan_prune_claim_aware(conn, clean_env, monkeypatch):
     assert 30 in {r[0] for r in conn.execute("SELECT vid FROM vlans")}
 
 
+class _LnmsFdbClient(_LnmsClient):
+    """One switch with one port; the MAC table lists a MAC learned on it in
+    two VLANs (by LibreNMS's internal vlan id) and once with no VLAN."""
+
+    def get(self, url, **kw):
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_):
+                if url.endswith("/devices"):
+                    return {"devices": [{"device_id": 1, "sysName": "sw1",
+                                         "hardware": "M4300", "os": "netgear",
+                                         "status": 1, "disabled": 0,
+                                         "serial": None, "ip": "192.0.2.21",
+                                         "overwrite_ip": None}]}
+                if "/ports" in url:
+                    return {"ports": [{"port_id": 75, "ifName": "1/0/11",
+                                       "ifIndex": 11, "ifAdminStatus": "up",
+                                       "ifOperStatus": "up", "ifSpeed": 10000000000,
+                                       "ifPhysAddress": None, "ifAlias": ""}]}
+                if url.endswith("resources/vlans"):
+                    return {"vlans": [{"device_id": 1, "vlan_id": 6, "vlan_vlan": 24},
+                                      {"device_id": 1, "vlan_id": 7, "vlan_vlan": 73}]}
+                if url.endswith("resources/fdb"):
+                    return {"ports_fdb": [
+                        {"port_id": 75, "mac_address": "00005e005373", "vlan_id": 6},
+                        {"port_id": 75, "mac_address": "00005e005373", "vlan_id": 7},
+                        {"port_id": 75, "mac_address": "00005e005374", "vlan_id": 0}]}
+                return {"links": [], "vlans": [], "ports_fdb": []}
+        return R()
+
+
+def test_librenms_fdb_keeps_the_learned_vlan(conn, clean_env, monkeypatch):
+    """A MAC learned on a trunk is one row per VLAN LibreNMS reports it in,
+    mapped from LibreNMS's internal vlan id to the VLAN number; an entry
+    with no VLAN lands as 0 = not reported."""
+    from patchbay.collectors.librenms import LibreNmsCollector
+    monkeypatch.setattr(httpx, "Client", _LnmsFdbClient)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    rows = sorted((r["mac"], r["vlan"]) for r in conn.execute(
+        "SELECT mac, vlan FROM fdb WHERE device = 'sw1' AND interface = '1/0/11'"))
+    assert rows == [("00:00:5e:00:53:73", 24), ("00:00:5e:00:53:73", 73),
+                    ("00:00:5e:00:53:74", 0)]
+
+
 class _OxClient:
     """Oxidized API stub: one FastIron switch whose config defines VLAN 22."""
     nodes = [{"name": "sw1.example.net", "full_name": "sw1.example.net",
@@ -1764,6 +1832,58 @@ def test_phpipam_endpoints_are_identity_not_liveness(conn, clean_env, monkeypatc
                        "WHERE mac='00:00:5e:00:53:40'").fetchone()
     assert row["hostname"] == "nas1.lan"             # identity filled in
     assert row["source"] == "fdb"                    # the observer keeps the row
+
+
+class _IpamOneNicTwoAddresses(ShrinkingClient):
+    """NICs documented twice: a per-VLAN interface on each of two nets."""
+
+    def get(self, url, **kw):
+        if url.endswith("/1/addresses/"):
+            return FakeResponse([
+                {"ip": "192.0.2.40", "hostname": "nas1.lan",
+                 "mac": "00:00:5e:00:53:40", "id": 9},
+                {"ip": "192.0.2.50", "hostname": "nas2.lan",
+                 "mac": "00:00:5e:00:53:50", "id": 11},
+                {"ip": "192.0.2.60", "hostname": "nas3.lan",
+                 "mac": "00:00:5e:00:53:60", "id": 13}])
+        if url.endswith("/2/addresses/"):
+            return FakeResponse([
+                {"ip": "198.51.100.40", "hostname": "nas1ten.lan",
+                 "mac": "00:00:5e:00:53:40", "id": 10},
+                {"ip": "198.51.100.50", "hostname": "nas2ten.lan",
+                 "mac": "00:00:5e:00:53:50", "id": 12}])
+        return super().get(url, **kw)
+
+
+def test_phpipam_lends_names_by_address_before_mac(conn, clean_env, monkeypatch):
+    """One MAC can carry several documented addresses (a trunked storage
+    box with an interface per VLAN). The exact address is the stronger
+    match and goes first; MAC only fills what is left — and a name an
+    earlier MAC-only lend got wrong is corrected."""
+    from patchbay.collectors.phpipam import PhpIpamCollector
+    from patchbay.config import load_settings
+
+    clean_env.setenv("IPAM_URL", "https://ipam.example/api")
+    clean_env.setenv("IPAM_APP_ID", "app")
+    clean_env.setenv("IPAM_TOKEN", "t")
+    monkeypatch.setattr(httpx, "Client", _IpamOneNicTwoAddresses)
+    # (endpoints hold one row per MAC) nas1's NIC seen on the second net
+    # with no name; nas2's NIC seen on the first net wearing the name the
+    # old MAC-only lend handed it from the wrong row; nas3's NIC seen at an
+    # address IPAM doesn't document at all
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:40", source="opnsense",
+                        ip="198.51.100.40")
+    conn.execute("INSERT INTO endpoints (mac, ip, hostname, source, last_seen) "
+                 "VALUES ('00:00:5e:00:53:50', '192.0.2.50', 'nas2ten.lan', "
+                 "'opnsense', ?)", (pdb.now(),))
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:60", source="fdb",
+                        ip="203.0.113.9")
+    PhpIpamCollector().collect(load_settings(), conn)
+    got = {r["mac"][-2:]: r["hostname"] for r in conn.execute(
+        "SELECT mac, hostname FROM endpoints")}
+    assert got["40"] == "nas1ten.lan"   # exact address wins over the MAC's first row
+    assert got["50"] == "nas2.lan"      # wrong MAC-lend healed
+    assert got["60"] == "nas3.lan"      # MAC fallback still fills the rest
 
 
 def test_unifi_clears_stale_ap_attribution(conn, clean_env, monkeypatch):

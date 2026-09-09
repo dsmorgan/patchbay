@@ -113,18 +113,43 @@ class PhpIpamCollector:
                          a.get("id"), s.get("id"), s.get("sectionId")),
                     )
                     n_addrs += 1
-                    # ...and IPAM lends a *name* to an endpoint some real
-                    # observer (ARP, FDB, the controller) already saw.
-                    # Documentation contributes identity, never liveness:
-                    # writing whole endpoint rows here re-stamped last_seen
-                    # every poll, so documented-but-gone hosts never aged
-                    # out and stale device attribution never cleared.
-                    mac = (a.get("mac") or "").strip().lower()
-                    if mac and a.get("hostname"):
-                        conn.execute(
-                            "UPDATE endpoints SET hostname = ? "
-                            "WHERE mac = ? AND hostname IS NULL",
-                            (a["hostname"], mac))
+            # ...and IPAM lends a *name* to endpoints some real observer
+            # (ARP, FDB, the controller) already saw. Documentation
+            # contributes identity, never liveness: writing whole endpoint
+            # rows here re-stamped last_seen every poll, so documented-but-
+            # gone hosts never aged out and stale device attribution never
+            # cleared. The exact address is the stronger match — one NIC
+            # can carry several documented addresses (a trunked storage
+            # box with a VLAN interface per network), and matching by MAC
+            # alone handed the wrong row's name to whichever address came
+            # first — so it goes first; MAC only fills what is left.
+            conn.execute(
+                "UPDATE endpoints SET hostname = ("
+                "  SELECT a.hostname FROM ipam_addresses a "
+                "  WHERE a.ip = endpoints.ip AND a.hostname IS NOT NULL) "
+                "WHERE hostname IS NULL AND ip IN "
+                "  (SELECT ip FROM ipam_addresses WHERE hostname IS NOT NULL)")
+            conn.execute(
+                "UPDATE endpoints SET hostname = ("
+                "  SELECT a.hostname FROM ipam_addresses a "
+                "  WHERE a.mac = endpoints.mac AND a.hostname IS NOT NULL "
+                "  ORDER BY a.ip LIMIT 1) "
+                "WHERE hostname IS NULL AND mac IN "
+                "  (SELECT mac FROM ipam_addresses "
+                "   WHERE mac IS NOT NULL AND hostname IS NOT NULL)")
+            # heal names an earlier MAC-only lend got wrong: an endpoint
+            # wearing the name IPAM gives a *different* address of the same
+            # MAC, while IPAM documents its own address under another name
+            conn.execute(
+                "UPDATE endpoints SET hostname = ("
+                "  SELECT a.hostname FROM ipam_addresses a "
+                "  WHERE a.ip = endpoints.ip AND a.hostname IS NOT NULL) "
+                "WHERE ip IN (SELECT ip FROM ipam_addresses WHERE hostname IS NOT NULL) "
+                "AND hostname IN (SELECT o.hostname FROM ipam_addresses o "
+                "  WHERE o.mac = endpoints.mac AND o.ip != endpoints.ip "
+                "  AND o.hostname IS NOT NULL) "
+                "AND hostname != (SELECT a.hostname FROM ipam_addresses a "
+                "  WHERE a.ip = endpoints.ip)")
             # Retire subnets phpIPAM no longer documents. The address book
             # above gets a full refresh, but subnets were upsert-only, so one
             # deleted in phpIPAM stayed on the VLAN pages and in drift for

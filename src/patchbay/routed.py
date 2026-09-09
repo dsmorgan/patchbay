@@ -96,7 +96,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         rails.add_subnet(r["cidr"], r["vlan"], r["description"], r["source"])
 
     devices = {r["name"]: dict(r) for r in conn.execute(
-        "SELECT name, role, parent, status, source FROM devices")}
+        "SELECT name, role, parent, status, source, mgmt_ip FROM devices")}
     router_names = [n for n, d in devices.items()
                     if d["role"] in ("firewall", "router")]
 
@@ -132,6 +132,36 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         if key in rails.rails and key not in legs.get(dev, {}):
             legs.setdefault(dev, {})[key] = {
                 "rail": key, "iface": "?", "ip": None, "speed": 0}
+
+    # a device's NIC seen by ARP, or documented in IPAM, with an address is
+    # a leg of that device on the address's network — the only placement
+    # for a guest whose collector doesn't report guest addresses and whose
+    # port group is untagged (VLAN 0 never reaches vnic_vlans). Routers are
+    # excluded: what they route must come from their own interface config,
+    # never from a documented address. mgmt_ip is the last resort.
+    iface_by_mac: dict[str, tuple[str, str]] = {}
+    for r in conn.execute(
+            "SELECT d.name AS dev, i.name AS iface, i.mac FROM interfaces i "
+            "JOIN devices d ON d.id = i.device_id WHERE i.mac IS NOT NULL"):
+        iface_by_mac.setdefault(r["mac"].lower(), (r["dev"], r["iface"]))
+    for r in conn.execute(
+            "SELECT mac, ip FROM endpoints WHERE mac IS NOT NULL AND ip IS NOT NULL "
+            "UNION ALL SELECT mac, ip FROM ipam_addresses "
+            "WHERE mac IS NOT NULL AND ip IS NOT NULL"):
+        owner = iface_by_mac.get(r["mac"].lower())
+        if not owner or owner[0] in router_names:
+            continue
+        key = rails.rail_of_ip(r["ip"])
+        if key and key not in legs.get(owner[0], {}):
+            legs.setdefault(owner[0], {})[key] = {
+                "rail": key, "iface": owner[1], "ip": r["ip"], "speed": 0}
+    for name, d in devices.items():
+        if name in router_names or not d.get("mgmt_ip"):
+            continue
+        key = rails.rail_of_ip(d["mgmt_ip"])
+        if key and key not in legs.get(name, {}):
+            legs.setdefault(name, {})[key] = {
+                "rail": key, "iface": "mgmt", "ip": d["mgmt_ip"], "speed": 0}
 
     # routers claim rails: an interface IP inside a subnet routes that
     # network; the interface address is its gateway (shown on hover)
@@ -302,13 +332,13 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # whose address maps to no rail (a WAN-side neighbor, say): the fdb
     # pass below still needs a label for them
     ep_names: dict[str, str] = {}
-    ep_ips: dict[str, str] = {}
+    mac_ips: dict[str, list[str]] = {}    # every address a MAC carries
     for r in conn.execute("SELECT mac, hostname, ip FROM endpoints "
                           "WHERE mac IS NOT NULL"):
         if r["hostname"]:
             ep_names.setdefault(r["mac"].lower(), r["hostname"])
         if r["ip"]:
-            ep_ips.setdefault(r["mac"].lower(), r["ip"])
+            mac_ips.setdefault(r["mac"].lower(), []).append(r["ip"])
     for r in conn.execute(
             "SELECT hostname, ip, mac, device FROM endpoints WHERE ip IS NOT NULL"):
         hn = (r["hostname"] or "").split(".")[0].lower()
@@ -324,8 +354,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         if r["device"] in ap_names:
             ap_clients[r["device"]].setdefault(key, []).append(label)
         elif hn and not _local_admin(mac):
-            fused.setdefault(hn, {}).setdefault(key, {
-                "rail": key, "iface": "?", "ip": r["ip"], "speed": 0})
+            _add_leg(fused.setdefault(hn, {}), key, "?", r["ip"])
         else:
             single[key].append(label)
 
@@ -349,22 +378,29 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     mirror_ports = {(r["device"], r["interface"]) for r in conn.execute(
         "SELECT device, interface FROM port_roles WHERE role = 'monitor-dst'")}
     ipam_names: dict[str, str] = {}
-    ipam_ips: dict[str, str] = {}
     for r in conn.execute("SELECT mac, hostname, ip FROM ipam_addresses "
                           "WHERE mac IS NOT NULL"):
         if r["hostname"]:
             ipam_names.setdefault(r["mac"].lower(), r["hostname"])
         if r["ip"]:
-            ipam_ips.setdefault(r["mac"].lower(), r["ip"])
+            mac_ips.setdefault(r["mac"].lower(), []).append(r["ip"])
     unnamed: dict[str, int] = {}
-    for r in conn.execute("SELECT device, interface, mac FROM fdb"):
+    # the VLAN the switch learned a MAC in is the sighting's network when
+    # the platform reports it (a trunked host is learned once per VLAN);
+    # otherwise only a pure access port can say which VLAN a MAC talked in
+    for r in conn.execute("SELECT device, interface, mac, vlan FROM fdb"):
         k = (r["device"], r["interface"])
-        if k in tagged_ports or k in mirror_ports or k not in access_vlan:
+        if k in mirror_ports:
             continue
+        if r["vlan"]:
+            key = f"v{r['vlan']}"
+        elif k in tagged_ports or k not in access_vlan:
+            continue
+        else:
+            key = f"v{access_vlan[k]}"
         mac = r["mac"].lower()
         if mac in mac_owner:
             continue
-        key = f"v{access_vlan[k]}"
         if key not in rails.rails or (mac, key) in seen_mac_rails:
             continue
         seen_mac_rails.add((mac, key))
@@ -373,12 +409,13 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                            raw_hn.split(".")[0].lower())
         if hn in seen_devs:
             continue
-        ip = ep_ips.get(mac) or ipam_ips.get(mac)
+        # the address that belongs on THIS network, if the MAC has one here
+        ips = mac_ips.get(mac, [])
+        ip = next((i for i in ips if rails.rail_of_ip(i) == key), None)
         if hn and not _local_admin(mac):
-            fused.setdefault(hn, {}).setdefault(key, {
-                "rail": key, "iface": "fdb", "ip": ip, "speed": 0})
-        elif raw_hn or ip:
-            single[key].append(raw_hn or ip)
+            _add_leg(fused.setdefault(hn, {}), key, "fdb", ip)
+        elif raw_hn or ips:
+            single[key].append(raw_hn or ip or ips[0])
         else:
             unnamed[key] = unnamed.get(key, 0) + 1
     # documentation may enrich a live host's identity: an IPAM address
@@ -509,6 +546,23 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         "tunnels": tunnels,
         "wan_names": list(getattr(settings, "wan_names", ()) or ()),
     }
+
+
+def _add_leg(by_rail: dict[str, dict], key: str, iface: str,
+             ip: str | None) -> None:
+    """Record a sighting on a rail. One leg per network per host, but a
+    second address on the same network (a bond and a trunk sub-interface
+    both on mgmt, say) rides the leg as an extra address for the tooltip."""
+    leg = by_rail.get(key)
+    if leg is None:
+        by_rail[key] = {"rail": key, "iface": iface, "ip": ip, "speed": 0}
+    elif ip and ip != leg.get("ip"):
+        if leg.get("ip") is None:
+            leg["ip"] = ip
+        else:
+            leg.setdefault("ips", [leg["ip"]])
+            if ip not in leg["ips"]:
+                leg["ips"].append(ip)
 
 
 def _home_rail(legs: list[dict], rails: dict[str, dict]) -> str:

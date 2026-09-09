@@ -94,11 +94,14 @@ CREATE TABLE IF NOT EXISTS fdb (
     interface TEXT NOT NULL,   -- port it was learned on
     mac TEXT NOT NULL,
     source TEXT NOT NULL DEFAULT 'librenms',
+    vlan INTEGER NOT NULL DEFAULT 0,  -- VLAN it was learned in; 0 = not reported
     -- source is part of the key: two collectors legitimately see the same
     -- MAC on the same port, and each must own (insert, refresh, delete) its
     -- own row — otherwise the first reporter owns the triple forever and
-    -- its scoped delete kills a row the other source still reports
-    PRIMARY KEY (device, interface, mac, source)
+    -- its scoped delete kills a row the other source still reports. vlan is
+    -- too: one MAC on a trunk is learned once per VLAN it talks in, and
+    -- that per-VLAN fact is what places a trunked host on its networks.
+    PRIMARY KEY (device, interface, mac, source, vlan)
 );
 CREATE TABLE IF NOT EXISTS device_vlans (
     device TEXT NOT NULL,      -- device carrying the VLAN (Q-BRIDGE evidence)
@@ -257,6 +260,20 @@ def init(conn: sqlite3.Connection) -> None:
             "source TEXT NOT NULL DEFAULT 'librenms', "
             "PRIMARY KEY (device, interface, mac, source));"
             "INSERT OR IGNORE INTO fdb_migrate "
+            "  SELECT device, interface, mac, source FROM fdb;"
+            "DROP TABLE fdb;"
+            "ALTER TABLE fdb_migrate RENAME TO fdb;")
+        fdbpk = {r[1]: r[5] for r in conn.execute("PRAGMA table_info(fdb)")}
+    if fdbpk and "vlan" not in fdbpk:
+        # the learned VLAN joins the key (a trunk learns one MAC per VLAN);
+        # existing rows carry 0 = not reported until the next poll refreshes
+        conn.executescript(
+            "CREATE TABLE fdb_migrate (device TEXT NOT NULL, "
+            "interface TEXT NOT NULL, mac TEXT NOT NULL, "
+            "source TEXT NOT NULL DEFAULT 'librenms', "
+            "vlan INTEGER NOT NULL DEFAULT 0, "
+            "PRIMARY KEY (device, interface, mac, source, vlan));"
+            "INSERT OR IGNORE INTO fdb_migrate (device, interface, mac, source) "
             "  SELECT device, interface, mac, source FROM fdb;"
             "DROP TABLE fdb;"
             "ALTER TABLE fdb_migrate RENAME TO fdb;")

@@ -55,6 +55,24 @@ put.
   shows as that address. A MAC with neither is usually a bond member or
   kernel port of a host already drawn, so it is counted in the lane's
   tooltip and never listed as a host.
+- **The switch MAC table keeps the VLAN a MAC was learned in.** LibreNMS
+  reports it per entry (platforms that don't leave it 0), and `fdb` rows
+  are now keyed by it, so a trunked host — a storage box with a VLAN
+  interface per network on one 10G port — is placed on every network it
+  talks in, from real switch evidence, no alias needed. Legs name the
+  address that belongs on *that* network, and a second address on the
+  same network (bond plus trunk sub-interface on mgmt) rides the leg in
+  the tooltip. Databases from before the change migrate in place.
+- **Guests are placed by what ARP saw their NICs do.** A VM's collector
+  reports NIC MACs but no guest addresses, and an untagged port group
+  never reaches the VLAN tags, so a two-NIC guest drew as single-homed.
+  A device's NIC seen by ARP (or documented in IPAM) with an address is
+  now a leg on that address's network; `mgmt_ip` is the last resort.
+  Routers still claim networks from their own interface config only.
+- **phpIPAM lends names by exact address first, MAC second.** One NIC can
+  carry several documented addresses; matching by MAC alone handed the
+  wrong row's name to whichever came first. Names an earlier MAC-only
+  lend got wrong are corrected on the next poll.
 
 ## [0.12.0] — 2026-09-03
 

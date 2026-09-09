@@ -238,6 +238,12 @@ class LibreNmsCollector:
             fdb = self._get(client, settings, "resources/fdb").get("ports_fdb", [])
             if fdb:  # same empty-response guard as device_vlans above
                 conn.execute("DELETE FROM fdb WHERE source = 'librenms'")
+            # each MAC-table entry names the VLAN it was learned in by
+            # LibreNMS's internal vlan id; the vlans listing maps that to the
+            # VLAN number. Not every platform reports it (0 = unknown) — on
+            # those the routed view falls back to the port's access VLAN.
+            vlan_num = {v.get("vlan_id"): int(v.get("vlan_vlan") or 0)
+                        for v in vlans if v.get("vlan_id") is not None}
             n_fdb = 0
             for e in fdb:
                 where = port_map.get(e.get("port_id"))
@@ -246,8 +252,9 @@ class LibreNmsCollector:
                     continue
                 mac = ":".join(mac[i:i + 2] for i in range(0, 12, 2)).lower()
                 conn.execute(
-                    "INSERT OR IGNORE INTO fdb (device, interface, mac, source) VALUES (?, ?, ?, 'librenms')",
-                    (*where, mac),
+                    "INSERT OR IGNORE INTO fdb (device, interface, mac, source, vlan) "
+                    "VALUES (?, ?, ?, 'librenms', ?)",
+                    (*where, mac, vlan_num.get(e.get("vlan_id"), 0)),
                 )
                 n_fdb += 1
         return (f"{n_devices} devices, {n_ports} ports, {n_links} lldp links, "

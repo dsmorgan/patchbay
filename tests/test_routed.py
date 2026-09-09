@@ -444,6 +444,93 @@ def test_fdb_sighting_labeled_by_its_address_when_nameless(conn):
     assert by["v103"]["unnamed"] == 0
 
 
+def test_fdb_learned_vlan_places_a_trunked_host(conn):
+    """When the switch reports which VLAN it learned a MAC in, a trunk
+    port is no longer ambiguous: the storage box's 10G NIC learned in
+    VLAN 103 on a trunk is a leg on the iscsi rail, and the leg carries
+    the address IPAM documents on THAT network, not the NIC's first one."""
+    seed_site(conn)
+    conn.executemany(
+        "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+        "VALUES (?, ?, ?, ?, 'test')",
+        [("sw9", "1/0/11", 13, 0), ("sw9", "1/0/11", 20, 1), ("sw9", "1/0/11", 103, 1)])
+    conn.executemany(
+        "INSERT INTO fdb (device, interface, mac, source, vlan) VALUES (?, ?, ?, 'test', ?)",
+        [("sw9", "1/0/11", "00:00:5e:00:53:77", 20),
+         ("sw9", "1/0/11", "00:00:5e:00:53:77", 103)])
+    conn.executemany(
+        "INSERT INTO ipam_addresses (ip, hostname, mac) VALUES (?, ?, ?)",
+        [("198.51.100.77", "box7ten.lan", "00:00:5e:00:53:77"),
+         ("203.0.113.77", "box7ten103.lan", "00:00:5e:00:53:77")])
+    conn.executemany("INSERT INTO aliases (alias, canonical) VALUES (?, ?)",
+                     [("box7ten", "box7"), ("box7ten103", "box7")])
+    g = build_routed_graph(conn, _S())
+    box = next(h for h in g["hosts"] if h["name"] == "box7")
+    legs = {l["rail"]: l for l in box["legs"]}
+    assert set(legs) == {"v20", "v103"}
+    assert legs["v103"]["iface"] == "fdb"
+    assert legs["v103"]["ip"] == "203.0.113.77"
+    assert legs["v20"]["ip"] == "198.51.100.77"
+
+
+def test_guest_legs_come_from_arp_by_nic_mac_and_mgmt_ip(conn):
+    """A VM's collector reports NIC MACs but no guest addresses, and an
+    untagged port group never reaches vnic_vlans — so ARP seeing the NIC's
+    MAC with an address is the leg that makes a two-NIC guest multi-homed.
+    mgmt_ip is the last resort for a guest nothing else places."""
+    seed_site(conn)
+    hid = dev(conn, "hyp1", role="hypervisor")
+    iface(conn, hid, "vmk0", ip="192.0.2.9")
+    vm = dev(conn, "guest1", role="vm", parent="hyp1", mgmt_ip="192.0.2.61")
+    iface(conn, vm, "Network adapter 1", mac="00:00:5e:00:53:61")
+    iface(conn, vm, "Network adapter 2", mac="00:00:5e:00:53:62")
+    conn.execute("INSERT INTO vnic_vlans (mac, vid, portgroup, source) "
+                 "VALUES ('00:00:5e:00:53:62', 20, 'servers', 'test')")
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:61", source="opnsense",
+                        ip="192.0.2.61", hostname="guest1")
+    lone = dev(conn, "lone1", role="vm", parent="hyp1", mgmt_ip="198.51.100.66")
+    iface(conn, lone, "Network adapter 1", mac="00:00:5e:00:53:66")
+    g = build_routed_graph(conn, _S())
+    hyp = g["hypervisors"][0]
+    tor = next(v for v in hyp["guests"] if v["name"] == "guest1")
+    legs = {l["rail"]: l for l in tor["legs"]}
+    assert set(legs) == {"v1", "v20"}
+    assert legs["v1"]["iface"] == "Network adapter 1"
+    assert legs["v1"]["ip"] == "192.0.2.61"
+    assert hyp["groups"] == {"v20": ["lone1"]}            # mgmt_ip placed it
+
+
+def test_documented_address_never_makes_a_router_route_a_network(conn):
+    """Routers claim networks from their own interface config only; an
+    IPAM row naming a firewall MAC on some other network must not turn
+    that network routed."""
+    seed_site(conn)
+    fw = conn.execute("SELECT id FROM devices WHERE name = 'fw1'").fetchone()[0]
+    conn.execute("UPDATE interfaces SET mac = '00:00:5e:00:53:01' "
+                 "WHERE device_id = ? AND name = 'vmx0'", (fw,))
+    conn.execute("INSERT INTO ipam_addresses (ip, hostname, mac) VALUES "
+                 "('203.0.113.1', 'fw1-iscsi.lan', '00:00:5e:00:53:01')")
+    g = build_routed_graph(conn, _S())
+    by = {r["key"]: r for r in g["rails"]}
+    assert not by["v103"]["routed"]
+
+
+def test_second_address_on_a_network_rides_the_leg(conn):
+    """One leg per network per host — but a bond and a trunk sub-interface
+    both on mgmt are two addresses, and the leg lists both."""
+    seed_site(conn)
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:81", source="opnsense",
+                        ip="192.0.2.81", hostname="box8")
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:82", source="opnsense",
+                        ip="192.0.2.82", hostname="box8")
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:83", source="opnsense",
+                        ip="198.51.100.83", hostname="box8")
+    g = build_routed_graph(conn, _S())
+    box = next(h for h in g["hosts"] if h["name"] == "box8")
+    v1 = next(l for l in box["legs"] if l["rail"] == "v1")
+    assert sorted(v1["ips"]) == ["192.0.2.81", "192.0.2.82"]
+
+
 def test_router_carries_its_parent(conn):
     seed_site(conn)
     conn.execute("UPDATE devices SET parent = 'hyp1' WHERE name = 'fw1'")
