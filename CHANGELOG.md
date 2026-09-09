@@ -47,6 +47,14 @@ put.
   stop counting as clients. A tunnel route whose destination contains
   local networks (WireGuard allowed-ips for the home supernet) is the
   tunnel's source side: named on hover, never drawn as a network.
+- **Switch MAC tables discover hosts, but a bare MAC is not a host.** A
+  MAC learned on a pure access port counts as a sighting on that port's
+  VLAN (trunks and mirror destinations excluded), named by its hostname
+  or, failing that, its address from any endpoint or IPAM row — a
+  WAN-side neighbor with an address outside every documented subnet
+  shows as that address. A MAC with neither is usually a bond member or
+  kernel port of a host already drawn, so it is counted in the lane's
+  tooltip and never listed as a host.
 
 ## [0.12.0] — 2026-09-03
 

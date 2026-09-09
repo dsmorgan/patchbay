@@ -412,7 +412,10 @@ def test_fdb_access_port_sighting_counts_on_the_vlan(conn):
     assert "00:00:5e:00:53:74" not in by["v103"]["host_names"]
 
 
-def test_fdb_access_sighting_draws_nameless_macs_as_singles(conn):
+def test_fdb_sighting_without_identity_is_counted_not_drawn(conn):
+    """A bare MAC is not a host: with no hostname or address anywhere it
+    is usually a bond member or kernel port of a host already on the
+    map. It counts for the lane's tooltip and is never listed as one."""
     seed_site(conn)
     conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, "
                  "source) VALUES ('sw9', '1/0/5', 103, 0, 'test')")
@@ -420,7 +423,25 @@ def test_fdb_access_sighting_draws_nameless_macs_as_singles(conn):
                  "('sw9', '1/0/5', '00:00:5e:00:53:75', 'test')")
     g = build_routed_graph(conn, _S())
     by = {r["key"]: r for r in g["rails"]}
-    assert "00:00:5e:00:53:75" in by["v103"]["host_names"]
+    assert "00:00:5e:00:53:75" not in by["v103"]["host_names"]
+    assert by["v103"]["hosts"] == 0 and by["v103"]["unnamed"] == 1
+
+
+def test_fdb_sighting_labeled_by_its_address_when_nameless(conn):
+    """An endpoint row with an address but no hostname — even one whose
+    address maps to no rail, like a WAN-side neighbor — names the fdb
+    sighting by that address instead of the MAC."""
+    seed_site(conn)
+    conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, "
+                 "source) VALUES ('sw9', '1/0/6', 103, 0, 'test')")
+    conn.execute("INSERT INTO fdb (device, interface, mac, source) VALUES "
+                 "('sw9', '1/0/6', '00:00:5e:00:53:76', 'test')")
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:76", ip="198.18.5.1",
+                        source="test")
+    g = build_routed_graph(conn, _S())
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v103"]["host_names"] == ["198.18.5.1"]
+    assert by["v103"]["unnamed"] == 0
 
 
 def test_router_carries_its_parent(conn):

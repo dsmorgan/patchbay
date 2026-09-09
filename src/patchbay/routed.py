@@ -298,7 +298,17 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     ap_clients: dict[str, dict[str, list[str]]] = {n: {} for n in ap_names}
     fused: dict[str, dict[str, dict]] = {}
     seen_mac_rails: set[tuple[str, str]] = set()
+    # what a MAC is called, from any endpoint row at all — including rows
+    # whose address maps to no rail (a WAN-side neighbor, say): the fdb
+    # pass below still needs a label for them
     ep_names: dict[str, str] = {}
+    ep_ips: dict[str, str] = {}
+    for r in conn.execute("SELECT mac, hostname, ip FROM endpoints "
+                          "WHERE mac IS NOT NULL"):
+        if r["hostname"]:
+            ep_names.setdefault(r["mac"].lower(), r["hostname"])
+        if r["ip"]:
+            ep_ips.setdefault(r["mac"].lower(), r["ip"])
     for r in conn.execute(
             "SELECT hostname, ip, mac, device FROM endpoints WHERE ip IS NOT NULL"):
         hn = (r["hostname"] or "").split(".")[0].lower()
@@ -310,8 +320,6 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             continue
         mac = (r["mac"] or "").lower()
         seen_mac_rails.add((mac, key))
-        if r["hostname"]:
-            ep_names.setdefault(mac, r["hostname"])
         label = r["hostname"] or r["ip"]
         if r["device"] in ap_names:
             ap_clients[r["device"]].setdefault(key, []).append(label)
@@ -325,7 +333,11 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # router to ask. A MAC learned on a pure access port is a sighting on
     # that port's VLAN: trunks are ambiguous and mirror destinations lie,
     # so both stay out, and device-owned MACs already have interface legs.
-    # Names come from the MAC's endpoint row or IPAM's MAC column.
+    # A sighting is a host only when the MAC resolves to an identity — a
+    # hostname or an address from an endpoint row or IPAM's MAC column. A
+    # bare MAC is not one: it's usually a bond member or a kernel port of
+    # a host already on the map, so it's counted for the lane's tooltip
+    # and never listed as a host.
     tagged_ports: set[tuple[str, str]] = set()
     access_vlan: dict[tuple[str, str], int] = {}
     for r in conn.execute("SELECT device, interface, vid, tagged FROM port_vlans"):
@@ -336,9 +348,15 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             access_vlan.setdefault(k, r["vid"])
     mirror_ports = {(r["device"], r["interface"]) for r in conn.execute(
         "SELECT device, interface FROM port_roles WHERE role = 'monitor-dst'")}
-    ipam_names = {r["mac"].lower(): r["hostname"] for r in conn.execute(
-        "SELECT mac, hostname FROM ipam_addresses "
-        "WHERE mac IS NOT NULL AND hostname IS NOT NULL")}
+    ipam_names: dict[str, str] = {}
+    ipam_ips: dict[str, str] = {}
+    for r in conn.execute("SELECT mac, hostname, ip FROM ipam_addresses "
+                          "WHERE mac IS NOT NULL"):
+        if r["hostname"]:
+            ipam_names.setdefault(r["mac"].lower(), r["hostname"])
+        if r["ip"]:
+            ipam_ips.setdefault(r["mac"].lower(), r["ip"])
+    unnamed: dict[str, int] = {}
     for r in conn.execute("SELECT device, interface, mac FROM fdb"):
         k = (r["device"], r["interface"])
         if k in tagged_ports or k in mirror_ports or k not in access_vlan:
@@ -355,11 +373,14 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                            raw_hn.split(".")[0].lower())
         if hn in seen_devs:
             continue
+        ip = ep_ips.get(mac) or ipam_ips.get(mac)
         if hn and not _local_admin(mac):
             fused.setdefault(hn, {}).setdefault(key, {
-                "rail": key, "iface": "fdb", "ip": None, "speed": 0})
+                "rail": key, "iface": "fdb", "ip": ip, "speed": 0})
+        elif raw_hn or ip:
+            single[key].append(raw_hn or ip)
         else:
-            single[key].append(raw_hn or mac)
+            unnamed[key] = unnamed.get(key, 0) + 1
     # documentation may enrich a live host's identity: an IPAM address
     # whose (canonicalized) hostname matches a host seen by a real observer
     # adds a leg on a network nothing can report — an isolated storage VLAN
@@ -472,6 +493,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         names = single.get(k, [])
         out_rails.append({**r, "sources": sorted(r["sources"]),
                           "hosts": len(names), "host_names": sorted(names),
+                          "unnamed": unnamed.get(k, 0),
                           "wan": k == wan_rail,
                           "via_tunnel": via_tunnel.get(k, [])})
     return {
