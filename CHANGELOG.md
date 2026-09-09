@@ -33,6 +33,21 @@ put.
   straight from its edge. The viewBox hugs the drawing, so **fit** means
   the whole map.
 
+### Fixed
+
+- **Merging a re-duplicated device no longer drops its addresses.** A
+  device LibreNMS re-creates under its FQDN every poll merged into the
+  fresher row, and colliding port rows on the older duplicate were
+  discarded wholesale — so the firewall's interface addresses (which only
+  the firewall collector writes) vanished whenever that collector was
+  skipped or failed, and with them the routed view's gateway exclusion,
+  which let dnsmasq's "gateway" ARP rows draw as a phantom host spanning
+  every network. Identity facts (ip, ip6, mac, description, ifindex) now
+  fill the primary's gaps whatever their age; liveness (status, speed,
+  rates) still follows the fresher row. Separately, an ARP or IPAM row
+  carrying a MAC some device's interface owns is that device, never a
+  host, whatever name the address wears.
+
 ### Changed
 
 - **IPAM is identity, never liveness.** phpIPAM no longer writes endpoint

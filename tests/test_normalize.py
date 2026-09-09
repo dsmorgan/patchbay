@@ -79,6 +79,32 @@ def test_merge_temperature_survives_from_the_duplicate(conn):
     assert get_dev(conn, "sw1")["temperature"] == 52.0
 
 
+def test_merge_stale_duplicate_keeps_identity_facts(conn):
+    """A device LibreNMS re-creates under its FQDN every poll merges into
+    a fresher primary whose port rows carry no addresses (only the firewall
+    collector writes those). Identity facts on the older duplicate — ip,
+    mac, description — must fill the primary's gaps whatever their age;
+    liveness (oper status, speed) still follows the fresher row."""
+    old = dev(conn, "fw1", "librenms", last_seen=NOW - 900, role="firewall")
+    pdb.upsert_interface(conn, device_id=old, name="vmx3", ip="192.0.2.1/24",
+                         mac="00:00:5e:00:53:03", description="mgmt",
+                         oper_status="down", speed_bps=1_000_000_000)
+    conn.execute("UPDATE interfaces SET last_seen=? WHERE device_id=?", (NOW - 900, old))
+    new = dev(conn, "fw1.example.lan", "librenms", last_seen=NOW, role="firewall")
+    pdb.upsert_interface(conn, device_id=new, name="vmx3", oper_status="up")
+    normalize(conn)
+    row = conn.execute(
+        "SELECT i.ip, i.mac, i.description, i.oper_status, i.speed_bps FROM interfaces i "
+        "JOIN devices d ON d.id = i.device_id WHERE d.name = 'fw1' AND i.name = 'vmx3'"
+    ).fetchone()
+    assert row["ip"] == "192.0.2.1/24"                 # identity survives
+    assert row["mac"] == "00:00:5e:00:53:03"
+    assert row["description"] == "mgmt"
+    assert row["oper_status"] == "up"                  # liveness: fresher wins
+    assert row["speed_bps"] is None                    # older row has no say
+    assert conn.execute("SELECT COUNT(*) FROM interfaces WHERE name='vmx3'").fetchone()[0] == 1
+
+
 def test_rename_rewrites_fdb(conn):
     # fdb rows keyed by a raw sysName used to survive the rename and poison
     # inference (phantom unmanaged switches, alias<->canonical self-links)

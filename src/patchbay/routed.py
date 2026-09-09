@@ -343,7 +343,11 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             "SELECT hostname, ip, mac, device FROM endpoints WHERE ip IS NOT NULL"):
         hn = (r["hostname"] or "").split(".")[0].lower()
         hn = alias_map.get(hn, hn)
-        if hn in seen_devs or r["ip"].split("/")[0] in gw_ips:
+        # a MAC some device's interface owns IS that device, whatever name
+        # ARP attaches to the address (dnsmasq calls every firewall VLAN
+        # address "gateway"); its legs were computed from the device itself
+        if hn in seen_devs or r["ip"].split("/")[0] in gw_ips \
+                or (r["mac"] or "").lower() in mac_owner:
             continue
         key = rails.rail_of_ip(r["ip"])
         if key is None:
@@ -425,10 +429,15 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # a one-legged sighting to a drawn multi-homed box; liveness still
     # comes only from observation, so IPAM alone never draws a host.
     ipam_legs: dict[str, list[tuple[str, str]]] = {}
-    for r in conn.execute("SELECT hostname, ip FROM ipam_addresses "
+    for r in conn.execute("SELECT hostname, ip, mac FROM ipam_addresses "
                           "WHERE hostname IS NOT NULL AND ip IS NOT NULL"):
         hn = r["hostname"].split(".")[0].lower()
         hn = alias_map.get(hn, hn)
+        # a documented gateway address, or a device-owned NIC, is never a
+        # host's leg — the router wearing a per-VLAN hat, or the device itself
+        if r["ip"].split("/")[0] in gw_ips \
+                or (r["mac"] or "").lower() in mac_owner:
+            continue
         key = rails.rail_of_ip(r["ip"])
         if key:
             ipam_legs.setdefault(hn, []).append((key, r["ip"]))

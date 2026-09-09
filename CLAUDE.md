@@ -25,7 +25,7 @@ site-specific leaked into code, tests, or docs.
   `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.patchbay.poll.plist`,
   and unload with `launchctl bootout gui/$UID/com.patchbay.poll`.
 - Quick verification without the server: FastAPI `TestClient` against the real site DB.
-- `pytest` (install `.[dev]`): 241 tests, no network, hermetic env via the
+- `pytest` (install `.[dev]`): 270 tests, no network, hermetic env via the
   `clean_env` fixture. Every normalizer bug family has a regression test —
   add one when fixing anything there.
 - Commits go straight to `main` (homelab repo, no PR flow). Small, single-topic commits.
@@ -73,7 +73,17 @@ site-specific leaked into code, tests, or docs.
   placeholder": junk values (`generic`, `amd64`, …) count as absent; versioned OS
   beats a bare fingerprint; status comes from the row with the freshest `last_seen`;
   the interface fold list must name every column (forgetting one silently drops data —
-  this bit us with `ip6`).
+  this bit us with `ip6`). Colliding port rows on a duplicate fold by the same
+  doctrine: identity fields (ip, ip6, mac, description, ifindex) fill the
+  primary's gaps whatever their age, liveness fields only when the duplicate
+  is fresher — a device LibreNMS re-creates by FQDN every poll would otherwise
+  lose the addresses only the firewall collector writes on any partial poll.
+- **The MAC table keeps its VLAN.** `fdb` rows are keyed by the VLAN a MAC was
+  learned in (LibreNMS reports it per entry; 0 = the platform didn't say). The
+  routed view places a MAC by that VLAN first and falls back to the port's
+  access VLAN only when it is 0 — a trunk is ambiguous without it. A MAC that
+  resolves to no hostname or address anywhere is counted, never drawn: it is
+  usually a bond member or kernel port of a host already on the map.
 - **Some ports lie by design.** A mirror/SPAN destination (`port_roles.role =
   'monitor-dst'`, parsed from the running-config) transmits copies of other
   ports' traffic: its MAC table describes the rest of the fabric, so it's

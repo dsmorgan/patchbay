@@ -531,6 +531,26 @@ def test_second_address_on_a_network_rides_the_leg(conn):
     assert sorted(v1["ips"]) == ["192.0.2.81", "192.0.2.82"]
 
 
+def test_device_owned_mac_never_becomes_a_host(conn):
+    """dnsmasq names every firewall VLAN address "gateway". Those ARP rows
+    carry the firewall's own NIC MACs, so they are the firewall — even
+    when the firewall's interface addresses are momentarily missing and
+    the gateway-address exclusion can't catch them — and so is an IPAM
+    row documenting a device-owned MAC on some other network."""
+    seed_site(conn)
+    fw = conn.execute("SELECT id FROM devices WHERE name = 'fw1'").fetchone()[0]
+    conn.execute("UPDATE interfaces SET mac = '00:00:5e:00:53:10', ip = NULL "
+                 "WHERE device_id = ? AND name = 'vmx0'", (fw,))
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:10", source="opnsense",
+                        ip="192.0.2.1", hostname="gateway")
+    conn.execute("INSERT INTO ipam_addresses (ip, hostname, mac) VALUES "
+                 "('203.0.113.1', 'gateway', '00:00:5e:00:53:10')")
+    g = build_routed_graph(conn, _S())
+    assert not any(h["name"] == "gateway" for h in g["hosts"])
+    by = {r["key"]: r for r in g["rails"]}
+    assert "gateway" not in by["v1"]["host_names"]
+
+
 def test_router_carries_its_parent(conn):
     seed_site(conn)
     conn.execute("UPDATE devices SET parent = 'hyp1' WHERE name = 'fw1'")

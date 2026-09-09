@@ -99,21 +99,32 @@ def _merge_group(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
     for r in rest:
         conn.execute("UPDATE OR IGNORE interfaces SET device_id=? WHERE device_id=?",
                      (primary["id"], r["id"]))
-        # collisions (same port name on both rows) survive on the duplicate:
-        # fold the fresher row's fields onto the primary instead of silently
-        # discarding a newer poll's data with the duplicate
+        # collisions (same port name on both rows) survive on the duplicate.
+        # Identity facts (addresses, MAC, ifindex, description) fill any gap
+        # in the primary whatever their age — a device that re-duplicates
+        # every poll (LibreNMS naming it by FQDN) would otherwise lose the
+        # addresses only another collector writes the moment that collector
+        # is skipped or fails. Liveness (status, speed, rates) follows
+        # freshness: the newer poll's word wins, an older one has no say.
         for dup in conn.execute(
                 "SELECT * FROM interfaces WHERE device_id=?", (r["id"],)).fetchall():
             cur = conn.execute(
-                "SELECT last_seen FROM interfaces WHERE device_id=? AND name=?",
+                "SELECT * FROM interfaces WHERE device_id=? AND name=?",
                 (primary["id"], dup["name"])).fetchone()
-            if cur and (dup["last_seen"] or 0) >= (cur["last_seen"] or 0):
-                db.upsert_interface(
-                    conn, device_id=primary["id"], name=dup["name"],
-                    **{f: dup[f] for f in ("ifindex", "admin_status", "oper_status",
-                                           "speed_bps", "mac", "description",
-                                           "ip", "ip6", "in_bps", "out_bps")
-                       if dup[f] is not None})
+            if cur is None:
+                continue
+            fresher = (dup["last_seen"] or 0) >= (cur["last_seen"] or 0)
+            fields = {f: dup[f] for f in ("ifindex", "mac", "description", "ip", "ip6")
+                      if dup[f] is not None and (fresher or cur[f] is None)}
+            if fresher:
+                fields.update({f: dup[f] for f in ("admin_status", "oper_status",
+                                                   "speed_bps", "in_bps", "out_bps")
+                               if dup[f] is not None})
+            if fields:
+                conn.execute(
+                    "UPDATE interfaces SET " + ", ".join(f"{f}=?" for f in fields)
+                    + " WHERE device_id=? AND name=?",
+                    (*fields.values(), primary["id"], dup["name"]))
         conn.execute("DELETE FROM interfaces WHERE device_id=?", (r["id"],))
         conn.execute("DELETE FROM devices WHERE id=?", (r["id"],))
     conn.execute(
