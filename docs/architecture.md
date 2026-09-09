@@ -58,6 +58,30 @@ Two ports resist all of it, and patchbay names both rather than guessing:
   excludes them from MAC-table inference — otherwise the mirrored MACs hang a phantom
   switch off the probe port — and marks them on the map. Only a declaration can say
   what a mirror port is cabled to.
+
+### Host placement on the routed view
+
+The routed view answers "what is on which network" from the same evidence, ranked by
+how much each source can actually know:
+
+- **A device's own interfaces** place it: an interface address is a leg on that
+  address's network; a firewall's addresses make it *route* those networks. A guest
+  VM's NIC seen by ARP with an address, or its port group VLAN, places it too —
+  routers only ever from their own config.
+- **ARP and the controller** see hosts that aren't devices: a hostname with
+  addresses on two networks is one dual-homed host (fused by canonical short name;
+  randomized privacy MACs never fuse, four iPads are not one host), a wireless
+  client counts inside its AP.
+- **The switch MAC table** sees hosts ARP can't — an isolated VLAN has no router to
+  ask. A MAC counts on the VLAN the switch learned it in (LibreNMS reports that per
+  entry; platforms that don't fall back to the port's access VLAN, and trunks stay
+  ambiguous there). A MAC that resolves to no hostname or address anywhere is a bond
+  member or kernel port of something already drawn: counted, never listed.
+- **IPAM is identity, never liveness**: it lends names, and adds legs on networks
+  nothing can observe for a host some observer already saw — but never draws a host
+  by itself, and a documented gateway address is the router, not a host.
+- **Powered-off VMs and down devices don't count**, however many legs they have on
+  paper; the virtualization box remembers them in its tooltip.
 - A **guest interface's VLAN** is invisible to the guest: the vSwitch adds and strips
   the tag, so a firewall VM sees untagged frames and reports no 802.1Q. The hypervisor
   knows, and the NIC's MAC joins the two views — vCenter's "Network adapter 1" and the
@@ -71,8 +95,11 @@ Two ports resist all of it, and patchbay names both rather than guessing:
    device, with per-port status, VLANs, PoE, traffic sparkline, learned MACs.
 2. **Live health dashboard** — summary-first: up/down, uplink utilization, PoE budgets,
    AP client counts, WAN state, host/VM placement. State encoded as color + shape.
-3. **Logical L3/VLAN overlay** — highlight a VLAN/subnet across the fabric; includes an
-   IPAM drift report (live ARP/leases vs. IPAM records).
+3. **Logical L3 / VLAN** — the routed view draws networks as lanes with who routes
+   each, the hosts standing in several, one wireless box, one virtualization box, and
+   where the default route and VPN tunnels leave; the VLAN overlay highlights a
+   VLAN/subnet across the fabric, with an IPAM drift report (live ARP/leases vs. IPAM
+   records).
 4. **Config & change history** — Oxidized git log rendered as one cross-device timeline
    with in-app diffs, plus snapshot-to-snapshot topology diffs.
 

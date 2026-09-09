@@ -25,7 +25,7 @@ site-specific leaked into code, tests, or docs.
   `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.patchbay.poll.plist`,
   and unload with `launchctl bootout gui/$UID/com.patchbay.poll`.
 - Quick verification without the server: FastAPI `TestClient` against the real site DB.
-- `pytest` (install `.[dev]`): 270 tests, no network, hermetic env via the
+- `pytest` (install `.[dev]`): 279 tests, no network, hermetic env via the
   `clean_env` fixture. Every normalizer bug family has a regression test —
   add one when fixing anything there.
 - Commits go straight to `main` (homelab repo, no PR flow). Small, single-topic commits.
@@ -111,6 +111,16 @@ site-specific leaked into code, tests, or docs.
   the two drift. The map lives in `templates/_topomap.html`, shared by both;
   set `snapshot = true` before including it. `font_url` is the one style knob
   the snapshot overrides (the bundled typeface as a data URI, like d3).
+- **The routed view is one renderer on two axes** (`_routedmap.html`): geometry is
+  laid out in lane space (u along the networks, v across) and mapped onto the
+  screen as horizontal lanes or, with `?axis=v`, vertical rails with the
+  internet at the top — never two drawings. Its data (`routed.py`) is pure and
+  unit-tested: one wireless box, one virtualization box named after the vSphere
+  server (a guest router draws inside it), single-homed hosts as ×N chips, and
+  the host-placement evidence order in docs/architecture.md — observation
+  places, IPAM only names and fills, powered-off VMs and down devices don't
+  count. Every placement rule has a scenario test in tests/test_routed.py; add
+  one when changing how hosts, addresses, VLANs, or MACs are captured.
 - **The frontend stays frameworkless**: Jinja templates + vanilla JS + one
   vendored d3, no build step, no npm. React Flow was evaluated (2026-09) and
   declined — it wouldn't solve layout, and it would break the

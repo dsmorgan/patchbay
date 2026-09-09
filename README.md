@@ -104,10 +104,16 @@ and renders one navigable picture:
   24-hour utilization, and a service-capacity override renders as "10G (3G)".
   Firewall VPN tunnels (WireGuard, OpenVPN, IPsec) draw as type-labeled
   egress nodes hung off their firewall — status and peer, never key material.
-- **Routed view** — the L3 answer to the topology's L1: networks as rails,
+- **Routed view** — the L3 answer to the topology's L1: networks as lanes
+  reading edge → internet (or turned upright with the internet at the top),
   who routes each one, the hosts that stand in several, and where the
-  default route leaves. Subnets reachable only through a VPN tunnel rail
-  off the tunnel itself.
+  default route leaves. Single-homed hosts collapse to a count per network;
+  wireless clients live in one wireless box and VMs in one virtualization
+  box named after the vSphere server, with the firewall inside it when it
+  runs as a guest. Hosts are placed by observation — ARP, the switch MAC
+  table (per VLAN learned), the controller — and IPAM only lends names and
+  fills in networks nothing can observe; powered-off VMs don't count.
+  Subnets reachable only through a VPN tunnel hang off the tunnel itself.
 - **Health dashboard** — device up/down state, hardware, management IPs, and VM
   placement on cards styled to match the topology nodes, plus an alerts page
   listing everything the checks flag and since when. Device pages embed

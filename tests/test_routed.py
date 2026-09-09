@@ -551,6 +551,160 @@ def test_device_owned_mac_never_becomes_a_host(conn):
     assert "gateway" not in by["v1"]["host_names"]
 
 
+def test_powered_off_guests_and_down_devices_do_not_count(conn):
+    """A powered-off VM still has legs on paper — its port group VLAN, a
+    documented address, a cached guest IP — but it isn't on the network.
+    It counts nowhere; its hypervisor remembers it for the tooltip. A down
+    switch on mgmt likewise stops counting. Unknown status still counts."""
+    seed_site(conn)
+    hid = dev(conn, "hyp1", role="hypervisor")
+    iface(conn, hid, "vmk0", ip="192.0.2.9")
+    off = pdb.upsert_device(conn, name="sleeper9", source="test", role="vm",
+                            parent="hyp1", status="down", mgmt_ip="198.51.100.90")
+    iface(conn, off, "Network adapter 1", mac="00:00:5e:00:53:90")
+    conn.execute("INSERT INTO vnic_vlans (mac, vid, portgroup, source) "
+                 "VALUES ('00:00:5e:00:53:90', 20, 'servers', 'test')")
+    conn.execute("INSERT INTO ipam_addresses (ip, hostname, mac) VALUES "
+                 "('198.51.100.90', 'sleeper9.lan', '00:00:5e:00:53:90')")
+    on = dev(conn, "app9", role="vm", parent="hyp1")           # status up
+    iface(conn, on, "Network adapter 1", mac="00:00:5e:00:53:91")
+    conn.execute("INSERT INTO vnic_vlans (mac, vid, portgroup, source) "
+                 "VALUES ('00:00:5e:00:53:91', 20, 'servers', 'test')")
+    shrug = pdb.upsert_device(conn, name="mystery9", source="test", role="vm",
+                              parent="hyp1", mgmt_ip="198.51.100.92")  # no status
+    downsw = pdb.upsert_device(conn, name="sw-off", source="test", role="switch",
+                               status="down")
+    iface(conn, downsw, "Vlan1", ip="192.0.2.250")
+    g = build_routed_graph(conn, _S())
+    hyp = g["hypervisors"][0]
+    assert hyp["groups"] == {"v20": ["app9", "mystery9"]}
+    assert hyp["off"] == ["sleeper9"]
+    by = {r["key"]: r for r in g["rails"]}
+    assert "sw-off" not in by["v1"]["host_names"]
+
+
+# --- typical sites: the builder must stay standing whatever shape a network
+# takes and whichever sources happen to be configured ------------------------
+
+def test_empty_database_builds_an_empty_graph(conn):
+    g = build_routed_graph(conn, _S())
+    assert g["rails"] == [] and g["hosts"] == [] and g["routers"] == []
+    assert g["hypervisors"] == [] and g["aps"] == [] and g["tunnels"] == []
+
+
+def test_flat_home_network_arp_only(conn):
+    """One router, one subnet, no IPAM, no switches: every ARP sighting is
+    a single-homed host on the one rail, named by hostname else address."""
+    subnet(conn, "192.0.2.0/24")
+    fw = dev(conn, "fw1", role="firewall")
+    iface(conn, fw, "lan0", ip="192.0.2.1")
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:a1", source="opnsense",
+                        ip="192.0.2.10", hostname="laptop")
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:a2", source="opnsense",
+                        ip="192.0.2.11")
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:00:a3", source="opnsense",
+                        ip="192.0.2.12", hostname="iPhone")     # privacy MAC
+    g = build_routed_graph(conn, _S())
+    assert len(g["rails"]) == 1
+    r = g["rails"][0]
+    assert r["key"] == "net:192.0.2.0/24" and r["routed"]
+    assert sorted(r["host_names"]) == ["192.0.2.11", "iPhone", "laptop"]
+    assert g["hosts"] == []
+
+
+def test_router_without_addresses_draws_no_phantoms(conn):
+    """The incident shape: a merge dropped the firewall's interface
+    addresses. No network is routed, ARP rows carrying the firewall's own
+    MACs stay the firewall, and IPAM 'gateway' rows never become a host."""
+    seed_site(conn)
+    fw = conn.execute("SELECT id FROM devices WHERE name = 'fw1'").fetchone()[0]
+    conn.execute("UPDATE interfaces SET ip = NULL, mac = '00:00:5e:00:53:f0' "
+                 "WHERE device_id = ? AND name = 'vmx0'", (fw,))
+    conn.execute("UPDATE interfaces SET ip = NULL, mac = '00:00:5e:00:53:f1' "
+                 "WHERE device_id = ? AND name = 'vmx1'", (fw,))
+    for mac, ip in (("00:00:5e:00:53:f0", "192.0.2.1"), ("00:00:5e:00:53:f1", "198.51.100.1")):
+        pdb.upsert_endpoint(conn, mac=mac, source="opnsense", ip=ip, hostname="gateway")
+        conn.execute("INSERT INTO ipam_addresses (ip, hostname, mac) VALUES (?, 'gateway', ?)",
+                     (ip, mac))
+    g = build_routed_graph(conn, _S())
+    assert g["routers"][0]["rails"] == []
+    assert not any(h["name"] == "gateway" for h in g["hosts"])
+    assert all("gateway" not in r["host_names"] for r in g["rails"])
+    assert not any(r["routed"] for r in g["rails"])
+
+
+def test_ipv6_only_sighting_counts_on_its_dual_stack_rail(conn):
+    vlan(conn, 20, "servers")
+    subnet(conn, "198.51.100.0/24", vlan=20)
+    subnet(conn, "2001:db8:20::/64", vlan=20)
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:66", source="opnsense",
+                        ip="2001:db8:20::66", hostname="v6only")
+    g = build_routed_graph(conn, _S())
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v20"]["host_names"] == ["v6only"]
+
+
+def test_arp_and_learned_vlan_fuse_without_ipam(conn):
+    """No IPAM at all: ARP names a host on one network, the switch learned
+    the same MAC in another VLAN — that is a dual-homed host, drawn."""
+    seed_site(conn)
+    conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                 "VALUES ('sw9', '1/0/7', 20, 1, 'test')")
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:55", source="opnsense",
+                        ip="192.0.2.55", hostname="dual5")
+    conn.execute("INSERT INTO fdb (device, interface, mac, source, vlan) VALUES "
+                 "('sw9', '1/0/7', '00:00:5e:00:53:55', 'test', 103)")
+    g = build_routed_graph(conn, _S())
+    d = next(h for h in g["hosts"] if h["name"] == "dual5")
+    assert {l["rail"]: l["iface"] for l in d["legs"]} == {"v1": "?", "v103": "fdb"}
+
+
+def test_mixed_case_macs_join_across_sources(conn):
+    """Sources disagree on MAC case; every join lowercases."""
+    seed_site(conn)
+    conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                 "VALUES ('sw9', '1/0/8', 103, 0, 'test')")
+    conn.execute("INSERT INTO fdb (device, interface, mac, source) VALUES "
+                 "('sw9', '1/0/8', '00:00:5E:00:53:AA', 'test')")
+    conn.execute("INSERT INTO ipam_addresses (ip, hostname, mac) VALUES "
+                 "('203.0.113.170', 'cam-aa.lan', '00:00:5E:00:53:aa')")
+    g = build_routed_graph(conn, _S())
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v103"]["host_names"] == ["cam-aa"] or "cam-aa.lan" in by["v103"]["host_names"]
+    assert by["v103"]["unnamed"] == 0
+
+
+def test_sightings_outside_every_network_are_ignored(conn):
+    """An address no rail contains (a stray static, a WAN neighbor) is not
+    an error and not a rail: it just doesn't participate."""
+    seed_site(conn)
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:99", source="opnsense",
+                        ip="198.18.0.9", hostname="stray")
+    g = build_routed_graph(conn, _S())
+    assert {r["key"] for r in g["rails"]} == {"v1", "v20", "v103"}
+    assert all("stray" not in r["host_names"] for r in g["rails"])
+
+
+def test_wireless_clients_across_aps_stay_inside_wireless(conn):
+    """Clients learned by any AP count inside that AP's box (folded into
+    one wireless container by the page), never as loose hosts — even a
+    dual-homed-looking pair of privacy MACs that share a hostname."""
+    seed_site(conn)
+    for ap in ("ap-a", "ap-b"):
+        a = dev(conn, ap, role="ap")
+        iface(conn, a, "eth0", ip=f"192.0.2.{20 if ap == 'ap-a' else 21}")
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:00:b1", source="unifi",
+                        ip="192.0.2.31", hostname="iPad", device="ap-a", interface="home")
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:00:b2", source="unifi",
+                        ip="198.51.100.31", hostname="iPad", device="ap-b", interface="home")
+    g = build_routed_graph(conn, _S())
+    groups = {a["name"]: a["groups"] for a in g["aps"]}
+    assert groups == {"ap-a": {"v1": ["iPad"]}, "ap-b": {"v20": ["iPad"]}}
+    assert not any(h["name"] == "ipad" for h in g["hosts"])
+    by = {r["key"]: r for r in g["rails"]}
+    assert "iPad" not in by["v1"]["host_names"]
+
+
 def test_router_carries_its_parent(conn):
     seed_site(conn)
     conn.execute("UPDATE devices SET parent = 'hyp1' WHERE name = 'fw1'")

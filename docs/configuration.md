@@ -194,7 +194,7 @@ Facts no protocol can discover. All optional; all use the pattern
 
 | Variable | Format | Meaning |
 |---|---|---|
-| `PATCHBAY_ALIASES` | `alias=canonical,…` | Identity aliases — map a chassis serial or an FQDN some source uses onto the canonical device name |
+| `PATCHBAY_ALIASES` | `alias=canonical,…` | Identity aliases — map a chassis serial or an FQDN some source uses onto the canonical device name. The routed view fuses hostnames through them too: an IPAM or ARP name like `nas1ten24` aliased to `nas1` becomes another leg of nas1 instead of a host of its own |
 | `PATCHBAY_UNMANAGED` | `dev:iface,…` | Ports the operator knows feed an unmanaged switch, shown even when too few MACs are live to infer one. A named form gives the box a label: `k8s-switch=dev:iface` |
 | `PATCHBAY_LINKS` | `dev:iface=dev:iface,…` | Declared cabling. The far side may be a bare name (`sw:e1/1/24=basement-tv`) when its port is unknowable. Removing an entry removes the link — the env is the source of truth, not a one-way import |
 | `PATCHBAY_WAN_NAME` | `name,…` | Provider names, one cloud node each (default `internet`) |

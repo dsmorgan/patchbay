@@ -35,6 +35,15 @@ put.
 
 ### Fixed
 
+- **Powered-off VMs and down devices no longer count on the routed view.**
+  A VM that is off still has legs on paper (its port group VLAN, a
+  documented address, a cached guest IP) and was counted in the VM chips;
+  now only active devices count, unknown status still counts, and the
+  virtualization box lists the sleeping guests in its tooltip. The
+  builder gained scenario tests for typical sites — ARP-only flat
+  networks, IPv6-only sightings, ARP plus learned-VLAN fusion without
+  IPAM, mixed-case MACs, addresses outside every network, wireless
+  clients across APs, an empty database, and a router with no addresses.
 - **Merging a re-duplicated device no longer drops its addresses.** A
   device LibreNMS re-creates under its FQDN every poll merged into the
   fresher row, and colliding port rows on the older duplicate were

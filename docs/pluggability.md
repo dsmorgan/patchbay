@@ -76,7 +76,7 @@ same object:
 | `interfaces` | per-port oper/admin status, speed, MAC, description, IP | NMS, firewall, hypervisor |
 | `links` | A-side ↔ B-side port pairs, each with an evidence `source`: `lldp`, `vsphere-hint`, `fdb-uplink`, `fdb-inference`, or `declared` | NMS, normalizer, operator |
 | `endpoints` | MAC-keyed things *on* the network: IP, hostname, port or SSID, VLAN | wireless, IPAM, firewall |
-| `fdb` | raw MAC→port learning table | NMS |
+| `fdb` | raw MAC→port learning table, keyed with the VLAN each MAC was learned in (0 when the platform doesn't say) | NMS |
 | `subnets`, `vlans`, `device_vlans`, `port_vlans` | L3/L2 definitions and per-device / per-port VLAN membership (tagged/untagged), each row tagged with its evidence source | IPAM, NMS, config parser, normalizer |
 | `port_roles` | ports whose job changes how their evidence reads — currently `monitor-dst` / `monitor-src` (mirror ports) | config parser |
 | `vnic_vlans` | virtual NIC MAC → its port group VLAN, which the guest OS cannot see | hypervisor |

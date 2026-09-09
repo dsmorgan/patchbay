@@ -67,7 +67,11 @@ protocol should reuse an existing tier or discuss a new one.
 The `fdb` table carries a `source` column: each collector that writes MAC-table
 rows owns them and refreshes with `DELETE FROM fdb WHERE source = '<name>'`
 followed by inserts — never an unscoped delete, and never when the fetch that
-feeds them failed or came back empty.
+feeds them failed or came back empty. It also carries `vlan`, the VLAN the MAC
+was learned in, and that is part of the key: a MAC on a trunk is one row per
+VLAN it talks in. Write the VLAN number when your platform reports it (the
+routed view places trunked hosts by it) and leave the default `0` when it
+doesn't — the view then falls back to the port's access VLAN.
 
 ## Configuration
 

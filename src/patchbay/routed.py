@@ -32,6 +32,12 @@ def _addr(ip: str):
         return None
 
 
+# device states that mean "not on the network right now": a powered-off VM,
+# a disabled device. Hypervisors keep drawing in these states (their box
+# shows it); hosts and guests in them don't count anywhere.
+_INACTIVE = {"down", "disabled", "off", "poweredoff"}
+
+
 def _local_admin(mac: str) -> bool:
     """Locally-administered MAC: randomized privacy addresses (phones,
     tablets). Their hostnames are weak identity — four iPads all announce
@@ -294,10 +300,19 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     hosts, single = [], {k: [] for k in rails.rails}
     hyp_groups: dict[str, dict[str, list[str]]] = {n: {} for n in hyp_names}
     hyp_guests: dict[str, list[dict]] = {n: [] for n in hyp_names}
+    hyp_off: dict[str, list[str]] = {n: [] for n in hyp_names}
     for dev, dl in sorted(legs.items()):
         if dev in router_names or dev in hyp_names or dev in ap_names:
             continue
         parent = devices.get(dev, {}).get("parent")
+        # a powered-off VM or a down device still has legs on paper (port
+        # groups, documented addresses, a cached guest IP) but isn't on the
+        # network: it doesn't count. Its hypervisor remembers it for the
+        # tooltip. Unknown status is no opinion and counts.
+        if (devices.get(dev, {}).get("status") or "") in _INACTIVE:
+            if parent in hyp_names:
+                hyp_off[parent].append(dev)
+            continue
         entry = None
         if len(dl) >= 2:
             ordered = list(dl.values())
@@ -443,8 +458,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             ipam_legs.setdefault(hn, []).append((key, r["ip"]))
     for hn, by_rail in sorted(fused.items()):
         for key, ip in ipam_legs.get(hn, []):
-            by_rail.setdefault(key, {"rail": key, "iface": "ipam",
-                                     "ip": ip, "speed": 0})
+            _add_leg(by_rail, key, "ipam", ip)
         if len(by_rail) >= 2:
             ordered = list(by_rail.values())
             hosts.append({"name": hn, "role": None, "legs": ordered,
@@ -473,6 +487,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                 "rails": sorted(span),
                 "groups": {k: sorted(v) for k, v in hyp_groups[hy].items()},
                 "guests": hyp_guests[hy],
+                "off": sorted(hyp_off[hy]),
                 "status": devices.get(hy, {}).get("status")})
     aps = []
     for ap in sorted(ap_names):

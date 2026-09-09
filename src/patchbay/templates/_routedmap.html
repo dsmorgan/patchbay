@@ -268,13 +268,18 @@ function draw() {
                          .filter(k => k in pos));
     const name = rg.virt_name
       || (hyps.length === 1 ? hyps[0].name : "virtualization");
+    // powered-off guests don't count on the map; the box still knows them
+    const off = hyps.flatMap(h => h.off || []);
     if (span.size) virt = {
       name, role: "hypervisor", rails: [...span], groups, legs, guests,
       sub: (rg.virt_platform ? rg.virt_platform + " · " : "")
            + `${hyps.length} hypervisor${hyps.length > 1 ? "s" : ""}`,
       status: hyps.every(h => h.status && h.status !== "up") ? "down" : "up",
-      members: hyps.map(h => h.name
-        + (h.status && h.status !== "up" ? ` · ${h.status}` : "")),
+      members: [...hyps.map(h => h.name
+                  + (h.status && h.status !== "up" ? ` · ${h.status}` : "")),
+                ...(off.length
+                  ? [`${off.length} VM${off.length > 1 ? "s" : ""} powered off, not counted: `
+                     + nameList(off).replace(/\n/g, ", ")] : [])],
       noclick: !rg.virt_name && hyps.length > 1 };
   }
   const hypNames = new Set(hyps.map(h => h.name));
