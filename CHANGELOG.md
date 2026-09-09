@@ -32,6 +32,14 @@ put.
   sit beside the internet cloud so the transport leaves the router
   straight from its edge. The viewBox hugs the drawing, so **fit** means
   the whole map.
+- **Routed view: click focuses, a page is the secondary action.** A plain
+  click on a network, host, box, or router now focuses it in place —
+  highlight what's attached, dim the rest, `focus=` in the URL — and a
+  second click or a click on the background clears it. Double-click opens
+  the thing's page; ⌘/Ctrl-click or middle-click opens it in a new tab.
+  Navigating away on a plain click felt like falling through the map.
+- **Routed view: the shell's last-polled indicator** and auto-refresh, which
+  every other page already had.
 
 ### Fixed
 

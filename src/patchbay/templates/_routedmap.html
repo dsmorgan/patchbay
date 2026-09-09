@@ -109,7 +109,7 @@
   <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="var(--card)" stroke="var(--ink)" stroke-width="1.2" rx="4"/></svg> multi-homed host</span>
   <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--r-hyp)" stroke-width="1.3" rx="4"/></svg> virtualization (VMs inside)</span>
   <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--r-ap)" stroke-width="1.3" rx="4"/></svg> AP (clients inside)</span>
-  <span class="item" style="color: var(--muted)">hover a rail or box for subnets, gateway &amp; sources · scroll zooms · background pans · click a network or host for its page</span>
+  <span class="item" style="color: var(--muted)">hover for subnets, gateway &amp; sources · click to focus, again or on the background to clear · double-click opens its page (⌘/Ctrl-click: new tab) · scroll zooms · drag pans</span>
 </div>
 
 <div id="routedwrap"><svg id="routed"></svg></div>
@@ -181,8 +181,35 @@ function wireHover(e, keys) {
     for (const [m, ks] of members)
       m.classList.toggle("dim", ![...ks].some(k => on.has(k)));
   });
-  e.addEventListener("mouseleave", () =>
-    members.forEach(([m]) => m.classList.remove("dim")));
+  e.addEventListener("mouseleave", applyFocus);
+}
+// click focuses in place; a page is the secondary action. Navigating on a
+// plain click felt like falling through the map, so: click = focus (again
+// to clear), double-click = open its page, ⌘/Ctrl-click or middle-click =
+// open it in a new tab, click the background = clear. Right-click stays
+// the browser's.
+const focusSets = {};   // focus id -> Set(railKeys) it lights
+function act(e, id, keys, url) {
+  focusSets[id] = new Set(keys);
+  e.style.cursor = "pointer";
+  e.addEventListener("click", ev => {
+    ev.stopPropagation();
+    if (ev.metaKey || ev.ctrlKey) { if (url) window.open(url, "_blank"); return; }
+    rstate.focus = rstate.focus === id ? null : id;
+    rwrite(); applyFocus();
+  });
+  e.addEventListener("dblclick", ev => {
+    ev.stopPropagation(); ev.preventDefault();
+    if (url) location.href = url;
+  });
+  e.addEventListener("auxclick", ev => {
+    if (ev.button === 1 && url) { ev.preventDefault(); window.open(url, "_blank"); }
+  });
+}
+function applyFocus() {
+  const on = rstate.focus ? focusSets[rstate.focus] : null;
+  for (const [m, ks] of members)
+    m.classList.toggle("dim", !!on && ![...ks].some(k => on.has(k)));
 }
 
 // a ×N group's tooltip names what it stands for, capped so a 50-client
@@ -415,8 +442,7 @@ function draw() {
     }
     title(tag, tip); title(line, tip);
     [line, tag].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); });
-    if (r.vid != null)
-      tag.addEventListener("click", () => location.href = `/vlans#v${r.vid}`);
+    act(tag, r.key, [r.key], r.vid != null ? `/vlans#v${r.vid}` : null);
     // loose single-homed hosts: a ×N chip riding the lane at the edge
     if (r.hosts > 0) {
       const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
@@ -429,8 +455,7 @@ function draw() {
                + `${r.name || r.key}\n` + nameList(r.host_names)
                + (unnamed ? `\n${unnamed}` : ""));
       track(g, [r.key]); wireHover(g, [r.key]);
-      if (r.vid != null)
-        g.addEventListener("click", () => location.href = `/vlans#v${r.vid}`);
+      act(g, r.key, [r.key], r.vid != null ? `/vlans#v${r.vid}` : null);
     }
   });
 
@@ -445,8 +470,7 @@ function draw() {
     title(g, `${names.length} ${noun}${names.length > 1 ? "s" : ""} on `
              + `${r.name || r.key}\n` + nameList(names));
     track(g, [r.key]); wireHover(g, [r.key]);
-    if (r.vid != null) g.addEventListener("click", ev => {
-      ev.stopPropagation(); location.href = `/vlans#v${r.vid}`; });
+    act(g, r.key, [r.key], r.vid != null ? `/vlans#v${r.vid}` : null);
   }
   // a named box on its home lane; a stem reaches across to its other lanes
   function laneHost(parent, h, u0) {
@@ -480,10 +504,7 @@ function draw() {
       track(d, [l.rail]);
     });
     track(grp, keys); wireHover(grp, keys);
-    grp.addEventListener("click", ev => {
-      ev.stopPropagation();
-      location.href = `/device/${encodeURIComponent(h.name)}`;
-    });
+    act(grp, h.name, keys, `/device/${encodeURIComponent(h.name)}`);
   }
   // wireless / virtualization container: a slab across its lanes. opts can
   // stretch it along and across — the virtualization box does both to take
@@ -535,9 +556,9 @@ function draw() {
       + (b.aps ? `\nAPs: ${b.aps.join(", ")}`
          : b.members ? `\n${b.members.join("\n")}` : ` · ${b.role}`));
     track(grp, b.rails); wireHover(grp, b.rails);
-    if (!b.noclick && (!b.aps || b.aps.length === 1))
-      grp.addEventListener("click", () =>
-        location.href = `/device/${encodeURIComponent(b.aps ? b.aps[0] : b.name)}`);
+    act(grp, b.name, b.rails,
+        !b.noclick && (!b.aps || b.aps.length === 1)
+          ? `/device/${encodeURIComponent(b.aps ? b.aps[0] : b.name)}` : null);
   }
 
   if (wifi) laneSlab(wifi, wifiU, "ap", "client");
@@ -576,9 +597,7 @@ function draw() {
       track(d, [k]);
     });
     track(rgrp, router.rails); wireHover(rgrp, router.rails);
-    rgrp.style.cursor = "pointer";
-    rgrp.addEventListener("click", () =>
-      location.href = `/device/${encodeURIComponent(router.name)}`);
+    act(rgrp, router.name, router.rails, `/device/${encodeURIComponent(router.name)}`);
 
     const wanRail = rg.default && rg.default.rail
       ? rails.find(r => r.key === rg.default.rail) : null;
@@ -680,13 +699,10 @@ function applyRouted() {
   setChip("r-hosts", rstate.hosts);
   setChip("r-groups", rstate.groups);
   setChip("r-axis", AXIS === "v");
-  // a focus naming no drawn rail (filtered documentation-only VLAN, stale
-  // link) is ignored — dimming everything would leave a dead-looking map
-  if (rstate.focus && members.some(([, ks]) => ks.has(rstate.focus))) {
-    const on = new Set([rstate.focus]);
-    for (const [m, ks] of members)
-      m.classList.toggle("dim", ![...ks].some(k => on.has(k)));
-  }
+  // a focus naming nothing drawn (filtered documentation-only VLAN, a
+  // renamed host) is ignored — dimming everything would leave a dead map
+  if (rstate.focus && !focusSets[rstate.focus]) { rstate.focus = null; rwrite(); }
+  applyFocus();
 }
 document.getElementById("r-hosts").addEventListener("click", () => {
   rstate.hosts = !rstate.hosts; rwrite(); applyRouted(); });
@@ -714,20 +730,26 @@ wrap.addEventListener("wheel", ev => {
   view.y = p.y - (p.y - view.y) * (k / view.k);
   view.k = k; applyView();
 }, { passive: false });
-let drag = null;
+let drag = null, moved = false;
 wrap.addEventListener("pointerdown", ev => {
-  if (ev.target.closest(".host, .gbox, .vtag, .router")) return;
+  moved = false;
+  if (ev.target.closest(".host, .gbox, .vtag, .router, .spanbox")) return;
   drag = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y };
   wrap.setPointerCapture(ev.pointerId);
 });
 wrap.addEventListener("pointermove", ev => {
   if (!drag) return;
+  if (Math.abs(ev.clientX - drag.x) + Math.abs(ev.clientY - drag.y) > 3) moved = true;
   const ctm = svg.getScreenCTM();
   view.x = drag.vx + (ev.clientX - drag.x) / ctm.a;
   view.y = drag.vy + (ev.clientY - drag.y) / ctm.d;
   applyView();
 });
 wrap.addEventListener("pointerup", () => drag = null);
+wrap.addEventListener("click", ev => {
+  if (moved || ev.target.closest(".host, .gbox, .vtag, .router, .spanbox")) return;
+  if (rstate.focus) { rstate.focus = null; rwrite(); applyFocus(); }
+});
 document.getElementById("r-fit").addEventListener("click", () => {
   view = { x: 0, y: 0, k: 1 }; applyView();
 });
