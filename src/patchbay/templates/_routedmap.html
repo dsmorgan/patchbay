@@ -19,6 +19,20 @@
   .rtool { display: flex; align-items: center; gap: 0.4rem 1rem;
            flex-wrap: wrap; margin-bottom: 0.55rem; font-size: 0.8rem; }
   .rtool .fitbtn { margin-left: auto; }
+  /* segmented view control, the topology's grammar: hidden radios, pill
+     labels, the checked one ringed like an .fchip.on */
+  .rtool .grp.modes { display: inline-flex; align-items: center; gap: 0;
+                      padding: 0.22rem; border: 1px solid var(--line);
+                      border-radius: 999px; height: 2.1rem; box-sizing: border-box; }
+  .rtool .grp.modes input[type="radio"] {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .rtool .grp.modes label { padding: 0.24rem 0.7rem; border-radius: 999px;
+                            color: var(--muted); font-weight: 500; cursor: pointer; }
+  .rtool .grp.modes input:checked + label {
+    box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
+  .rtool .grp.modes input:focus-visible + label {
+    outline: 2px solid var(--accent); outline-offset: 2px; }
 
   #routed .band { fill: var(--muted); font: 600 10px var(--font-mono);
                   letter-spacing: 0.14em; opacity: 0.55; }
@@ -83,11 +97,43 @@
      cabling and tenants are still facts — but reads as asleep */
   #routed .spanbox.down > rect { opacity: 0.55; stroke-dasharray: 6 4; }
   #routed .spanbox.down text { opacity: 0.7; }
+  /* evidence view: each lane takes the color of who reported it — the
+     firewall's config, a switch carrying the VLAN, the controller, a
+     hypervisor port group, IPAM alone (dashed: documented, nothing
+     carries it), a route through a tunnel — and everything attached goes
+     quiet so the lanes carry the whole message */
+  #routed.evidence .rail { stroke: var(--muted); stroke-dasharray: none; opacity: 0.95; }
+  #routed.evidence .rail.ev-firewall { stroke: var(--r-firewall); }
+  #routed.evidence .rail.ev-switch { stroke: var(--r-switch); }
+  #routed.evidence .rail.ev-controller { stroke: var(--r-ap); }
+  #routed.evidence .rail.ev-hypervisor { stroke: var(--r-hyp); }
+  #routed.evidence .rail.ev-ipam { stroke: var(--muted); stroke-dasharray: 6 4; }
+  #routed.evidence .rail.ev-route { stroke: var(--r-firewall); stroke-dasharray: 6 4; }
+  #routed.evidence .host, #routed.evidence .gbox, #routed.evidence .spanbox,
+  #routed.evidence .router, #routed.evidence .tunnel, #routed.evidence .cloud,
+  #routed.evidence .tap, #routed.evidence .defroute, #routed.evidence .tunpath,
+  #routed.evidence .tundrop, #routed.evidence .rim { opacity: 0.28; }
+  /* per-source badges on the lane tag, evidence view only */
+  #routed .evbadge { display: none; stroke: var(--card); stroke-width: 1; }
+  #routed.evidence .evbadge { display: initial; }
+  #routed .evbadge.ev-firewall { fill: var(--r-firewall); }
+  #routed .evbadge.ev-switch { fill: var(--r-switch); }
+  #routed .evbadge.ev-controller { fill: var(--r-ap); }
+  #routed .evbadge.ev-hypervisor { fill: var(--r-hyp); }
+  #routed .evbadge.ev-ipam { fill: var(--muted); }
+  #routed .evbadge.ev-route { fill: var(--r-firewall); opacity: 0.6; }
+  #routed .evbadge.ev-other { fill: var(--ink); }
   #routed .routerlabel { font: 600 11.5px var(--font-ui); fill: var(--ink); }
   #routed .gwlabel { font: 10px var(--font-mono); fill: var(--muted); }
 </style>
 
 <div class="rtool">
+  <span class="grp modes" role="radiogroup" aria-label="View">
+    <input type="radio" name="rview" id="rview-routes" value="routes" checked>
+    <label for="rview-routes">Routes</label>
+    <input type="radio" name="rview" id="rview-evidence" value="evidence">
+    <label for="rview-evidence">Evidence</label>
+  </span>
   <span class="grp filters">
     <button type="button" class="fchip" id="r-hosts" aria-pressed="true">multi-homed hosts</button>
     <button type="button" class="fchip" id="r-groups" aria-pressed="true">single-homed groups</button>
@@ -98,9 +144,16 @@
 </div>
 
 <div class="rlegend" id="rlegend">
-  <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--accent)" stroke-width="2"/></svg> routed network</span>
-  <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--muted)" stroke-width="2" opacity="0.75"/></svg> not routed</span>
-  <span class="item"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ok)" stroke-width="2"/></svg> internet uplink</span>
+  <span class="item" data-modes="routes"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--accent)" stroke-width="2"/></svg> routed network</span>
+  <span class="item" data-modes="routes"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--muted)" stroke-width="2" opacity="0.75"/></svg> not routed</span>
+  <span class="item" data-modes="routes"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ok)" stroke-width="2"/></svg> internet uplink</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--r-firewall)" stroke-width="2"/></svg> firewall interface (routes it)</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--r-switch)" stroke-width="2"/></svg> switch carries the VLAN</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--r-ap)" stroke-width="2"/></svg> controller network</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--r-hyp)" stroke-width="2"/></svg> hypervisor port group</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--muted)" stroke-width="2" stroke-dasharray="4 3"/></svg> IPAM only (documented, nothing carries it)</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--r-firewall)" stroke-width="2" stroke-dasharray="4 3"/></svg> learned through a tunnel</span>
+  <span class="item" data-modes="evidence" style="color: var(--muted)">lane = strongest reporter · tag badges = every reporter, in that order</span>
   <span class="item"><svg width="26" height="14"><ellipse cx="13" cy="7" rx="12" ry="6" fill="none" stroke="var(--r-firewall)" stroke-width="1.2" stroke-dasharray="4 3"/></svg> VPN tunnel</span>
   <span class="item"><svg width="26" height="12"><rect x="0" y="0" width="26" height="12" fill="var(--hover)" stroke="var(--line)"/></svg> VLAN label</span>
   <span class="item"><svg width="14" height="14"><circle cx="7" cy="7" r="3.5" fill="var(--accent)" stroke="var(--card)" stroke-width="1.5"/></svg> attached at the rim</span>
@@ -118,17 +171,20 @@
 const rg = {{ graph_json | safe }};
 
 // --- state in the URL (ADR-0001 rules: only non-defaults serialize) --------
-const R_DEFAULTS = { hosts: true, groups: true, focus: null };
+const R_VIEWS = ["routes", "evidence"];
+const R_DEFAULTS = { view: "routes", hosts: true, groups: true, focus: null };
 const rstate = { ...R_DEFAULTS };
 {
   const p = new URLSearchParams(location.search);
+  if (R_VIEWS.includes(p.get("view"))) rstate.view = p.get("view");
   if (p.get("hosts") === "0") rstate.hosts = false;
   if (p.get("groups") === "0") rstate.groups = false;
   if (p.get("focus")) rstate.focus = p.get("focus");
 }
 function rwrite() {
   const p = new URLSearchParams(location.search);
-  ["hosts", "groups", "focus"].forEach(k => p.delete(k));
+  ["view", "hosts", "groups", "focus"].forEach(k => p.delete(k));
+  if (rstate.view !== R_DEFAULTS.view) p.set("view", rstate.view);
   if (!rstate.hosts) p.set("hosts", "0");
   if (!rstate.groups) p.set("groups", "0");
   if (rstate.focus) p.set("focus", rstate.focus);
@@ -402,7 +458,9 @@ function draw() {
   // --- lanes, tags, loose chips ----------------------------------------------
   rails.forEach((r, i) => {
     const v = laneV(i);
-    const cls = "rail" + (r.routed ? "" : " unrouted") + (r.wan ? " wan" : "");
+    const ev = r.evidence || [];
+    const cls = "rail" + (r.routed ? "" : " unrouted") + (r.wan ? " wan" : "")
+              + (ev.length ? " ev-" + ev[0] : "");
     const endU = r.routed || r.wan ? routerU : routerU - 18;
     const line = lineEl(root, laneStartU, v, endU, v, { class: cls });
     const viaTun = (r.via_tunnel || []).length;
@@ -417,17 +475,25 @@ function draw() {
                  ...(r.subnets.length ? r.subnets : ["no subnet recorded"]),
                  r.gateway ? `gateway ${r.gateway}`
                            : (r.routed || r.wan || viaTun ? "" : "not routed"),
-                 `sources: ${r.sources.join(", ")}`, unnamed].filter(Boolean).join("\n");
+                 `sources: ${r.sources.join(", ")}`,
+                 ev.length ? `evidence: ${ev.join(" > ")}` : "",
+                 unnamed].filter(Boolean).join("\n");
     const label = (r.name || (r.vid != null ? "vlan" : r.key)).slice(0, 14)
                   + ((r.name || "").length > 14 ? "…" : "");
     const text = r.vid != null ? `${label} ${r.vid}` : label;
     const sub = (r.subnets[0] || "")
               + (r.subnets.length > 1 ? " +" + (r.subnets.length - 1) : "");
     const tag = el("g", { class: "vtag" });
+    // evidence badges: one square per reporter, strongest first, tucked in
+    // the tag's top-right corner (evidence view only, see CSS)
+    const badges = (right, top) => ev.forEach((c, i) =>
+      el("rect", { x: right - 8 - i * 9, y: top, width: 6, height: 6, rx: 1,
+                   class: "evbadge ev-" + c }, tag));
     if (HZ) {
       el("rect", { x: 10, y: v - 14, width: labelW - 16, height: 28, rx: 4 }, tag);
       el("text", { x: 20, y: v - 1 }, tag, text);
       el("text", { x: 20, y: v + 11, class: "gwlabel" }, tag, sub);
+      badges(labelW - 6, v - 11);
     } else {
       // a tag as wide as the rail pitch allows, text clipped to fit
       const tw = Math.min(pitch - 6, 164), maxCh = Math.floor((tw - 12) / 6.1);
@@ -437,8 +503,10 @@ function draw() {
       const ty = flip - tagAlong;
       el("rect", { x: v - tw / 2, y: ty, width: tw, height: tagAlong - 6, rx: 4 }, tag);
       el("text", { x: v - tw / 2 + 6, y: ty + 15 }, tag, nm + vid);
+      // badges share the subnet row, which gives up the room they need
       el("text", { x: v - tw / 2 + 6, y: ty + 29, class: "gwlabel" }, tag,
-         clip(sub, maxCh));
+         clip(sub, maxCh - Math.ceil(ev.length * 9 / 6.1)));
+      badges(v + tw / 2, ty + tagAlong - 15);
     }
     title(tag, tip); title(line, tip);
     [line, tag].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); });
@@ -699,11 +767,20 @@ function applyRouted() {
   setChip("r-hosts", rstate.hosts);
   setChip("r-groups", rstate.groups);
   setChip("r-axis", AXIS === "v");
+  svg.classList.toggle("evidence", rstate.view === "evidence");
+  const radio = document.getElementById(`rview-${rstate.view}`);
+  if (radio) radio.checked = true;
+  // legend items name the modes they belong to
+  document.querySelectorAll("#rlegend > .item[data-modes]").forEach(e =>
+    e.style.display = e.dataset.modes.split(" ").includes(rstate.view) ? "" : "none");
   // a focus naming nothing drawn (filtered documentation-only VLAN, a
   // renamed host) is ignored — dimming everything would leave a dead map
   if (rstate.focus && !focusSets[rstate.focus]) { rstate.focus = null; rwrite(); }
   applyFocus();
 }
+document.querySelectorAll('input[name="rview"]').forEach(i =>
+  i.addEventListener("change", () => {
+    if (i.checked) { rstate.view = i.value; rwrite(); applyRouted(); } }));
 document.getElementById("r-hosts").addEventListener("click", () => {
   rstate.hosts = !rstate.hosts; rwrite(); applyRouted(); });
 document.getElementById("r-groups").addEventListener("click", () => {

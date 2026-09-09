@@ -1138,9 +1138,10 @@ def test_routed_page_renders_graph(clean_env, tmp_path, client):
     c.commit(); c.close()
     assert "last polled" in client.get("/routed").text
     assert "lab 24" in r.text or "lab" in r.text   # the seeded VLAN reaches the page
-    # empty DB stays a page, not a crash
-    r2 = client.get("/routed?hosts=0&groups=0&focus=v24")
+    # empty DB stays a page, not a crash; every state param is accepted
+    r2 = client.get("/routed?hosts=0&groups=0&focus=v24&view=evidence&axis=v")
     assert r2.status_code == 200
+    assert 'id="rview-evidence"' in r2.text     # the segmented control exists
 
 
 # --- /configs canonical display names ---------------------------------------

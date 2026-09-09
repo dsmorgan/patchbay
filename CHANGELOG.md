@@ -40,6 +40,16 @@ put.
   Navigating away on a plain click felt like falling through the map.
 - **Routed view: the shell's last-polled indicator** and auto-refresh, which
   every other page already had.
+- **Routed view: Evidence mode**, and with it the segmented view control
+  from ADR-0002 Decision 3. Each lane takes the color of its strongest
+  reporter — a firewall interface (it routes it), a switch carrying the
+  VLAN, the controller, a hypervisor port group, IPAM alone (dashed:
+  documented, nothing carries it), a route learned through a tunnel —
+  the tag carries a badge per reporter, and everything attached goes
+  quiet. `view=evidence` in the URL. Load, Protocol, multi-router sites,
+  and snapshot embedding are tracked in #50; ADR-0002 carries an
+  amendment recording the lanes-era decisions. The "still settling"
+  banner is gone.
 
 ### Fixed
 

@@ -32,6 +32,16 @@ def _addr(ip: str):
         return None
 
 
+# who reported a network, ranked: the firewall's own interface config, a
+# switch carrying the VLAN (Q-BRIDGE table, running-config), the controller,
+# a hypervisor port group, IPAM documentation, a route learned through a
+# tunnel. The evidence view paints each lane by the strongest class present.
+_EVIDENCE = {"opnsense": "firewall", "pfsense": "firewall",
+             "librenms": "switch", "oxidized": "switch", "unifi": "controller",
+             "vsphere": "hypervisor", "phpipam": "ipam", "route": "route"}
+_EVIDENCE_ORDER = ["firewall", "switch", "controller", "hypervisor", "ipam",
+                   "route", "other"]
+
 # device states that mean "not on the network right now": a powered-off VM,
 # a disabled device. Hypervisors keep drawing in these states (their box
 # shows it); hosts and guests in them don't count anywhere.
@@ -548,11 +558,25 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     for t in tunnels:
         for k in t["rails"]:
             via_tunnel.setdefault(k, []).append(t["name"])
+    pg_vids = {f"v{r['vid']}" for r in conn.execute(
+        "SELECT DISTINCT vid FROM vnic_vlans WHERE vid NOT IN (0, 4095)")}
+    # a switch carrying the VLAN on a port or in its VLAN table is switch
+    # evidence even when the vlans row itself came from IPAM
+    sw_vids = {f"v{r['vid']}" for r in conn.execute(
+        "SELECT vid FROM port_vlans UNION SELECT vid FROM device_vlans")}
     out_rails = []
     for k in order:
         r = live[k]
         names = single.get(k, [])
+        classes = {_EVIDENCE.get(s, "other") for s in r["sources"]}
+        if r["routed"]:
+            classes.add("firewall")
+        if k in sw_vids:
+            classes.add("switch")
+        if k in pg_vids:
+            classes.add("hypervisor")
         out_rails.append({**r, "sources": sorted(r["sources"]),
+                          "evidence": [c for c in _EVIDENCE_ORDER if c in classes],
                           "hosts": len(names), "host_names": sorted(names),
                           "unnamed": unnamed.get(k, 0),
                           "wan": k == wan_rail,

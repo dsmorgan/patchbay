@@ -705,6 +705,22 @@ def test_wireless_clients_across_aps_stay_inside_wireless(conn):
     assert "iPad" not in by["v1"]["host_names"]
 
 
+def test_rail_evidence_ranks_who_reported_it(conn):
+    """The evidence view paints a lane by its strongest reporter: a firewall
+    interface (it routes it) beats a switch carrying the VLAN beats a
+    hypervisor port group beats IPAM documentation alone."""
+    seed_site(conn)                      # vlans/subnets: source 'test' -> other
+    conn.execute("UPDATE vlans SET source = 'librenms' WHERE vid = 20")
+    conn.execute("UPDATE subnets SET source = 'phpipam'")
+    conn.execute("INSERT INTO vnic_vlans (mac, vid, portgroup, source) "
+                 "VALUES ('00:00:5e:00:53:20', 103, 'iscsi', 'vsphere')")
+    g = build_routed_graph(conn, _S())
+    by = {r["key"]: r["evidence"] for r in g["rails"]}
+    assert by["v20"] == ["firewall", "switch", "ipam"]
+    assert by["v103"] == ["hypervisor", "ipam", "other"]   # nas1's leg, no router
+    assert by["v1"][0] == "firewall"
+
+
 def test_router_carries_its_parent(conn):
     seed_site(conn)
     conn.execute("UPDATE devices SET parent = 'hyp1' WHERE name = 'fw1'")

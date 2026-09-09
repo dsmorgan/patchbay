@@ -1,6 +1,6 @@
 # ADR-0002 — The routed view: the logical network
 
-*Status: accepted (2026-08-31) · Issue: [#17](https://github.com/dsmorgan/patchbay/issues/17)*
+*Status: accepted (2026-08-31), amended (2026-09-09) · Issue: [#17](https://github.com/dsmorgan/patchbay/issues/17) · Follow-ups: [#50](https://github.com/dsmorgan/patchbay/issues/50)*
 
 ![Design mock: the rails layout on a 15-network model](0002-routed-view-mock.png)
 
@@ -196,3 +196,44 @@ Load/Protocol/Evidence may land as follow-ups behind the same control.
   findings — documentation-only rails, an undiscovered WAN, three pill
   heights in the shared toolbar grammar — are folded in above. Follow-up
   modes (Load / Protocol / Evidence) remain open behind Decision 3.
+
+## Amendment — 2026-09-09: the lanes layout (0.13.0)
+
+Rendering the rails against the real site through August and September,
+with the owner reviewing each iteration, moved the layout past Decision 2.
+The decisions that replaced it, recorded here rather than rewritten above:
+
+- **Networks are horizontal lanes**, reading edge → internet left to right:
+  lane tags with subnets in a left gutter, loose single-homed ×N chips at
+  the edge, then the containers and multi-homed hosts, the router spanning
+  every lane it routes, and the internet cloud with VPN tunnels beside it.
+  Height is fixed by network count and width grows with devices, which is
+  what fills a landscape screen and reads at a distance. The `vertical
+  rails` chip (`?axis=v`) turns the same drawing upright with the internet
+  at the top — one renderer laying out in lane space and mapping onto
+  either axis, never two drawings. The router fan, the three tiers, and the
+  staggered tag rows are gone with the vertical default.
+- **Two logical containers, not per-device boxes.** Every AP folds into one
+  **wireless** box, every hypervisor into one **virtualization** box named
+  after the vSphere server (`VSPHERE_HOST`'s short label); a router that
+  runs as a guest draws inside it. Which AP saw a client and which host a
+  VM runs on are tooltip detail: this view is logical. A powered-off VM
+  never counts; the box lists it.
+- **Host placement is an evidence order**, written up in
+  docs/architecture.md ("Host placement on the routed view"): a device's
+  own interfaces and its NIC MACs seen by ARP place it; ARP and the
+  controller see hosts that aren't devices (privacy MACs never fuse by
+  hostname); the switch MAC table places hosts on the VLAN it learned them
+  in — trunks included, now that `fdb` keeps the VLAN — and a bare MAC with
+  no name or address is counted, never listed; IPAM lends names and fills
+  in networks nothing can observe, but never draws a host by itself.
+- **Click focuses, a page is the secondary action.** Plain click focuses
+  in place (the `focus` param, now also a host or box name), double-click
+  opens the page, ⌘/Ctrl-click or middle-click in a new tab. Navigating on
+  a plain click felt like falling through the map.
+- **Evidence is the second mode**, and with it the segmented control from
+  Decision 3 exists: each lane takes the color of its strongest reporter
+  (firewall interface > switch carrying the VLAN > controller > hypervisor
+  port group > IPAM only > learned through a tunnel), the tag carries a
+  badge per reporter, everything attached goes quiet. Load, Protocol,
+  multi-router sites, and snapshot embedding are tracked in #50.
