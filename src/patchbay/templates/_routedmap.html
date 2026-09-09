@@ -19,6 +19,17 @@
   .rtool { display: flex; align-items: center; gap: 0.4rem 1rem;
            flex-wrap: wrap; margin-bottom: 0.55rem; font-size: 0.8rem; }
   .rtool .fitbtn { margin-left: auto; }
+  /* one control height across the row: the segmented group, the filter
+     chips, and the fit button share a baseline instead of each deriving a
+     height from its own padding. margin: 0 on .filters — the page-level
+     .filters rule in _style.html adds a 1rem bottom margin that inflates
+     this flex line and floats the chips 8px above everything else. */
+  .rtool .grp, .rtool .fchip, .rtool .fitbtn { box-sizing: border-box; height: 2.1rem; }
+  .rtool .fchip, .rtool .fitbtn { display: inline-flex; align-items: center;
+                                  padding: 0.24rem 0.7rem; }
+  .rtool .grp.filters { border: none; background: none; padding: 0;
+                        gap: 0.4rem; margin: 0; display: inline-flex;
+                        align-items: center; }
   /* segmented view control, the topology's grammar: hidden radios, pill
      labels, the checked one ringed like an .fchip.on */
   .rtool .grp.modes { display: inline-flex; align-items: center; gap: 0;
@@ -102,13 +113,24 @@
      hypervisor port group, IPAM alone (dashed: documented, nothing
      carries it), a route through a tunnel — and everything attached goes
      quiet so the lanes carry the whole message */
-  #routed.evidence .rail { stroke: var(--muted); stroke-dasharray: none; opacity: 0.95; }
-  #routed.evidence .rail.ev-firewall { stroke: var(--r-firewall); }
-  #routed.evidence .rail.ev-switch { stroke: var(--r-switch); }
-  #routed.evidence .rail.ev-controller { stroke: var(--r-ap); }
-  #routed.evidence .rail.ev-hypervisor { stroke: var(--r-hyp); }
-  #routed.evidence .rail.ev-ipam { stroke: var(--muted); stroke-dasharray: 6 4; }
-  #routed.evidence .rail.ev-route { stroke: var(--r-firewall); stroke-dasharray: 6 4; }
+  #routedwrap, .rlegend { --ev-firewall: #c792ea; --ev-switch: #f2b552;
+    --ev-controller: #ff7eb6; --ev-hypervisor: #6fa8ff; --ev-ipam: #8a9aa0;
+    --ev-route: #c792ea; }
+  #routed.evidence .rail { stroke: var(--ev-ipam); stroke-width: 3.4;
+                           stroke-dasharray: none; opacity: 1; }
+  #routed.evidence .rail.ev-firewall { stroke: var(--ev-firewall); }
+  #routed.evidence .rail.ev-switch { stroke: var(--ev-switch); }
+  #routed.evidence .rail.ev-controller { stroke: var(--ev-controller); }
+  #routed.evidence .rail.ev-hypervisor { stroke: var(--ev-hypervisor); }
+  #routed.evidence .rail.ev-ipam { stroke-dasharray: 7 5; }
+  #routed.evidence .rail.ev-route { stroke: var(--ev-route); stroke-dasharray: 7 5; }
+  /* the tag borrows its lane's color so the row reads as one thing */
+  #routed.evidence .vtag.ev-firewall rect { stroke: var(--ev-firewall); stroke-width: 1.6; }
+  #routed.evidence .vtag.ev-switch rect { stroke: var(--ev-switch); stroke-width: 1.6; }
+  #routed.evidence .vtag.ev-controller rect { stroke: var(--ev-controller); stroke-width: 1.6; }
+  #routed.evidence .vtag.ev-hypervisor rect { stroke: var(--ev-hypervisor); stroke-width: 1.6; }
+  #routed.evidence .vtag.ev-ipam rect { stroke: var(--ev-ipam); stroke-dasharray: 4 3; }
+  #routed.evidence .vtag.ev-route rect { stroke: var(--ev-route); stroke-dasharray: 4 3; }
   #routed.evidence .host, #routed.evidence .gbox, #routed.evidence .spanbox,
   #routed.evidence .router, #routed.evidence .tunnel, #routed.evidence .cloud,
   #routed.evidence .tap, #routed.evidence .defroute, #routed.evidence .tunpath,
@@ -116,12 +138,12 @@
   /* per-source badges on the lane tag, evidence view only */
   #routed .evbadge { display: none; stroke: var(--card); stroke-width: 1; }
   #routed.evidence .evbadge { display: initial; }
-  #routed .evbadge.ev-firewall { fill: var(--r-firewall); }
-  #routed .evbadge.ev-switch { fill: var(--r-switch); }
-  #routed .evbadge.ev-controller { fill: var(--r-ap); }
-  #routed .evbadge.ev-hypervisor { fill: var(--r-hyp); }
-  #routed .evbadge.ev-ipam { fill: var(--muted); }
-  #routed .evbadge.ev-route { fill: var(--r-firewall); opacity: 0.6; }
+  #routed .evbadge.ev-firewall { fill: var(--ev-firewall); }
+  #routed .evbadge.ev-switch { fill: var(--ev-switch); }
+  #routed .evbadge.ev-controller { fill: var(--ev-controller); }
+  #routed .evbadge.ev-hypervisor { fill: var(--ev-hypervisor); }
+  #routed .evbadge.ev-ipam { fill: var(--ev-ipam); }
+  #routed .evbadge.ev-route { fill: var(--ev-route); opacity: 0.6; }
   #routed .evbadge.ev-other { fill: var(--ink); }
   #routed .routerlabel { font: 600 11.5px var(--font-ui); fill: var(--ink); }
   #routed .gwlabel { font: 10px var(--font-mono); fill: var(--muted); }
@@ -147,12 +169,12 @@
   <span class="item" data-modes="routes"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--accent)" stroke-width="2"/></svg> routed network</span>
   <span class="item" data-modes="routes"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--muted)" stroke-width="2" opacity="0.75"/></svg> not routed</span>
   <span class="item" data-modes="routes"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ok)" stroke-width="2"/></svg> internet uplink</span>
-  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--r-firewall)" stroke-width="2"/></svg> firewall interface (routes it)</span>
-  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--r-switch)" stroke-width="2"/></svg> switch carries the VLAN</span>
-  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--r-ap)" stroke-width="2"/></svg> controller network</span>
-  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--r-hyp)" stroke-width="2"/></svg> hypervisor port group</span>
-  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--muted)" stroke-width="2" stroke-dasharray="4 3"/></svg> IPAM only (documented, nothing carries it)</span>
-  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--r-firewall)" stroke-width="2" stroke-dasharray="4 3"/></svg> learned through a tunnel</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-firewall)" stroke-width="2"/></svg> firewall interface (routes it)</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-switch)" stroke-width="2"/></svg> switch carries the VLAN</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-controller)" stroke-width="2"/></svg> controller network</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-hypervisor)" stroke-width="2"/></svg> hypervisor port group</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-ipam)" stroke-width="2" stroke-dasharray="4 3"/></svg> IPAM only (documented, nothing carries it)</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-route)" stroke-width="2" stroke-dasharray="4 3"/></svg> learned through a tunnel</span>
   <span class="item" data-modes="evidence" style="color: var(--muted)">lane = strongest reporter · tag badges = every reporter, in that order</span>
   <span class="item"><svg width="26" height="14"><ellipse cx="13" cy="7" rx="12" ry="6" fill="none" stroke="var(--r-firewall)" stroke-width="1.2" stroke-dasharray="4 3"/></svg> VPN tunnel</span>
   <span class="item"><svg width="26" height="12"><rect x="0" y="0" width="26" height="12" fill="var(--hover)" stroke="var(--line)"/></svg> VLAN label</span>
@@ -483,11 +505,11 @@ function draw() {
     const text = r.vid != null ? `${label} ${r.vid}` : label;
     const sub = (r.subnets[0] || "")
               + (r.subnets.length > 1 ? " +" + (r.subnets.length - 1) : "");
-    const tag = el("g", { class: "vtag" });
+    const tag = el("g", { class: "vtag" + (ev.length ? " ev-" + ev[0] : "") });
     // evidence badges: one square per reporter, strongest first, tucked in
     // the tag's top-right corner (evidence view only, see CSS)
     const badges = (right, top) => ev.forEach((c, i) =>
-      el("rect", { x: right - 8 - i * 9, y: top, width: 6, height: 6, rx: 1,
+      el("rect", { x: right - 10 - i * 11, y: top, width: 8, height: 8, rx: 1.5,
                    class: "evbadge ev-" + c }, tag));
     if (HZ) {
       el("rect", { x: 10, y: v - 14, width: labelW - 16, height: 28, rx: 4 }, tag);
@@ -505,8 +527,8 @@ function draw() {
       el("text", { x: v - tw / 2 + 6, y: ty + 15 }, tag, nm + vid);
       // badges share the subnet row, which gives up the room they need
       el("text", { x: v - tw / 2 + 6, y: ty + 29, class: "gwlabel" }, tag,
-         clip(sub, maxCh - Math.ceil(ev.length * 9 / 6.1)));
-      badges(v + tw / 2, ty + tagAlong - 15);
+         clip(sub, maxCh - Math.ceil(ev.length * 11 / 6.1)));
+      badges(v + tw / 2, ty + tagAlong - 16);
     }
     title(tag, tip); title(line, tip);
     [line, tag].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); });
