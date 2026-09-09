@@ -1,6 +1,6 @@
 # ADR-0002 — The routed view: the logical network
 
-*Status: accepted (2026-08-31), amended (2026-09-09) · Issue: [#17](https://github.com/dsmorgan/patchbay/issues/17) · Follow-ups: [#50](https://github.com/dsmorgan/patchbay/issues/50)*
+*Status: accepted (2026-08-31), amended (2026-09-08) · Issue: [#17](https://github.com/dsmorgan/patchbay/issues/17) · Follow-ups: [#50](https://github.com/dsmorgan/patchbay/issues/50)*
 
 ![Design mock: the rails layout on a 15-network model](0002-routed-view-mock.png)
 
@@ -197,7 +197,7 @@ Load/Protocol/Evidence may land as follow-ups behind the same control.
   heights in the shared toolbar grammar — are folded in above. Follow-up
   modes (Load / Protocol / Evidence) remain open behind Decision 3.
 
-## Amendment — 2026-09-09: the lanes layout (0.13.0)
+## Amendment — 2026-09-08: the lanes layout (0.13.0)
 
 Rendering the rails against the real site through August and September,
 with the owner reviewing each iteration, moved the layout past Decision 2.
