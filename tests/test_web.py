@@ -1132,6 +1132,11 @@ def test_routed_page_renders_graph(clean_env, tmp_path, client):
     r = client.get("/routed")
     assert r.status_code == 200
     assert '"rails"' in r.text and '"hosts"' in r.text
+    # the shell's staleness indicator renders once any source has polled
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    pdb.save_raw(c, source="opnsense", endpoint="arp", payload=[])
+    c.commit(); c.close()
+    assert "last polled" in client.get("/routed").text
     assert "lab 24" in r.text or "lab" in r.text   # the seeded VLAN reaches the page
     # empty DB stays a page, not a crash
     r2 = client.get("/routed?hosts=0&groups=0&focus=v24")

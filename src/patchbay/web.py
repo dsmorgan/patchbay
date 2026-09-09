@@ -826,6 +826,7 @@ def routed_page(request: Request):
         graph = routed.build_routed_graph(conn, settings)
         return templates.TemplateResponse(request, "routed.html", {
             "graph_json": _script_safe_json(graph),
+            "ages": source_ages(conn),
         })
     finally:
         conn.close()
