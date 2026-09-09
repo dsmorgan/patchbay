@@ -11,7 +11,7 @@ put.
 ### Added
 
 - **Routed view: networks-as-lanes layout** (default; the `vertical rails`
-  chip keeps the original for comparison). VLANs are horizontal lanes
+  chip turns the same drawing on its side). VLANs are horizontal lanes
   reading edge → internet, left to right: lane labels with subnets in a
   left gutter, loose single-homed chips at the edge, one logical
   **wireless** container holding every AP's clients (per-AP attribution in
@@ -24,6 +24,13 @@ put.
   server when the guest-aware collector owns a hypervisor row. The routed
   view is logical, so which physical host a VM runs on becomes tooltip
   detail, and a router that runs as a guest draws inside the box.
+- **Routed view: one renderer, two axes.** The vertical-rails view is the
+  lanes drawing transposed — same containers, boxes, chips, and rules —
+  instead of the earlier tiered layout. Lanes sit tighter, multi-homed
+  hosts share a column when their spans don't overlap, and VPN tunnels
+  sit beside the internet cloud so the transport leaves the router
+  straight from its edge. The viewBox hugs the drawing, so **fit** means
+  the whole map.
 
 ### Changed
 

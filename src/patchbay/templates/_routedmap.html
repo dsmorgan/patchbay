@@ -1,8 +1,9 @@
-{# The routed view (ADR-0002, #17): networks as vertical rails, the logical
-   map beside the physical one. Geometry is computed server-side (rail order,
-   host rows) and drawn here; no pins, no dragging — zoom, pan, fit only.
-   v1 ships the Routes mode alone; the segmented control arrives with the
-   second mode so a one-button control never renders. #}
+{# The routed view (ADR-0002, #17): networks as lanes, the logical map
+   beside the physical one. Rail order and host rows are computed
+   server-side; one renderer draws them as horizontal lanes (default) or
+   vertical rails (?axis=v) from the same lane-space geometry, so both
+   axes share every grouping and rule. No pins, no dragging — zoom, pan,
+   fit only. #}
 <style>
   #routedwrap { border: 1px solid var(--grid); border-radius: 10px;
                 background: var(--card); height: 72vh; overflow: hidden;
@@ -70,6 +71,9 @@
   #routed .spanbox > rect { fill: none; stroke-width: 1.3; }
   #routed .spanbox.hyp > rect { stroke: var(--r-hyp); }
   #routed .spanbox.ap > rect { stroke: var(--r-ap); }
+  /* the name row's pill masks rails crossing under it (after the role
+     strokes above so its stroke: none wins the tie) */
+  #routed .spanbox > rect.lpill { fill: var(--card); stroke: none; }
   #routed .spanbox { cursor: pointer; }
   #routed .ricon path { fill: none; stroke-width: 1.5;
                         stroke-linecap: round; stroke-linejoin: round; }
@@ -133,44 +137,14 @@ function rwrite() {
 }
 
 // --- geometry ---------------------------------------------------------------
-const G = { left: 120, railTop: 250, tagRow: [268, 288],
-            groupRow: [312, 334], hostY0: 396, rowH: 56, bottomPad: 50 };
+// One renderer, two axes. Everything is laid out in lane space — u runs
+// along the networks from the edge toward the internet, v runs across
+// them — and P()/box() map that onto the screen: lanes (u→x, v→y) or
+// vertical rails (u→y, v→x). Boxes that carry text keep their screen
+// proportions on both axes; only placement and what they span transposes,
+// so the two views share every grouping, box, and rule.
 const rails = rg.rails, nR = rails.length;
-// the rail gap is computed: spread toward a comfortable page width, with a
-// ceiling so two networks don't sit absurdly far apart and a floor so
-// twenty stay legible
-G.gap = nR > 1 ? Math.min(130, Math.max(70, Math.round(1000 / (nR - 1)))) : 0;
-// the viewBox hugs the content: rails span + margins, but never narrower
-// than the internet cloud over the routing tier
-const W = Math.max(G.left * 2 + (nR - 1) * G.gap + 40, 480)
-        + ((rg.tunnels || []).length ? (rg.tunnels || []).length * 175 + 40 : 0);
 const hyps = rg.hypervisors || [], aps = rg.aps || [];
-const hostRows = rg.hosts.length ? Math.max(...rg.hosts.map(h => h.row)) + 1 : 0;
-const hostsEnd = G.hostY0 + hostRows * G.rowH;
-// hypervisor and wireless tiers stack below the host rows; each box owns a
-// row within its tier (assign_rows packed non-overlapping spans already),
-// and rows are only as tall as the deepest box actually in them — a slim
-// guest-less frame doesn't reserve a full box of blank space
-function boxHeight(b, tall) {
-  if ((b.guests || []).length) return tall;
-  return Object.keys(b.groups).length ? 78 : 40;
-}
-function tierOffsets(boxes, tall, gap) {
-  const rows = boxes.length ? Math.max(...boxes.map(b => b.row)) + 1 : 0;
-  const rh = Array(rows).fill(0);
-  boxes.forEach(b => rh[b.row] = Math.max(rh[b.row], boxHeight(b, tall)));
-  const off = []; let y = 0;
-  for (let i = 0; i < rows; i++) { off.push(y); y += rh[i] + gap; }
-  return { off, total: y ? y - gap : 0 };
-}
-const hypT = tierOffsets(hyps, 124, 16), apT = tierOffsets(aps, 84, 14);
-const hypRows = hypT.off.length, apRows = apT.off.length;
-const hypY0 = hostsEnd + (hypRows ? 40 : 0);
-const apY0 = hypY0 + hypT.total + (apRows ? 40 : 0);
-const H = Math.max(700, (apRows ? apY0 + apT.total
-                        : hypRows ? hypY0 + hypT.total
-                        : hostsEnd) + G.bottomPad);
-const railX = i => G.left + i * G.gap;
 const pos = {}; rails.forEach((r, i) => pos[r.key] = i);
 
 // role icons + colors, shared with the topology's vocabulary
@@ -186,7 +160,6 @@ function roleIcon(parent, role, x, y) {
 }
 
 const svg = document.getElementById("routed");
-svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
 const NS = "http://www.w3.org/2000/svg";
 const root = document.createElementNS(NS, "g");
 svg.appendChild(root);
@@ -219,303 +192,39 @@ function nameList(names) {
   return (names || []).slice(0, cap).join("\n")
        + ((names || []).length > cap ? `\n…and ${names.length - cap} more` : "");
 }
+const clip = (s, n) => s.length > n ? s.slice(0, Math.max(1, n - 1)) + "…" : s;
 
-// networks-as-lanes is the default; ?axis=v keeps the original vertical
-// rails for comparison while the redesign settles
+// networks-as-lanes is the default; ?axis=v turns the same drawing on its
+// side — vertical rails, edge at the top, internet at the bottom
 const AXIS = (new URLSearchParams(location.search)).get("axis") === "v"
   ? "v" : "lanes";
+const HZ = AXIS === "lanes";
 
 const router = rg.routers[0] || null;
-const routedKeys = new Set(router ? router.rails : []);
-// taps draw first so they pass underneath rails and boxes in either layout
+// taps draw first so they pass underneath rails and boxes
 const tapLayer = el("g", {});
 
-function drawRails() {
-const midX = nR ? (railX(0) + railX(nR - 1)) / 2 : W / 2;
-
-// bands
-el("text", { x: 14, y: 60, class: "band" }, root, "INTERNET");
-el("line", { x1: 0, y1: 96, x2: W, y2: 96, class: "bandline" });
-el("text", { x: 14, y: 130, class: "band" }, root, "ROUTING");
-el("line", { x1: 0, y1: 230, x2: W, y2: 230, class: "bandline" });
-el("text", { x: 14, y: 244, class: "band" }, root, "NETWORKS");
-
-// internet cloud + default route
-if (router) {
-  const cloud = el("g", {});
-  el("ellipse", { cx: midX, cy: 48, rx: 96, ry: 30, class: "cloud" }, cloud);
-  el("text", { x: midX, y: 45, "text-anchor": "middle", class: "rlabel" },
-     cloud, rg.wan_names[0] || "internet");
-  const gw = rg.gateways[0];
-  if (gw) el("text", { x: midX, y: 60, "text-anchor": "middle", class: "gwlabel" },
-             cloud, `${gw.name} ${gw.status || ""}`.trim());
-  let drop = null;
-  if (rg.default)
-    drop = el("line", { x1: midX, y1: 78, x2: midX, y2: 128, class: "defroute" });
-  // discovered WAN rail: the default route's exit VLAN. Say it on the
-  // drop line and light the cloud with that rail on hover.
-  const wanRail = rg.default && rg.default.rail
-    ? rails.find(r => r.key === rg.default.rail) : null;
-  if (wanRail) {
-    el("text", { x: midX + 8, y: 110, class: "gwlabel" }, cloud,
-       wanRail.vid != null ? `via VLAN ${wanRail.vid}` : `via ${wanRail.name}`);
-    // cloud and drop line dim together with their rail — a lit line into a
-    // dimmed cloud reads broken
-    track(cloud, [wanRail.key]); wireHover(cloud, [wanRail.key]);
-    if (drop) track(drop, [wanRail.key]);
-  }
-  if (rg.default && rg.default.gateway) title(cloud, `default via ${rg.default.gateway}`);
-}
-
-// rails + fan
-const rw = 150, rh = 54, ry = 128;
-if (router) {
-  const rbx = midX - rw / 2;
-  const rgrp = el("g", { class: "router" });
-  el("rect", { x: rbx, y: ry, width: rw, height: rh, rx: 8 }, rgrp);
-  el("text", { x: midX - 8, y: ry + 22, "text-anchor": "middle",
-               class: "routerlabel" }, rgrp, router.name);
-  el("text", { x: midX - 8, y: ry + 38, "text-anchor": "middle", class: "gwlabel" },
-     rgrp, `${router.rails.length} networks`);
-  roleIcon(rgrp, "firewall", rbx + rw - 26, ry + 6);
-  track(rgrp, router.rails); wireHover(rgrp, router.rails);
-  rgrp.style.cursor = "pointer";
-  rgrp.addEventListener("click", () =>
-    location.href = `/device/${encodeURIComponent(router.name)}`);
-  // pins left-to-right in rail order so fan lines never cross
-  const claimed = rails.filter(r => routedKeys.has(r.key));
-  claimed.forEach((r, i) => {
-    const px = rbx + (rw / (claimed.length + 1)) * (i + 1);
-    const fan = el("line", { x1: px, y1: ry + rh, x2: railX(pos[r.key]),
-                             y2: G.railTop, class: "fan" });
-    track(fan, [r.key]);
-  });
-}
-
-// VPN tunnels: egress nodes beside the cloud; the networks reached through
-// one hang off IT, not the provider cloud. The dashed path down to the
-// router is the encrypted transport terminating there.
-(rg.tunnels || []).forEach((t, i) => {
-  const tx = midX + 96 + 110 + i * 175;
-  const g = el("g", { class: "tunnel" });
-  if (router)
-    track(el("line", { x1: tx - 30, y1: 73, x2: midX + rw / 2 - 20, y2: ry,
-                       class: "tunpath" }), t.rails);
-  t.rails.forEach(k => {
-    if (!(k in pos)) return;
-    track(el("line", { x1: tx, y1: 75, x2: railX(pos[k]), y2: G.railTop,
-                       class: "tundrop" }), [k]);
-  });
-  el("ellipse", { cx: tx, cy: 48, rx: 80, ry: 27, class: "tuncloud" }, g);
-  el("text", { x: tx, y: 45, "text-anchor": "middle", class: "rlabel" }, g, t.name);
-  el("text", { x: tx, y: 60, "text-anchor": "middle",
-               class: "gwlabel tunstat " + (t.status || "") }, g,
-     t.label + (t.status ? " · " + t.status : ""));
-  title(g, [`${t.label} tunnel · ${t.name}`,
-            t.peer ? `peer ${t.peer}` : "",
-            t.detail || "",
-            (t.local_nets || []).length
-              ? `local side: ${t.local_nets.join(", ")}` : "",
-            t.rails.length ? "" : "no routed networks recorded",
-            `status ${t.status || "unknown"}`].filter(Boolean).join("\n"));
-  if (t.rails.length) { track(g, t.rails); wireHover(g, t.rails); }
-});
-rails.forEach((r, i) => {
-  const x = railX(i);
-  const cls = "rail" + (r.routed ? "" : " unrouted") + (r.wan ? " wan" : "");
-  const line = el("line", { x1: x, y1: G.railTop, x2: x, y2: H - 20, class: cls });
-  const dot = el("circle", { cx: x, cy: G.railTop, r: 3.4,
-                             class: "raildot" + (r.routed ? "" : " unrouted")
-                                    + (r.wan ? " wan" : "") });
-  const viaTun = (r.via_tunnel || []).length;
-  const tip = [`${r.name || "?"}${r.vid != null ? " · VLAN " + r.vid : ""}`,
-               r.wan ? `internet uplink (${rg.wan_names[0] || "wan"})` : "",
-               viaTun ? `via tunnel ${r.via_tunnel.join(", ")}` : "",
-               ...(r.subnets.length ? r.subnets : ["no subnet recorded"]),
-               r.gateway ? `gateway ${r.gateway}`
-                         : (r.routed || r.wan || viaTun ? "" : "not routed"),
-               `sources: ${r.sources.join(", ")}`].filter(Boolean).join("\n");
-  [line, dot].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); title(e, tip); });
-
-  // VLAN tag, staggered rows
-  const label = (r.name || (r.vid != null ? "vlan" : r.key)).slice(0, 8)
-                + ((r.name || "").length > 8 ? "…" : "");
-  const text = r.vid != null ? `${label} ${r.vid}` : label;
-  const tw = text.length * 6.4 + 10;
-  const tyy = G.tagRow[i % 2];
-  const tag = el("g", { class: "vtag" });
-  el("rect", { x: x - tw / 2, y: tyy - 13, width: tw, height: 18, rx: 3 }, tag);
-  el("text", { x: x, y: tyy, "text-anchor": "middle" }, tag, text);
-  title(tag, tip);
-  track(tag, [r.key]); wireHover(tag, [r.key]);
-  if (r.vid != null)
-    tag.addEventListener("click", () => location.href = `/vlans#v${r.vid}`);
-
-  // single-homed group box
-  if (r.hosts > 0) {
-    const gy = G.groupRow[i % 2];
-    const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
-                        "data-kind": "group" });
-    el("rect", { x: x - 37.5, y: gy, width: 75, height: 40, rx: 8 }, g);
-    el("text", { x: x, y: gy + 24, "text-anchor": "middle" }, g,
-       `×${r.hosts} host${r.hosts > 1 ? "s" : ""}`);
-    el("circle", { cx: x, cy: gy, r: 4.2,
-                   class: "rim" + (r.routed ? "" : " unrouted") }, g);
-    title(g, `${r.hosts} single-homed host${r.hosts > 1 ? "s" : ""} on ${r.name || r.key}\n`
-             + nameList(r.host_names));
-    track(g, [r.key]); wireHover(g, [r.key]);
-    if (r.vid != null)
-      g.addEventListener("click", () => location.href = `/vlans#v${r.vid}`);
-  }
-});
-
-// multi-homed hosts: box on the home rail, rim dots where a rail meets the
-// box, thin tap lines (under the rails) to rails beyond the footprint
-rg.hosts.forEach(h => {
-  const cx = railX(pos[h.home]);
-  const bw = Math.max(84, h.name.length * 7.4 + 48);
-  const y = G.hostY0 + h.row * G.rowH;
-  const grp = el("g", { class: "host", "data-kind": "host" });
-  const rect = el("rect", { x: cx - bw / 2, y: y, width: bw, height: 40, rx: 8 }, grp);
-  if (RCOLOR[h.role]) rect.setAttribute("style", `stroke: ${RCOLOR[h.role]}`);
-  el("text", { x: cx - 9, y: y + 24, "text-anchor": "middle" }, grp, h.name);
-  roleIcon(grp, h.role || "host", cx + bw / 2 - 24, y + 11);
-  const keys = h.legs.map(l => l.rail);
-  const tips = h.legs.map(l => {
-    const r = rails[pos[l.rail]];
-    return `${l.iface}${l.ip ? " " + l.ip : ""} → ${r.name || l.rail}`;
-  });
-  title(grp, `${h.name}\n${tips.join("\n")}`);
-  h.legs.forEach(l => {
-    const lx = railX(pos[l.rail]);
-    const r = rails[pos[l.rail]];
-    const rimCls = "rim" + (r.routed ? "" : " unrouted");
-    if (Math.abs(lx - cx) <= bw / 2) {
-      // rail meets (or crosses) the box: a dot on the rim marks attachment;
-      // an unattached rail crossing the box simply passes underneath
-      const d = el("circle", { cx: lx, cy: y, r: 4.2, class: rimCls }, grp);
-      track(d, [l.rail]);
-    } else {
-      const edgeX = lx > cx ? cx + bw / 2 : cx - bw / 2;
-      const tap = el("line", { x1: edgeX, y1: y + 20, x2: lx, y2: y + 20,
-                               class: "tap" }, tapLayer);
-      const d = el("circle", { cx: lx, cy: y + 20, r: 4.2, class: rimCls }, grp);
-      track(tap, keys); track(d, [l.rail]);
-    }
-  });
-  track(grp, keys); wireHover(grp, keys);
-  grp.addEventListener("click", () =>
-    location.href = `/device/${encodeURIComponent(h.name)}`);
-});
-
-// --- spanning tiers: hypervisors, then wireless -----------------------------
-// A hypervisor or AP is a box across every rail it (or its tenants) touches:
-// rails run through the open frame, guest/client groups sit inside on their
-// rails, and the box's own addresses are dots on its top edge.
-function miniGroup(parent, x, y, names, r, noun) {
-  const n = names.length;
-  const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
-                      "data-kind": "group" }, parent);
-  el("rect", { x: x - 30, y: y, width: 60, height: 32, rx: 8 }, g);
-  el("text", { x: x, y: y + 20, "text-anchor": "middle" }, g, `×${n}`);
-  title(g, `${n} ${noun}${n > 1 ? "s" : ""} on ${r.name || r.key}\n`
-           + nameList(names));
-  track(g, [r.key]); wireHover(g, [r.key]);
-  if (r.vid != null) g.addEventListener("click", ev => {
-    ev.stopPropagation(); location.href = `/vlans#v${r.vid}`; });
-}
-function miniHost(parent, h, y, minX) {
-  const bw = Math.max(72, h.name.length * 7.4 + 44);
-  const cx = Math.max(railX(pos[h.home]), minX + bw / 2);
-  const grp = el("g", { class: "host", "data-kind": "host" }, parent);
-  const rect = el("rect", { x: cx - bw / 2, y: y, width: bw, height: 34, rx: 8 }, grp);
-  if (RCOLOR[h.role]) rect.setAttribute("style", `stroke: ${RCOLOR[h.role]}`);
-  el("text", { x: cx - 8, y: y + 21, "text-anchor": "middle" }, grp, h.name);
-  roleIcon(grp, h.role || "host", cx + bw / 2 - 22, y + 8);
-  const keys = h.legs.map(l => l.rail);
-  title(grp, `${h.name}\n` + h.legs.map(l =>
-    `${l.iface}${l.ip ? " " + l.ip : ""} → ${(rails[pos[l.rail]] || {}).name || l.rail}`).join("\n"));
-  h.legs.forEach(l => {
-    const lx = railX(pos[l.rail]);
-    const r = rails[pos[l.rail]];
-    const rimCls = "rim" + (r.routed ? "" : " unrouted");
-    if (Math.abs(lx - cx) <= bw / 2) {
-      track(el("circle", { cx: lx, cy: y, r: 4.2, class: rimCls }, grp), [l.rail]);
-    } else {
-      const edgeX = lx > cx ? cx + bw / 2 : cx - bw / 2;
-      const tap = el("line", { x1: edgeX, y1: y + 17, x2: lx, y2: y + 17,
-                               class: "tap" }, tapLayer);
-      track(tap, keys);
-      track(el("circle", { cx: lx, cy: y + 17, r: 4.2, class: rimCls }, grp), [l.rail]);
-    }
-  });
-  track(grp, keys); wireHover(grp, keys);
-  grp.addEventListener("click", ev => {
-    ev.stopPropagation();
-    location.href = `/device/${encodeURIComponent(h.name)}`;
-  });
-  return cx + bw / 2;
-}
-function spanBox(b, y, boxH, cls, noun, groupY, guestY) {
-  const xs = b.rails.map(k => railX(pos[k]));
-  const x0 = Math.min(...xs) - 40;
-  let x1 = Math.max(...xs) + 40;
-  // a one-rail box still fits its name, role, and icon side by side
-  x1 = Math.max(x1, x0 + b.name.length * 7.4 + b.role.length * 6 + 60);
-  const down = b.status && b.status !== "up";
-  const grp = el("g", { class: "spanbox " + cls + (down ? " down" : "") });
-  el("rect", { x: x0, y: y, width: x1 - x0, height: boxH, rx: 10 }, grp);
-  el("text", { x: x0 + 12, y: y + 18, class: "rlabel" }, grp, b.name);
-  el("text", { x: x0 + 16 + b.name.length * 7.4, y: y + 18, class: "gwlabel" },
-     grp, b.role + (down ? ` · ${b.status}` : ""));
-  roleIcon(grp, b.role, x1 - 28, y + 4);
-  b.legs.forEach(l => {
-    if (!(l.rail in pos)) return;
-    const r = rails[pos[l.rail]];
-    const d = el("circle", { cx: railX(pos[l.rail]), cy: y, r: 4.2,
-                             class: "rim" + (r.routed ? "" : " unrouted") }, grp);
-    title(d, `${l.iface}${l.ip ? " " + l.ip : ""} → ${r.name || l.rail}`);
-    track(d, [l.rail]);
-  });
-  Object.entries(b.groups).forEach(([k, names]) => {
-    if (k in pos) miniGroup(grp, railX(pos[k]), groupY, names, rails[pos[k]], noun);
-  });
-  let right = x0;
-  (b.guests || []).forEach(v => { right = miniHost(grp, v, guestY, right) + 8; });
-  title(grp, `${b.name} · ${b.role}` + (b.legs.length ? "\n" + b.legs.map(l =>
-    `${l.iface}${l.ip ? " " + l.ip : ""} → ${(rails[pos[l.rail]] || {}).name || l.rail}`)
-    .join("\n") : "\nno addresses recorded"));
-  track(grp, b.rails); wireHover(grp, b.rails);
-  grp.addEventListener("click", () =>
-    location.href = `/device/${encodeURIComponent(b.name)}`);
-}
-if (hypRows) {
-  el("line", { x1: 0, y1: hypY0 - 30, x2: W, y2: hypY0 - 30, class: "bandline" });
-  el("text", { x: 14, y: hypY0 - 16, class: "band" }, root, "HYPERVISORS");
-  hyps.forEach(hy => {
-    const y = hypY0 + hypT.off[hy.row];
-    spanBox(hy, y, boxHeight(hy, 124), "hyp", "VM", y + 34, y + 86);
-  });
-}
-if (apRows) {
-  el("line", { x1: 0, y1: apY0 - 30, x2: W, y2: apY0 - 30, class: "bandline" });
-  el("text", { x: 14, y: apY0 - 16, class: "band" }, root, "WIRELESS");
-  aps.forEach(a => {
-    const y = apY0 + apT.off[a.row];
-    spanBox(a, y, boxHeight(a, 84), "ap", "client", y + 36, y + 52);
-  });
-}
-}  // drawRails
-
-// --- lanes layout: networks as horizontal lanes, edge → internet ------------
-// The landscape-native reading: lane labels at the left, then the edge
-// (loose hosts, one wireless container), infrastructure (multi-homed hosts,
-// hypervisors), the router spanning its lanes, and the internet at the far
-// right. Height is fixed by network count; width grows with devices.
-function drawLanes() {
-  const labelW = 180, laneH = 74, laneTop = 70, colGap = 22, chipW = 56;
-  const laneY = i => laneTop + i * laneH + laneH / 2;
-  const laneBot = laneTop + nR * laneH;
+function draw() {
+  // across pitch: lanes are a tight fixed row; rails spread toward a
+  // comfortable width, with a ceiling so two networks don't sit absurdly
+  // far apart and a floor so twenty stay legible
+  const pitch = HZ ? 56
+    : nR > 1 ? Math.min(130, Math.max(72, Math.round(1000 / (nR - 1)))) : 130;
+  const across0 = HZ ? 60 : 40;
+  const laneV = i => across0 + i * pitch + pitch / 2;
+  const P = (u, v) => HZ ? { x: u, y: v } : { x: v, y: u };
+  const box = (u0, v0, du, dv) => HZ ? { x: u0, y: v0, w: du, h: dv }
+                                     : { x: v0, y: u0, w: dv, h: du };
+  const rectEl = (parent, R, attrs) =>
+    el("rect", { x: R.x, y: R.y, width: R.w, height: R.h, ...attrs }, parent);
+  const lineEl = (parent, u1, v1, u2, v2, attrs) => {
+    const a = P(u1, v1), b = P(u2, v2);
+    return el("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...attrs }, parent);
+  };
+  const colGap = HZ ? 16 : 12, chipW = 56, chipH = 30, hostH = 40;
+  const chipAlong = HZ ? chipW : chipH;
+  const labelW = 176;          // lanes: the left gutter holding lane tags
+  const tagAlong = 44;         // rails: the tag row across the top
 
   // one logical wireless container: every AP folded together — the map
   // shows the wireless *network*; which AP saw a client is tooltip detail
@@ -535,28 +244,6 @@ function drawLanes() {
       rails: [...span], groups, legs,
       aps: aps.map(a => a.name) };
   }
-
-  function slabW(b) {
-    let w = Math.max(96, b.name.length * 7.4 + (b.role || "").length * 6 + 56
-                         + (b.status && b.status !== "up"
-                            ? (b.status.length + 3) * 6 : 0));
-    let gsum = 8;
-    (b.guests || []).forEach(v => gsum += Math.max(64, v.name.length * 7.4 + 40) + 10);
-    if (gsum > 20) w = Math.max(w, gsum + 8);
-    if (Object.keys(b.groups || {}).length) w = Math.max(w, chipW + 28);
-    return w;
-  }
-  function hostW(h) { return Math.max(72, h.name.length * 7.4 + 48); }
-
-  // columns, left → right
-  let x = labelW + 34;
-  const hasLoose = rails.some(r => r.hosts > 0);
-  const looseX = x;
-  if (hasLoose) x += chipW + colGap + 6;
-  const wifiX = wifi ? x : 0;
-  if (wifi) x += slabW(wifi) + colGap;
-  const hostsSorted = rg.hosts;
-  const hostXs = hostsSorted.map(h => { const p = x; x += hostW(h) + colGap; return p; });
   // one logical virtualization box: every hypervisor folded together, the
   // wireless container's sibling. This view is logical — which physical
   // host a VM runs on is tooltip detail, like which AP saw a client. The
@@ -590,33 +277,96 @@ function drawLanes() {
   const hypNames = new Set(hyps.map(h => h.name));
   const routerInside = !!(virt && router && router.parent
                           && hypNames.has(router.parent));
-  const virtX = virt ? x : 0;
-  if (virt) x += slabW(virt) + colGap;
-  x += 26;
-  const routerX = x, routerW = router
-    ? Math.max(130, router.name.length * 7.4 + 60) : 0;
-  x += routerW;
-  if (routerInside) x += 14;
-  const cloudX = x + 150;
+
+  // --- sizes: along the lane, and across it ---------------------------------
+  function hostW(h) { return Math.max(72, h.name.length * 7.4 + 48); }
+  const hostAlong = h => HZ ? hostW(h) : hostH;
+  function hasGroups(b) { return Object.keys(b.groups || {}).some(k => k in pos); }
+  function textNeed(b) {
+    return 14 + b.name.length * 7.4 + (b.sub || b.role || "").length * 6 + 44;
+  }
+  // lanes: a slab's width holds its name row, a chip column, and guests
+  // side by side; rails: its height stacks a chip row and guest rows
+  // under the name row
+  function slabW(b) {
+    let w = Math.max(96, textNeed(b) + (b.status && b.status !== "up" && !b.sub
+                                        ? (b.status.length + 3) * 6 : 0));
+    let gsum = 8;
+    (b.guests || []).forEach(v => gsum += hostW(v) + 10);
+    if (gsum > 20) w = Math.max(w, gsum + 8);
+    if (hasGroups(b)) w = Math.max(w, chipW + 28);
+    return w;
+  }
+  function slabAlong(b) {
+    if (HZ) return slabW(b);
+    return 30 + (hasGroups(b) ? 40 : 0) + (b.guests || []).length * (hostH + 10) + 8;
+  }
+  // lanes give the name row its own headroom above the first lane so it
+  // never collides with a chip riding that lane; rails pad each side and
+  // widen to fit the text and the guests' boxes
+  function slabAcross(b) {
+    const lanes = b.rails.filter(k => k in pos).map(k => pos[k]);
+    let v0 = laneV(Math.min(...lanes)) - (HZ ? 48 : 40);
+    let v1 = laneV(Math.max(...lanes)) + (HZ ? 30 : 40);
+    if (!HZ) {
+      (b.guests || []).forEach(g => {
+        v0 = Math.min(v0, laneV(pos[g.home]) - hostW(g) / 2 - 8);
+        v1 = Math.max(v1, laneV(pos[g.home]) + hostW(g) / 2 + 8);
+      });
+      v1 = Math.max(v1, v0 + textNeed(b));
+    }
+    return [v0, v1];
+  }
+
+  // --- placement along the lane, edge → internet -----------------------------
+  let u = HZ ? labelW + 30 : tagAlong + 24;
+  const laneStartU = HZ ? labelW + 10 : tagAlong + 8;
+  const hasLoose = rails.some(r => r.hosts > 0);
+  const looseU = u;
+  if (hasLoose) u += chipAlong + colGap + 6;
+  const wifiU = u;
+  if (wifi) u += slabAlong(wifi) + colGap;
+  // multi-homed hosts share a column (lanes) or row (rails) when their
+  // spans don't overlap — the server's interval coloring — unless a box
+  // would be wider than the rail pitch and crash into its neighbor
+  const hosts = rg.hosts;
+  const shareRows = HZ || hosts.every(h => hostW(h) <= pitch - 10);
+  const hostRow = hosts.map((h, i) => shareRows ? h.row : i);
+  const rowAlong = [];
+  hosts.forEach((h, i) =>
+    rowAlong[hostRow[i]] = Math.max(rowAlong[hostRow[i]] || 0, hostAlong(h)));
+  const rowU = [];
+  rowAlong.forEach((a, i) => { rowU[i] = u; u += a + colGap; });
+  const hostU = hosts.map((h, i) => rowU[hostRow[i]]);
+  const virtU = virt ? u : 0;
+  if (virt) u += slabAlong(virt) + (routerInside ? 0 : colGap);
+  u += 26;
+  const routerW = router ? Math.max(130, router.name.length * 7.4 + 60) : 0;
+  const showParent = !!(router && router.parent && !routerInside);
+  const routerAlong = HZ ? routerW : (showParent ? 70 : 58);
+  const routerU = u;
+  u += routerAlong;
+  if (routerInside) u += 14;
+  const routerEnd = u;
+  // the router spans every lane it routes, with headroom for its label
+  const rLanes = router ? router.rails.filter(k => k in pos).map(k => pos[k]) : [];
+  let rV0 = rLanes.length
+    ? laneV(Math.min(...rLanes)) - (HZ ? 52 + (showParent ? 12 : 0) : 24) : across0;
+  let rV1 = rLanes.length
+    ? laneV(Math.max(...rLanes)) + (HZ ? 30 : 24) : across0 + nR * pitch;
+  if (!HZ) rV1 = Math.max(rV1, rV0 + routerW);
+  const cloudRx = 96, cloudRy = 30, tunRx = 86, tunRy = 27;
+  const cloudU = routerEnd + (HZ ? 150 : 84);
+  const cloudEdge = HZ ? cloudRx : cloudRy;    // the ellipse's half-extent along
+  const tunEdge = HZ ? tunRx : tunRy;
   const tuns = rg.tunnels || [];
-  const LW = cloudX + 130 + (tuns.length ? 30 : 0);
-  const LH = Math.max(laneBot + 46,
-                      laneTop + 90 + tuns.length * 78);
-  svg.setAttribute("viewBox", `0 0 ${LW} ${LH}`);
 
-  // faint alternating lane bands make the rows scannable at a distance
+  // --- lanes, tags, loose chips ----------------------------------------------
   rails.forEach((r, i) => {
-    if (i % 2 === 0)
-      el("rect", { x: 0, y: laneY(i) - laneH / 2, width: LW, height: laneH,
-                   class: "laneband" });
-  });
-
-  // lane lines + left-gutter labels
-  rails.forEach((r, i) => {
-    const y = laneY(i);
+    const v = laneV(i);
     const cls = "rail" + (r.routed ? "" : " unrouted") + (r.wan ? " wan" : "");
-    const endX = r.routed || r.wan ? routerX : routerX - 18;
-    const line = el("line", { x1: labelW + 10, y1: y, x2: endX, y2: y, class: cls });
+    const endU = r.routed || r.wan ? routerU : routerU - 18;
+    const line = lineEl(root, laneStartU, v, endU, v, { class: cls });
     const viaTun = (r.via_tunnel || []).length;
     const tip = [`${r.name || "?"}${r.vid != null ? " · VLAN " + r.vid : ""}`,
                  r.wan ? `internet uplink (${rg.wan_names[0] || "wan"})` : "",
@@ -628,22 +378,35 @@ function drawLanes() {
     const label = (r.name || (r.vid != null ? "vlan" : r.key)).slice(0, 14)
                   + ((r.name || "").length > 14 ? "…" : "");
     const text = r.vid != null ? `${label} ${r.vid}` : label;
+    const sub = (r.subnets[0] || "")
+              + (r.subnets.length > 1 ? " +" + (r.subnets.length - 1) : "");
     const tag = el("g", { class: "vtag" });
-    el("rect", { x: 10, y: y - 14, width: labelW - 16, height: 28, rx: 4 }, tag);
-    el("text", { x: 20, y: y - 1 }, tag, text);
-    el("text", { x: 20, y: y + 11, class: "gwlabel" }, tag,
-       (r.subnets[0] || "") + (r.subnets.length > 1 ? " +" + (r.subnets.length - 1) : ""));
+    if (HZ) {
+      el("rect", { x: 10, y: v - 14, width: labelW - 16, height: 28, rx: 4 }, tag);
+      el("text", { x: 20, y: v - 1 }, tag, text);
+      el("text", { x: 20, y: v + 11, class: "gwlabel" }, tag, sub);
+    } else {
+      // a tag as wide as the rail pitch allows, text clipped to fit
+      const tw = Math.min(pitch - 6, 164), maxCh = Math.floor((tw - 12) / 6.1);
+      const vid = r.vid != null ? ` ${r.vid}` : "";   // the id survives the clip
+      const nm = clip(r.name || (r.vid != null ? "vlan" : r.key),
+                      Math.max(3, maxCh - vid.length));
+      el("rect", { x: v - tw / 2, y: 6, width: tw, height: tagAlong - 6, rx: 4 }, tag);
+      el("text", { x: v - tw / 2 + 6, y: 21 }, tag, nm + vid);
+      el("text", { x: v - tw / 2 + 6, y: 35, class: "gwlabel" }, tag, clip(sub, maxCh));
+    }
     title(tag, tip); title(line, tip);
     [line, tag].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); });
     if (r.vid != null)
       tag.addEventListener("click", () => location.href = `/vlans#v${r.vid}`);
-    // loose single-homed hosts: a ×N chip riding the lane at the edge column
+    // loose single-homed hosts: a ×N chip riding the lane at the edge
     if (r.hosts > 0) {
       const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
                           "data-kind": "group" });
-      el("rect", { x: looseX, y: y - 15, width: chipW, height: 30, rx: 8 }, g);
-      el("text", { x: looseX + chipW / 2, y: y + 4, "text-anchor": "middle" }, g,
-         `×${r.hosts}`);
+      const c = P(looseU + chipAlong / 2, v);
+      el("rect", { x: c.x - chipW / 2, y: c.y - chipH / 2, width: chipW,
+                   height: chipH, rx: 8 }, g);
+      el("text", { x: c.x, y: c.y + 4, "text-anchor": "middle" }, g, `×${r.hosts}`);
       title(g, `${r.hosts} single-homed host${r.hosts > 1 ? "s" : ""} on `
                + `${r.name || r.key}\n` + nameList(r.host_names));
       track(g, [r.key]); wireHover(g, [r.key]);
@@ -652,46 +415,46 @@ function drawLanes() {
     }
   });
 
-  function laneChip(parent, cx, cy, names, r, noun) {
+  // --- boxes ------------------------------------------------------------------
+  function laneChip(parent, u0, v, names, r, noun) {
     const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
                         "data-kind": "group" }, parent);
-    el("rect", { x: cx - chipW / 2, y: cy - 15, width: chipW, height: 30, rx: 8 }, g);
-    el("text", { x: cx, y: cy + 4, "text-anchor": "middle" }, g, `×${names.length}`);
+    const c = P(u0, v);
+    el("rect", { x: c.x - chipW / 2, y: c.y - chipH / 2, width: chipW,
+                 height: chipH, rx: 8 }, g);
+    el("text", { x: c.x, y: c.y + 4, "text-anchor": "middle" }, g, `×${names.length}`);
     title(g, `${names.length} ${noun}${names.length > 1 ? "s" : ""} on `
              + `${r.name || r.key}\n` + nameList(names));
     track(g, [r.key]); wireHover(g, [r.key]);
     if (r.vid != null) g.addEventListener("click", ev => {
       ev.stopPropagation(); location.href = `/vlans#v${r.vid}`; });
   }
-  // a named box on its home lane; a vertical stem reaches its other lanes
-  function laneHost(parent, h, x0) {
-    const bw = hostW(h);
-    const cx = x0 + bw / 2;
-    const hy = laneY(pos[h.home]);
-    const homeLane = pos[h.home];
+  // a named box on its home lane; a stem reaches across to its other lanes
+  function laneHost(parent, h, u0) {
+    const bw = hostW(h), along = hostAlong(h), across = HZ ? hostH : bw;
+    const home = pos[h.home], vh = laneV(home);
+    const cu = u0 + along / 2;
     const grp = el("g", { class: "host", "data-kind": "host" }, parent);
     const keys = h.legs.map(l => l.rail);
-    const ys = h.legs.map(l => laneY(pos[l.rail]));
-    if (ys.length > 1) {
-      const stem = el("line", { x1: cx, y1: Math.min(...ys), x2: cx,
-                                y2: Math.max(...ys), class: "tap" }, tapLayer);
-      track(stem, keys);
-    }
-    const rect = el("rect", { x: x0, y: hy - 20, width: bw, height: 40, rx: 8 }, grp);
+    const vs = h.legs.map(l => laneV(pos[l.rail]));
+    if (vs.length > 1)
+      track(lineEl(tapLayer, cu, Math.min(...vs), cu, Math.max(...vs),
+                   { class: "tap" }), keys);
+    const R = box(u0, vh - across / 2, along, across);
+    const rect = rectEl(grp, R, { rx: 8 });
     if (RCOLOR[h.role]) rect.setAttribute("style", `stroke: ${RCOLOR[h.role]}`);
-    el("text", { x: cx - 9, y: hy + 4, "text-anchor": "middle" }, grp, h.name);
-    roleIcon(grp, h.role || "host", x0 + bw - 24, hy - 9);
+    el("text", { x: R.x + R.w / 2 - 9, y: R.y + R.h / 2 + 4,
+                 "text-anchor": "middle" }, grp, h.name);
+    roleIcon(grp, h.role || "host", R.x + R.w - 24, R.y + R.h / 2 - 9);
     title(grp, `${h.name}\n` + h.legs.map(l =>
       `${l.iface}${l.ip ? " " + l.ip : ""} → ${(rails[pos[l.rail]] || {}).name || l.rail}`).join("\n"));
     h.legs.forEach(l => {
       const r = rails[pos[l.rail]];
       // the box rides its home lane, so that attachment dot moves to the
       // box edge instead of landing on the name
-      const d = pos[l.rail] === homeLane
-        ? el("circle", { cx: x0, cy: hy, r: 4.2,
-                         class: "rim" + (r.routed ? "" : " unrouted") }, grp)
-        : el("circle", { cx: cx, cy: laneY(pos[l.rail]), r: 4.2,
-                         class: "rim" + (r.routed ? "" : " unrouted") }, grp);
+      const c = pos[l.rail] === home ? P(u0, vh) : P(cu, laneV(pos[l.rail]));
+      const d = el("circle", { cx: c.x, cy: c.y, r: 4.2,
+                               class: "rim" + (r.routed ? "" : " unrouted") }, grp);
       track(d, [l.rail]);
     });
     track(grp, keys); wireHover(grp, keys);
@@ -700,42 +463,47 @@ function drawLanes() {
       location.href = `/device/${encodeURIComponent(h.name)}`;
     });
   }
-  // hypervisor / wireless container: a tall slab across its lanes. opts can
-  // widen the box and stretch its vertical extent past the lane span — the
-  // virtualization box does both to take the router slab inside.
-  function laneSlab(b, x0, cls, noun, opts = {}) {
-    const w = opts.w || slabW(b);
-    const cw = slabW(b);               // content column: chips stay left even in a wide box
-    const lanes = b.rails.map(k => pos[k]);
-    // 48 above the first lane: the name row lives in its own headroom
-    // instead of colliding with a chip riding that lane
-    const yTop = Math.min(laneY(Math.min(...lanes)) - 48,
-                          opts.yTop != null ? opts.yTop : Infinity);
-    const yBot = Math.max(laneY(Math.max(...lanes)) + 30,
-                          opts.yBot != null ? opts.yBot : -Infinity);
+  // wireless / virtualization container: a slab across its lanes. opts can
+  // stretch it along and across — the virtualization box does both to take
+  // the router slab inside.
+  function laneSlab(b, u0, cls, noun, opts = {}) {
+    const content = slabAlong(b);
+    const along = opts.along || content;
+    let [v0, v1] = slabAcross(b);
+    if (opts.v0 != null) v0 = Math.min(v0, opts.v0);
+    if (opts.v1 != null) v1 = Math.max(v1, opts.v1);
     const down = b.status && b.status !== "up";
     const grp = el("g", { class: "spanbox " + cls + (down ? " down" : "") });
-    el("rect", { x: x0, y: yTop, width: w, height: yBot - yTop, rx: 10 }, grp);
-    el("text", { x: x0 + 10, y: yTop + 17, class: "rlabel" }, grp, b.name);
-    el("text", { x: x0 + 14 + b.name.length * 7.4, y: yTop + 17, class: "gwlabel" },
-       grp, b.sub || ((b.role === "ap" ? "" : b.role)
-                      + (down ? ` · ${b.status}` : "")));
-    roleIcon(grp, b.role, x0 + w - 26, yTop + 5);
+    const R = box(u0, v0, along, v1 - v0);
+    rectEl(grp, R, { rx: 10 });
+    const subText = b.sub || ((b.role === "ap" ? "" : b.role)
+                              + (down ? ` · ${b.status}` : ""));
+    // the name row sits on a card-colored pill: on vertical rails the
+    // networks run straight through the box, and text over a rail is mud
+    rectEl(grp, { x: R.x + 5, y: R.y + 5,
+                  w: 18 + b.name.length * 7.4 + subText.length * 6, h: 17 },
+           { rx: 3, class: "lpill" });
+    el("text", { x: R.x + 10, y: R.y + 17, class: "rlabel" }, grp, b.name);
+    el("text", { x: R.x + 14 + b.name.length * 7.4, y: R.y + 17, class: "gwlabel" },
+       grp, subText);
+    roleIcon(grp, b.role, R.x + R.w - 26, R.y + 5);
     b.legs.forEach(l => {
       if (!(l.rail in pos)) return;
       const r = rails[pos[l.rail]];
-      const d = el("circle", { cx: x0, cy: laneY(pos[l.rail]), r: 4.2,
+      const c = P(u0, laneV(pos[l.rail]));
+      const d = el("circle", { cx: c.x, cy: c.y, r: 4.2,
                                class: "rim" + (r.routed ? "" : " unrouted") }, grp);
       title(d, `${l.ap ? l.ap + " " : ""}${l.iface}${l.ip ? " " + l.ip : ""} → `
                + `${r.name || l.rail}`);
       track(d, [l.rail]);
     });
+    // chips ride the content column (lanes) or a row under the name (rails)
+    const chipU = u0 + (HZ ? content / 2 : 45);
     Object.entries(b.groups).forEach(([k, names]) => {
-      if (k in pos) laneChip(grp, x0 + cw / 2, laneY(pos[k]), names,
-                             rails[pos[k]], noun);
+      if (k in pos) laneChip(grp, chipU, laneV(pos[k]), names, rails[pos[k]], noun);
     });
-    let gx = x0 + 8;
-    (b.guests || []).forEach(v => { laneHost(grp, v, gx); gx += hostW(v) + 10; });
+    let gu = HZ ? u0 + 8 : u0 + 30 + (hasGroups(b) ? 40 : 0) + 6;
+    (b.guests || []).forEach(v => { laneHost(grp, v, gu); gu += hostAlong(v) + 10; });
     title(grp, `${b.name}`
       + (b.aps ? `\nAPs: ${b.aps.join(", ")}`
          : b.members ? `\n${b.members.join("\n")}` : ` · ${b.role}`));
@@ -745,42 +513,37 @@ function drawLanes() {
         location.href = `/device/${encodeURIComponent(b.aps ? b.aps[0] : b.name)}`);
   }
 
-  // router vertical extent is needed by the virtualization box too
-  const rLanes = router ? router.rails.filter(k => k in pos).map(k => pos[k]) : [];
-  const ryTop = rLanes.length ? laneY(Math.min(...rLanes)) - 52 : laneTop;
-  const ryBot = rLanes.length ? laneY(Math.max(...rLanes)) + 30 : laneBot;
-
-  if (wifi) laneSlab(wifi, wifiX, "ap", "client");
-  hostsSorted.forEach((h, i) => laneHost(root, h, hostXs[i]));
+  if (wifi) laneSlab(wifi, wifiU, "ap", "client");
+  hosts.forEach((h, i) => laneHost(root, h, hostU[i]));
   // the virtualization box draws before the router so the router's slab
   // paints on top of it; a guest router stretches the box around itself
-  if (virt) laneSlab(virt, virtX, "hyp", "VM", routerInside
-    ? { w: routerX + routerW + 14 - virtX, yTop: ryTop - 26, yBot: ryBot + 12 }
+  if (virt) laneSlab(virt, virtU, "hyp", "VM", routerInside
+    ? { along: routerEnd - virtU, v0: rV0 - (HZ ? 26 : 12), v1: rV1 + 12 }
     : {});
 
-  // router: one slab spanning every lane it routes; the internet at right
+  // --- router, internet, tunnels ---------------------------------------------
   if (router) {
-    const yTop = ryTop, yBot = ryBot;
+    const R = box(routerU, rV0, routerAlong, rV1 - rV0);
     const rgrp = el("g", { class: "router" });
-    el("rect", { x: routerX, y: yTop, width: routerW, height: yBot - yTop, rx: 8 }, rgrp);
-    el("text", { x: routerX + routerW / 2 - 8, y: yTop + 18, "text-anchor": "middle",
+    rectEl(rgrp, R, { rx: 8 });
+    const cx = R.x + R.w / 2 - 8;
+    el("text", { x: cx, y: R.y + 18, "text-anchor": "middle",
                  class: "routerlabel" }, rgrp, router.name);
-    el("text", { x: routerX + routerW / 2 - 8, y: yTop + 33, "text-anchor": "middle",
-                 class: "gwlabel" }, rgrp, `${router.rails.length} networks`);
+    el("text", { x: cx, y: R.y + 33, "text-anchor": "middle", class: "gwlabel" },
+       rgrp, `${router.rails.length} networks`);
     // a router that is itself a guest says so — common enough at home. When
     // the virtualization box already encloses it, the enclosure says it and
     // the physical host stays a tooltip detail (this view is logical).
-    if (router.parent && !routerInside)
-      el("text", { x: routerX + routerW / 2 - 8, y: yTop + 46,
-                   "text-anchor": "middle", class: "gwlabel" }, rgrp,
-         `on ${router.parent}`);
-    roleIcon(rgrp, "firewall", routerX + routerW - 26, yTop + 6);
+    if (showParent)
+      el("text", { x: cx, y: R.y + 46, "text-anchor": "middle", class: "gwlabel" },
+         rgrp, `on ${router.parent}`);
+    roleIcon(rgrp, "firewall", R.x + R.w - 26, R.y + 6);
     title(rgrp, `${router.name} · routes ${router.rails.length} networks`
                 + (router.parent ? `\nruns as a VM on ${router.parent}` : ""));
     router.rails.forEach(k => {
       if (!(k in pos)) return;
-      const d = el("circle", { cx: routerX, cy: laneY(pos[k]), r: 4.2,
-                               class: "rim" }, rgrp);
+      const c = P(routerU, laneV(pos[k]));
+      const d = el("circle", { cx: c.x, cy: c.y, r: 4.2, class: "rim" }, rgrp);
       const r = rails[pos[k]];
       title(d, r.gateway ? `gateway ${r.gateway}` : (r.name || k));
       track(d, [k]);
@@ -792,46 +555,53 @@ function drawLanes() {
 
     const wanRail = rg.default && rg.default.rail
       ? rails.find(r => r.key === rg.default.rail) : null;
-    const cloudY = wanRail ? laneY(pos[wanRail.key])
-                 : (yTop + yBot) / 2;
+    const cloudV = wanRail ? laneV(pos[wanRail.key]) : (rV0 + rV1) / 2;
+    const C = P(cloudU, cloudV);
     const cloud = el("g", {});
     if (rg.default) {
-      const drop = el("line", { x1: routerX + routerW, y1: cloudY,
-                                x2: cloudX - 100, y2: cloudY, class: "defroute" });
+      const drop = lineEl(root, routerEnd, cloudV, cloudU - cloudEdge - 4, cloudV,
+                          { class: "defroute" });
       if (wanRail) track(drop, [wanRail.key]);
     }
-    el("ellipse", { cx: cloudX, cy: cloudY, rx: 96, ry: 30, class: "cloud" }, cloud);
-    el("text", { x: cloudX, y: cloudY - 3, "text-anchor": "middle", class: "rlabel" },
+    el("ellipse", { cx: C.x, cy: C.y, rx: cloudRx, ry: cloudRy, class: "cloud" }, cloud);
+    el("text", { x: C.x, y: C.y - 3, "text-anchor": "middle", class: "rlabel" },
        cloud, rg.wan_names[0] || "internet");
     const gw = rg.gateways[0];
-    if (gw) el("text", { x: cloudX, y: cloudY + 12, "text-anchor": "middle",
+    if (gw) el("text", { x: C.x, y: C.y + 12, "text-anchor": "middle",
                          class: "gwlabel" }, cloud, `${gw.name} ${gw.status || ""}`.trim());
     if (wanRail) {
-      el("text", { x: routerX + routerW + 12, y: cloudY - 8, class: "gwlabel" },
-         cloud, wanRail.vid != null ? `via VLAN ${wanRail.vid}` : `via ${wanRail.name}`);
+      const m = P((routerEnd + cloudU - cloudEdge) / 2, cloudV);
+      el("text", HZ ? { x: routerEnd + 12, y: m.y - 8 } : { x: m.x + 8, y: m.y + 4 },
+         cloud, wanRail.vid != null ? `via VLAN ${wanRail.vid}` : `via ${wanRail.name}`)
+        .setAttribute("class", "gwlabel");
       track(cloud, [wanRail.key]); wireHover(cloud, [wanRail.key]);
     }
     if (rg.default && rg.default.gateway)
       title(cloud, `default via ${rg.default.gateway}`);
 
-    // tunnels stack under the cloud; a lane reached through one connects
-    // to the tunnel, not the provider cloud
+    // tunnels sit beside the cloud, on whichever side has more room inside
+    // the router's span, so the encrypted transport leaves the router
+    // straight from its edge instead of diving past its end. A lane
+    // reached through a tunnel connects to the tunnel, not the cloud.
+    const step = HZ ? tunRy * 2 + 10 : tunRx * 2 + 16;
+    const first = HZ ? cloudRy + tunRy + 12 : cloudRx + tunRx + 16;
+    const dir = (cloudV - rV0) >= (rV1 - cloudV) ? -1 : 1;
     tuns.forEach((t, i) => {
-      const ty = cloudY + 84 + i * 78;
+      const tv = cloudV + dir * (first + i * step);
       const g = el("g", { class: "tunnel" });
-      // the encrypted transport terminates at the router: meet the box on
-      // its edge even when the tunnel stacks below the box's bottom
-      track(el("line", { x1: routerX + routerW, y1: Math.min(ty, yBot - 12),
-                         x2: cloudX - 86, y2: ty, class: "tunpath" }), t.rails);
+      const leave = Math.min(Math.max(tv, rV0 + 14), rV1 - 14);
+      track(lineEl(root, routerEnd, leave, cloudU - tunEdge, tv, { class: "tunpath" }),
+            t.rails);
       t.rails.forEach(k => {
         if (!(k in pos)) return;
-        track(el("line", { x1: routerX - 18, y1: laneY(pos[k]),
-                           x2: cloudX - 86, y2: ty, class: "tundrop" }), [k]);
+        track(lineEl(root, routerU - 18, laneV(pos[k]), cloudU - tunEdge, tv,
+                     { class: "tundrop" }), [k]);
       });
-      el("ellipse", { cx: cloudX, cy: ty, rx: 86, ry: 27, class: "tuncloud" }, g);
-      el("text", { x: cloudX, y: ty - 3, "text-anchor": "middle", class: "rlabel" },
+      const T = P(cloudU, tv);
+      el("ellipse", { cx: T.x, cy: T.y, rx: tunRx, ry: tunRy, class: "tuncloud" }, g);
+      el("text", { x: T.x, y: T.y - 3, "text-anchor": "middle", class: "rlabel" },
          g, t.name);
-      el("text", { x: cloudX, y: ty + 12, "text-anchor": "middle",
+      el("text", { x: T.x, y: T.y + 12, "text-anchor": "middle",
                    class: "gwlabel tunstat " + (t.status || "") }, g,
          t.label + (t.status ? " · " + t.status : ""));
       title(g, [`${t.label} tunnel · ${t.name}`,
@@ -842,9 +612,30 @@ function drawLanes() {
       if (t.rails.length) { track(g, t.rails); wireHover(g, t.rails); }
     });
   }
+
+  // faint alternating bands make the rows scannable at a distance; sized
+  // to the finished drawing and slipped underneath it
+  const bb = root.getBBox();
+  const uMax = HZ ? bb.x + bb.width : bb.y + bb.height;
+  rails.forEach((r, i) => {
+    if (i % 2) return;
+    const R = box(0, laneV(i) - pitch / 2, uMax + 16, pitch);
+    const band = el("rect", { x: R.x, y: R.y, width: R.w, height: R.h,
+                              class: "laneband" });
+    root.insertBefore(band, root.firstChild);
+  });
+  // the viewBox hugs the content, so "fit" means the whole map
+  const bb2 = root.getBBox();
+  svg.setAttribute("viewBox",
+    `${bb2.x - 12} ${bb2.y - 12} ${bb2.width + 24} ${bb2.height + 24}`);
 }
 
-if (AXIS === "lanes" && nR) drawLanes(); else drawRails();
+if (nR) draw();
+else {
+  svg.setAttribute("viewBox", "0 0 600 80");
+  el("text", { x: 20, y: 44, class: "band" }, root,
+     "NO NETWORKS YET — a collector that reports VLANs or subnets fills this view");
+}
 
 // --- chips, focus, zoom/pan/fit --------------------------------------------
 function applyRouted() {
