@@ -106,7 +106,8 @@ how much each source can actually know:
 ## Snapshots
 
 - One fully self-contained HTML file: inline CSS/JS/SVG, zero external requests.
-  Contains topology, all device/port detail, IPAM tables, leases, ARP, latest configs.
+  Contains the topology map, the routed view, all device/port detail, IPAM tables,
+  leases, ARP, latest configs.
 - Nightly schedule + on-demand + (later) automatically on critical alert.
 - Written to cloud-synced storage on a separate device; optional S3 copy with lifecycle
   rules. Retention: 30 dailies, 12 monthlies, all alert-triggered.

@@ -19,6 +19,7 @@ from pathlib import Path
 import httpx
 
 from . import db
+from . import routed
 from .config import Settings
 from .ports import port_kind
 
@@ -80,6 +81,9 @@ def generate(settings: Settings) -> str:
         # treat-as-sensitive one — nothing in it is real
         is_demo = db.get_state(conn, "demo_seed") == "1"
         graph_json, peak_ready = web.build_topology_graph(conn, settings)
+        # the routed view rides along (#50): same builder and template as
+        # /routed, the way the map reuses the topology's
+        routed_json = web._script_safe_json(routed.build_routed_graph(conn, settings))
         ages = web.source_ages(conn)
         totals = web.device_totals(conn)   # frozen at generation, like ages
         devices = [dict(r) for r in conn.execute(
@@ -172,7 +176,7 @@ def generate(settings: Settings) -> str:
     font = (Path(__file__).parent / "static" / "fonts" / "ibm-plex-sans-latin-var.woff2").read_bytes()
     font_url = "data:font/woff2;base64," + base64.b64encode(font).decode()
     return web.templates.env.get_template("snapshot.html").render(
-        graph_json=graph_json, peak_ready=peak_ready, d3_js=d3_js,
+        graph_json=graph_json, routed_json=routed_json, peak_ready=peak_ready, d3_js=d3_js,
         generated=time.strftime("%Y-%m-%d %H:%M %Z"), ages=ages,
         devices=devices, links=links, vlans=vlans, subnets=subnets,
         endpoints=endpoints, gateways=gateways, configs=configs,

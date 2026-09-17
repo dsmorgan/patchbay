@@ -10,6 +10,13 @@ put.
 
 ### Added
 
+- **Routed view in the snapshot** (#50). The break-glass file now carries
+  the L3 picture under the topology map, from the same builder and
+  template as /routed — never a second implementation. Its state lives in
+  memory there (the URL belongs to the topology map on the same page),
+  the `vertical rails` chip redraws in place instead of reloading, and
+  double-click jumps to the device's section or the VLAN's row.
+
 - **Topology: derived zones** (#47). A translucent hull now sits behind
   each hypervisor and the guests that are nodes on the map (a virtualized
   firewall, a router VM), and a fainter one around the whole cluster when

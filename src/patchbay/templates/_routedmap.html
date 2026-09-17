@@ -190,26 +190,40 @@
 <div id="routedwrap"><svg id="routed"></svg></div>
 
 <script>
+// the whole renderer lives in one function scope: the snapshot puts this
+// template on the same page as the topology's, and two scripts sharing
+// the global scope would fight over `svg`, `state`, and friends
+(() => {
 const rg = {{ graph_json | safe }};
+const SNAPSHOT = {{ "true" if snapshot else "false" }};
+// where a node's page is: the live device page, or its section in the
+// snapshot; a VLAN's row on /vlans, or its row in the snapshot's table
+const devUrl = name => SNAPSHOT ? "#dev-" + name : `/device/${encodeURIComponent(name)}`;
+const vlanUrl = vid => vid == null ? null : SNAPSHOT ? `#vlan-${vid}` : `/vlans#v${vid}`;
 
-// --- state in the URL (ADR-0001 rules: only non-defaults serialize) --------
+// --- state in the URL (ADR-0001 rules: only non-defaults serialize). The
+// snapshot's URL belongs to the topology map on the same page, so there the
+// state lives in memory only: it starts from the defaults and never writes.
 const R_VIEWS = ["routes", "evidence"];
-const R_DEFAULTS = { view: "routes", hosts: true, groups: true, focus: null };
+const R_DEFAULTS = { view: "routes", hosts: true, groups: true, focus: null, axis: "lanes" };
 const rstate = { ...R_DEFAULTS };
-{
+if (!SNAPSHOT) {
   const p = new URLSearchParams(location.search);
   if (R_VIEWS.includes(p.get("view"))) rstate.view = p.get("view");
   if (p.get("hosts") === "0") rstate.hosts = false;
   if (p.get("groups") === "0") rstate.groups = false;
   if (p.get("focus")) rstate.focus = p.get("focus");
+  if (p.get("axis") === "v") rstate.axis = "v";
 }
 function rwrite() {
+  if (SNAPSHOT) return;
   const p = new URLSearchParams(location.search);
-  ["view", "hosts", "groups", "focus"].forEach(k => p.delete(k));
+  ["view", "hosts", "groups", "focus", "axis"].forEach(k => p.delete(k));
   if (rstate.view !== R_DEFAULTS.view) p.set("view", rstate.view);
   if (!rstate.hosts) p.set("hosts", "0");
   if (!rstate.groups) p.set("groups", "0");
   if (rstate.focus) p.set("focus", rstate.focus);
+  if (rstate.axis === "v") p.set("axis", "v");
   const qs = p.toString();
   history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
 }
@@ -299,17 +313,16 @@ function nameList(names) {
 }
 const clip = (s, n) => s.length > n ? s.slice(0, Math.max(1, n - 1)) + "…" : s;
 
-// networks-as-lanes is the default; ?axis=v turns the same drawing on its
-// side — vertical rails, edge at the bottom, internet at the top
-const AXIS = (new URLSearchParams(location.search)).get("axis") === "v"
-  ? "v" : "lanes";
-const HZ = AXIS === "lanes";
-
 const router = rg.routers[0] || null;
 // taps draw first so they pass underneath rails and boxes
-const tapLayer = el("g", {});
+let tapLayer = null;
 
+// networks-as-lanes is the default; axis=v (the `vertical rails` chip)
+// turns the same drawing on its side — vertical rails, edge at the bottom,
+// internet at the top. draw() reads the axis each time, so a toggle is a
+// redraw in place, not a reload.
 function draw() {
+  const HZ = rstate.axis !== "v";
   // across pitch: lanes are a tight fixed row; rails spread toward a
   // comfortable width, with a ceiling so two networks don't sit absurdly
   // far apart and a floor so twenty stay legible
@@ -532,7 +545,7 @@ function draw() {
     }
     title(tag, tip); title(line, tip);
     [line, tag].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); });
-    act(tag, r.key, [r.key], r.vid != null ? `/vlans#v${r.vid}` : null);
+    act(tag, r.key, [r.key], vlanUrl(r.vid));
     // loose single-homed hosts: a ×N chip riding the lane at the edge
     if (r.hosts > 0) {
       const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
@@ -545,7 +558,7 @@ function draw() {
                + `${r.name || r.key}\n` + nameList(r.host_names)
                + (unnamed ? `\n${unnamed}` : ""));
       track(g, [r.key]); wireHover(g, [r.key]);
-      act(g, r.key, [r.key], r.vid != null ? `/vlans#v${r.vid}` : null);
+      act(g, r.key, [r.key], vlanUrl(r.vid));
     }
   });
 
@@ -560,7 +573,7 @@ function draw() {
     title(g, `${names.length} ${noun}${names.length > 1 ? "s" : ""} on `
              + `${r.name || r.key}\n` + nameList(names));
     track(g, [r.key]); wireHover(g, [r.key]);
-    act(g, r.key, [r.key], r.vid != null ? `/vlans#v${r.vid}` : null);
+    act(g, r.key, [r.key], vlanUrl(r.vid));
   }
   // a named box on its home lane; a stem reaches across to its other lanes
   function laneHost(parent, h, u0) {
@@ -594,7 +607,7 @@ function draw() {
       track(d, [l.rail]);
     });
     track(grp, keys); wireHover(grp, keys);
-    act(grp, h.name, keys, `/device/${encodeURIComponent(h.name)}`);
+    act(grp, h.name, keys, devUrl(h.name));
   }
   // wireless / virtualization container: a slab across its lanes. opts can
   // stretch it along and across — the virtualization box does both to take
@@ -648,7 +661,7 @@ function draw() {
     track(grp, b.rails); wireHover(grp, b.rails);
     act(grp, b.name, b.rails,
         !b.noclick && (!b.aps || b.aps.length === 1)
-          ? `/device/${encodeURIComponent(b.aps ? b.aps[0] : b.name)}` : null);
+          ? devUrl(b.aps ? b.aps[0] : b.name) : null);
   }
 
   if (wifi) laneSlab(wifi, wifiU, "ap", "client");
@@ -687,7 +700,7 @@ function draw() {
       track(d, [k]);
     });
     track(rgrp, router.rails); wireHover(rgrp, router.rails);
-    act(rgrp, router.name, router.rails, `/device/${encodeURIComponent(router.name)}`);
+    act(rgrp, router.name, router.rails, devUrl(router.name));
 
     const wanRail = rg.default && rg.default.rail
       ? rails.find(r => r.key === rg.default.rail) : null;
@@ -766,11 +779,19 @@ function draw() {
     `${bb2.x - 12} ${bb2.y - 12} ${bb2.width + 24} ${bb2.height + 24}`);
 }
 
-if (nR) draw();
-else {
-  svg.setAttribute("viewBox", "0 0 600 80");
-  el("text", { x: 20, y: 44, class: "band" }, root,
-     "NO NETWORKS YET — a collector that reports VLANs or subnets fills this view");
+// (re)draw from scratch: the axis toggle and nothing else calls it twice
+function redraw() {
+  root.innerHTML = "";
+  members.length = 0;
+  for (const k of Object.keys(focusSets)) delete focusSets[k];
+  view = { x: 0, y: 0, k: 1 }; applyView();
+  tapLayer = el("g", {});
+  if (nR) draw();
+  else {
+    svg.setAttribute("viewBox", "0 0 600 80");
+    el("text", { x: 20, y: 44, class: "band" }, root,
+       "NO NETWORKS YET — a collector that reports VLANs or subnets fills this view");
+  }
 }
 
 // --- chips, focus, zoom/pan/fit --------------------------------------------
@@ -788,7 +809,7 @@ function applyRouted() {
   };
   setChip("r-hosts", rstate.hosts);
   setChip("r-groups", rstate.groups);
-  setChip("r-axis", AXIS === "v");
+  setChip("r-axis", rstate.axis === "v");
   svg.classList.toggle("evidence", rstate.view === "evidence");
   const radio = document.getElementById(`rview-${rstate.view}`);
   if (radio) radio.checked = true;
@@ -808,17 +829,17 @@ document.getElementById("r-hosts").addEventListener("click", () => {
 document.getElementById("r-groups").addEventListener("click", () => {
   rstate.groups = !rstate.groups; rwrite(); applyRouted(); });
 document.getElementById("r-axis").addEventListener("click", () => {
-  const p = new URLSearchParams(location.search);
-  if (AXIS === "lanes") p.set("axis", "v"); else p.delete("axis");
-  location.search = p.toString();
+  rstate.axis = rstate.axis === "v" ? "lanes" : "v";
+  rwrite(); redraw(); applyRouted();
 });
-applyRouted();
 
 let view = { x: 0, y: 0, k: 1 };
 function applyView() {
   root.setAttribute("transform",
     `translate(${view.x},${view.y}) scale(${view.k})`);
 }
+redraw();
+applyRouted();
 const wrap = document.getElementById("routedwrap");
 wrap.addEventListener("wheel", ev => {
   ev.preventDefault();
@@ -852,4 +873,5 @@ wrap.addEventListener("click", ev => {
 document.getElementById("r-fit").addEventListener("click", () => {
   view = { x: 0, y: 0, k: 1 }; applyView();
 });
+})();
 </script>

@@ -237,3 +237,15 @@ The decisions that replaced it, recorded here rather than rewritten above:
   port group > IPAM only > learned through a tunnel), the tag carries a
   badge per reporter, everything attached goes quiet. Load, Protocol,
   multi-router sites, and snapshot embedding are tracked in #50.
+
+## Amendment — 2026-09-17: the #50 follow-ups (0.14)
+
+- **Snapshot embedding** (Decision 1's follow-up) is done the way the
+  physical map is: `snapshot.py` calls `build_routed_graph()` and
+  `snapshot.html` includes `_routedmap.html` with `snapshot = true`. Two
+  consequences shaped the template. The renderer runs inside one function
+  scope, because two map scripts share the snapshot page and would
+  otherwise fight over globals; and the URL is the topology map's there,
+  so the routed view's state starts from the defaults and never writes —
+  which made the axis toggle a redraw in place rather than a reload,
+  everywhere. Links become in-page anchors (`#dev-<name>`, `#vlan-<vid>`).

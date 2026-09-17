@@ -38,6 +38,11 @@ network.{% endif %}</p>
 {% set snapshot = true %}
 {% include "_topomap.html" %}
 
+<h2 id="routed-view">Routed view</h2>
+{# the L3 picture, from the same template as /routed (#50); its graph JSON
+   takes the topology's variable name for the include's duration #}
+{% with graph_json = routed_json %}{% include "_routedmap.html" %}{% endwith %}
+
 <h2 id="devices">Devices ({{ devices | length }})</h2>
 {% for d in devices %}
 <section class="dev" id="dev-{{ d.name }}">
@@ -112,7 +117,7 @@ network.{% endif %}</p>
 <table>
   <tr><th>VID</th><th>Name</th><th>Devices carrying</th></tr>
   {% for v in vlans %}
-  <tr><td class="mono">{{ v.vid }}</td><td>{{ v.name or '-' }}</td>
+  <tr id="vlan-{{ v.vid }}"><td class="mono">{{ v.vid }}</td><td>{{ v.name or '-' }}</td>
       <td class="mono">{{ v.devices }}</td></tr>
   {% endfor %}
 </table>

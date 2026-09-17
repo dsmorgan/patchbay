@@ -77,8 +77,8 @@ instead of the published image; `-d` leaves it running, and `--stop` removes it.
 
 For zero installation at all, **[open the live demo](https://dsmorgan.github.io/patchbay/demo-snapshot.html)** —
 it's a break-glass snapshot of the demo network: the interactive topology
-map, every device and port, VLANs, and endpoints, in one self-contained HTML
-file that works entirely offline. A real deployment's nightly snapshot looks
+map, the routed view, every device and port, VLANs, and endpoints, in one
+self-contained HTML file that works entirely offline. A real deployment's nightly snapshot looks
 exactly like this, built from your own network.
 
 Nothing in [.env.example](.env.example) is required. Each collector activates

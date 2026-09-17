@@ -54,6 +54,12 @@ def test_snapshot_generates_offline(clean_env, tmp_path):
     assert "const SNAPSHOT = true" in t
     assert 'id="dev-sw1"' in t and 'id="dev-hyp1"' in t
     assert "4 devices, 4 up, 0 down" in t     # rail totals, frozen (#46)
+    # the routed view rides along (#50): its own svg, graph, and a VLAN row
+    # anchor for its tags to jump to; the two map scripts share the page
+    assert 'id="routed"' in t and "const rg = " in t
+    assert '"key": "v24"' in t
+    assert 'id="vlan-24"' in t
+    assert t.count("const SNAPSHOT = true") == 2
     # no oxidized configured -> no configs SECTION (the intro prose mentions
     # the word, so match the heading, not the phrase)
     assert "<h2>Device configs (redacted)</h2>" not in t

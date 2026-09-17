@@ -107,11 +107,14 @@ site-specific leaked into code, tests, or docs.
   params for series/grid; health graphs are gated on the sensor endpoints since
   LibreNMS happily renders empty axes.
 
-- **Snapshots** (`snapshot.py`): reuse the live UI's `build_topology_graph()`
-  and `fetch_graph_image()` — never reimplement a view for the snapshot, or
-  the two drift. The map lives in `templates/_topomap.html`, shared by both;
-  set `snapshot = true` before including it. `font_url` is the one style knob
-  the snapshot overrides (the bundled typeface as a data URI, like d3).
+- **Snapshots** (`snapshot.py`): reuse the live UI's `build_topology_graph()`,
+  `build_routed_graph()`, and `fetch_graph_image()` — never reimplement a
+  view for the snapshot, or the two drift. The maps live in
+  `templates/_topomap.html` and `_routedmap.html`, shared by both; set
+  `snapshot = true` before including them. Both map scripts share one page
+  there, so the routed renderer runs inside a function scope and keeps its
+  state in memory (the URL is the topology's). `font_url` is the one style
+  knob the snapshot overrides (the bundled typeface as a data URI, like d3).
 - **The routed view is one renderer on two axes** (`_routedmap.html`): geometry is
   laid out in lane space (u along the networks, v across) and mapped onto the
   screen as horizontal lanes or, with `?axis=v`, vertical rails with the
