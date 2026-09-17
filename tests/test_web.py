@@ -1315,3 +1315,18 @@ def test_rail_carries_device_totals(clean_env, tmp_path, client):
         assert '</i>4<span class="rail-label">up<' in body, p
         assert '</i>1<span class="rail-label">down<' in body, p
         assert '</i>1<span class="rail-label">stale<' in body, p
+
+
+# --- topology: port names on hover (#48) --------------------------------------
+
+def test_topology_port_names_are_a_toggle(clean_env, tmp_path, client):
+    # the labels stay in the graph (the client places them per tick) but
+    # the default paint hides them until an edge or device is hovered; the
+    # `ports` state key shows them all and round-trips like any other
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/topology").text
+    assert 'id="portnames"' in body
+    assert "#topo:not(.ports) .portlab:not(.show)" in body   # the gate
+    assert 'class="hit"' in body or '"hit"' in body            # wide hover twin
+    assert client.get("/topology?ports=1").status_code == 200
+    assert _graph_at(client, "?ports=1") == _graph(client, tmp_path)   # paint, not data

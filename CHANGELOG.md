@@ -10,6 +10,15 @@ put.
 
 ### Added
 
+- **Topology: port names on hover** (#48). Edges no longer print their
+  interface names permanently — on a dense map neighboring labels
+  overlapped into noise. Hovering an edge (its hit area is now a wide
+  invisible twin of the line, which also carries the tooltip) reveals the
+  names at both ends; hovering a device reveals the names on every one of
+  its links — the "what is plugged into this switch" question. Revealed
+  names paint above every node. The `port names` chip (`ports=1`) shows
+  them all, for the old always-on picture.
+
 - **Device totals in the nav rail** (#46). Every page's rail carries how
   many devices patchbay knows and how they split: up, down, and stale — a
   device no source has reported for two hours counts as stale whatever

@@ -31,6 +31,15 @@
   .edge.fdbhost { opacity: 0.45; }
   .portlab, .speedlab { font: 10.5px var(--font-mono); fill: var(--muted);
              paint-order: stroke; stroke: var(--bg); stroke-width: 3.5px; }
+  /* port names show on hover (#48): the hovered edge's two ends, or every
+     link of a hovered device — "what is plugged into this switch". They
+     render above the nodes, so revealing them never collides with a
+     neighbor. The `port names` chip (state.ports) shows them all. */
+  .portlab { pointer-events: none; }
+  #topo:not(.ports) .portlab:not(.show) { display: none; }
+  /* the invisible wide twin of every edge: a forgiving hover target that
+     carries the edge's tooltip, so a 4px line is not the hit area */
+  .hit { stroke: transparent; stroke-width: 16; fill: none; pointer-events: stroke; }
   .portlab.trunk { fill: var(--accent); font-weight: 600; }
   /* a mirror destination carries copies, not conversation — mark the port and
      lighten the cable so it doesn't read as a normal path through the fabric */
@@ -159,6 +168,7 @@
     <button type="button" class="fchip" id="hosts" aria-pressed="false">wired hosts</button>
     <button type="button" class="fchip" id="unmhosts" aria-pressed="false">behind unmanaged</button>
     <button type="button" class="fchip" id="tierbox" aria-pressed="false" title="lanes own each node's vertical position; off = arrange freely, pins keep both axes">tier lanes</button>
+    <button type="button" class="fchip" id="portnames" aria-pressed="false" title="show every link's interface names; off = only while hovering an edge or a device">port names</button>
   </span>
   <span class="grp" id="loadgrp" hidden>
     <select id="loadmode">
@@ -213,7 +223,7 @@
     <span class="swatch" style="background: var(--crit)"></span>60%+
     <span id="leg-peak">· pk = 24h peak</span></span>
   <span class="item" id="leg-vlan" data-modes="wiring load vlan evidence" style="color: var(--ink)"></span>
-  <span class="hint">drag pins a node{% if not snapshot %} (persists) · shift-click unpins · reset layout clears all pins{% endif %} · scroll zooms · background pans · hover an edge for speed, load &amp; VLANs · click a device for detail</span>
+  <span class="hint">drag pins a node{% if not snapshot %} (persists) · shift-click unpins · reset layout clears all pins{% endif %} · scroll zooms · background pans · hover an edge for its port names, speed, load &amp; VLANs, a device for the names on every link · click a device for detail</span>
 </p>
 
 {% if snapshot %}<script>{{ d3_js | safe }}</script>
@@ -329,14 +339,21 @@ graph.nodes.forEach(n => {
 const link = gContent.append("g").selectAll("line").data(graph.links).join("line")
     .attr("class", d => `edge ${d.cls}`)
     .attr("stroke-width", d => d.sw);
-link.append("title").text(d =>
+// the hover twin: wide, invisible, above the edges and below the nodes —
+// it carries the tooltip and the hover that reveals the port names
+const hit = gContent.append("g").selectAll("line").data(graph.links).join("line")
+    .attr("class", "hit");
+hit.append("title").text(d =>
     `${d.source} ${d.alab || ""} ↔ ${d.target} ${d.blab || ""}` +
     `${d.speed ? ` · ${d.speed}` : ""}${d.util != null ? ` · ${d.util}% used` : ""}` +
     `${d.vlans ? ` · vlans ${d.vlans.length > 8 ? d.vlans.length + " (all)" : d.vlans.join(",")}` : ""}` +
     `${d.note ? `\n${d.note}` : ""}`);
-const alab = gContent.append("g").selectAll("text").data(graph.links.filter(d => d.alab)).join("text")
+// port-name layers are created here but raised above the nodes further
+// down, once the nodes exist (a revealed label must never sit under a box)
+const gAlab = gContent.append("g"), gBlab = gContent.append("g");
+const alab = gAlab.selectAll("text").data(graph.links.filter(d => d.alab)).join("text")
     .attr("class", d => "portlab" + (d.amode ? " " + d.amode : "")).text(d => d.alab);
-const blab = gContent.append("g").selectAll("text").data(graph.links.filter(d => d.blab)).join("text")
+const blab = gBlab.selectAll("text").data(graph.links.filter(d => d.blab)).join("text")
     .attr("class", d => "portlab" + (d.bmode ? " " + d.bmode : "")).text(d => d.blab);
 const slab = gContent.append("g").selectAll("text").data(graph.links.filter(d => d.speed)).join("text")
     .attr("class", d => "speedlab" + (d.cls.includes("vslow") ? " vslow"
@@ -364,6 +381,20 @@ node.append("text").attr("class", "nm").attr("x", d => -d.w / 2 + 24).attr("y", 
 node.append("text").attr("class", "sub").attr("x", d => -d.w / 2 + 24).attr("y", 14)
     .text(d => d.sub);
 node.append("title").text(d => d.title ?? d.name);
+gAlab.raise(); gBlab.raise();   // port names paint above every node
+// hover reveals port names (#48): an edge shows its two ends, a device
+// shows the names on every one of its links
+let hovLink = null, hovNode = null;
+function showPortNames() {
+  const on = d => d === hovLink || (hovNode != null &&
+    (d.source === hovNode || d.target === hovNode));
+  alab.classed("show", on);
+  blab.classed("show", on);
+}
+hit.on("mouseenter", (e, d) => { hovLink = d; showPortNames(); })
+   .on("mouseleave", () => { hovLink = null; showPortNames(); });
+node.on("mouseenter", (e, d) => { hovNode = d; showPortNames(); })
+    .on("mouseleave", () => { hovNode = null; showPortNames(); });
 node.on("click", (e, d) => {
   if (e.defaultPrevented) return;      // this was the tail of a drag
   if (e.shiftKey && !SNAPSHOT) {       // shift-click unpins (plain click navigates)
@@ -473,6 +504,10 @@ function ticked() {
     const e = ends(d);
     d3.select(this).attr("x1", e.ax).attr("y1", e.ay).attr("x2", e.bx).attr("y2", e.by);
   });
+  hit.each(function (d) {
+    const e = ends(d);
+    d3.select(this).attr("x1", e.ax).attr("y1", e.ay).attr("x2", e.bx).attr("y2", e.by);
+  });
   alab.each(function (d) {
     const e = ends(d);
     placePortLabel(d3.select(this), d, { n: d.source, x: e.ax, y: e.ay },
@@ -518,7 +553,8 @@ vlansel.append(new Option("all", ""));
 // the map's whole state lives in the URL; `view` is a mode, not a checkbox.
 // See docs/adr/0001-page-shell-and-map-modes.md Decision 1 for the contract.
 const DEFAULTS = { view: "wiring", load: "now", vlan: null, focus: null, layout: "free",
-                    hideoff: true, coreonly: false, hosts: false, unmhosts: false };
+                    hideoff: true, coreonly: false, hosts: false, unmhosts: false,
+                    ports: false };
 const VIEWS = ["wiring", "load", "vlan", "evidence"];
 const STATE_KEYS = Object.keys(DEFAULTS);
 
@@ -540,7 +576,7 @@ function readState() {
             (graph.vlans || []).some(v => v.vid === vnum)) ? vnum : null;
   s.focus = params.get("focus") || null;
   s.layout = params.get("layout") === "tiers" ? "tiers" : "free";
-  for (const k of ["hideoff", "coreonly", "hosts", "unmhosts"]) {
+  for (const k of ["hideoff", "coreonly", "hosts", "unmhosts", "ports"]) {
     const raw = params.get(k);
     s[k] = raw == null ? DEFAULTS[k] : raw === "1";
   }
@@ -564,6 +600,7 @@ function buildParams() {
   if (state.coreonly !== DEFAULTS.coreonly) params.set("coreonly", state.coreonly ? "1" : "0");
   if (state.hosts !== DEFAULTS.hosts) params.set("hosts", state.hosts ? "1" : "0");
   if (state.unmhosts !== DEFAULTS.unmhosts) params.set("unmhosts", state.unmhosts ? "1" : "0");
+  if (state.ports !== DEFAULTS.ports) params.set("ports", state.ports ? "1" : "0");
   for (const k in (state._extra || {})) params.set(k, state._extra[k]);
   return params;
 }
@@ -626,6 +663,7 @@ function applyFilters() {
   node.style("display", d => vis.has(d.name) ? null : "none");
   node.classed("focused", d => state.focus != null && d.name === state.focus);
   link.style("display", d => linkVisible(d) ? null : "none");
+  hit.style("display", d => linkVisible(d) ? null : "none");
   alab.style("display", d => linkVisible(d) ? null : "none");
   blab.style("display", d => linkVisible(d) ? null : "none");
   slab.style("display", d => linkVisible(d) ? null : "none");
@@ -767,6 +805,8 @@ function applyControls() {
   setChip("hosts", state.hosts);
   setChip("unmhosts", state.unmhosts);
   setChip("tierbox", state.layout === "tiers");
+  setChip("portnames", state.ports);
+  svg.classed("ports", state.ports);
   document.getElementById("view-" + state.view).checked = true;
   document.getElementById("loadmode").value = state.load;
   vlansel.value = state.vlan == null ? "" : String(state.vlan);
@@ -786,6 +826,7 @@ function render() {
 ["hideoff", "coreonly", "hosts", "unmhosts"].forEach(id => {
   document.getElementById(id).addEventListener("click", () => set({ [id]: !state[id] }));
 });
+document.getElementById("portnames").addEventListener("click", () => set({ ports: !state.ports }));
 document.querySelectorAll('input[name="view"]').forEach(r =>
     r.addEventListener("change", () => set({ view: r.value })));
 document.getElementById("loadmode").addEventListener("change", e => set({ load: e.target.value }));
