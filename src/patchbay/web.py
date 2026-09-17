@@ -842,10 +842,32 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
     vlan_names = {r["vid"]: r["name"] for r in conn.execute("SELECT vid, name FROM vlans")}
     present_vlans = sorted({v for n in nodes for v in n.get("vlans", [])})
     vlan_opts = [{"vid": v, "name": vlan_names.get(v)} for v in present_vlans]
+    # derived group containers (#47): a hypervisor with the guests that are
+    # nodes here (a virtualized firewall, a router VM), and — when the
+    # hypervisors belong to one vSphere — a cluster zone around them all,
+    # named after the vSphere server like the routed view's box. Computed
+    # from devices.parent, never drawn by hand; the client draws a padded
+    # hull behind the members and pulls them together. A hypervisor with
+    # no guest on the map has nothing to contain and gets no zone.
+    zones: list[dict] = []
+    hyps = [d for d in devs if d["role"] == "hypervisor"]
+    hyp_kids: dict[str, list[str]] = {}
+    for hy in hyps:
+        kids = sorted(d["name"] for d in devs
+                      if d["parent"] == hy["name"] and d["name"] in node_names_final)
+        hyp_kids[hy["name"]] = kids
+        if kids:
+            zones.append({"id": f"hyp:{hy['name']}", "kind": "hyp",
+                          "label": hy["name"], "members": [hy["name"], *kids]})
+    if len(hyps) > 1 and any((d["source"] or "") == "vsphere" for d in hyps):
+        zones.append({"id": "cluster", "kind": "cluster",
+                      "label": routed.virt_label(settings) or "virtualization",
+                      "members": [m for hy in hyps
+                                  for m in (hy["name"], *hyp_kids[hy["name"]])]})
     # names/labels come from the network (LLDP sysnames, client names) —
     # escape script-breaking chars so a hostile advertisement can't XSS
     graph_json = _script_safe_json({"nodes": nodes, "links": edges,
-                                    "vlans": vlan_opts})
+                                    "vlans": vlan_opts, "zones": zones})
     return graph_json, bool(peak_of)
 
 

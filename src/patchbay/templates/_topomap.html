@@ -194,6 +194,16 @@
   .band:nth-of-type(odd) rect { opacity: 0.4; }
   .band:nth-of-type(even) rect { opacity: 0; }
   .band-label { font: 11px var(--font-ui); fill: var(--muted); opacity: 0.75; }
+  /* derived zones (#47): a translucent hull behind a hypervisor and its
+     guests, a fainter one around the cluster. Computed from the parent
+     relationship, drawn under everything, never a click target. Hypervisor
+     blue, because that is what the zone says. */
+  .zones { pointer-events: none; }
+  .zone rect { fill: var(--r-hyp); fill-opacity: 0.07; stroke: var(--r-hyp);
+               stroke-opacity: 0.4; stroke-width: 1.2; stroke-dasharray: 6 5; }
+  .zone.cluster rect { fill-opacity: 0.035; stroke-opacity: 0.28; }
+  .zone text { font: 600 10.5px var(--font-ui); fill: var(--r-hyp); opacity: 0.75;
+               letter-spacing: 0.04em; }
   .toolbar .fitbtn { background: none; border: 0; color: var(--ink); font: inherit;
                       cursor: pointer; padding: 0; }
   .toolbar .fitbtn:hover { color: var(--accent); }
@@ -218,6 +228,7 @@
     <button type="button" class="fchip" id="tierbox" aria-pressed="false" title="lanes own each node's vertical position; off = arrange freely, pins keep both axes">tier lanes</button>
     <button type="button" class="fchip" id="portnames" aria-pressed="false" title="show every link's interface names; off = only while hovering an edge or a device">port names</button>
     <button type="button" class="fchip" id="edgechips" aria-pressed="true" title="speed and access-VLAN chips on the edges">edge chips</button>
+    <button type="button" class="fchip" id="zonesbox" aria-pressed="true" title="a zone around each hypervisor and its VMs, and around the cluster; the VM-on-host edge hides inside a zone">zones</button>
   </span>
   <span class="grp" id="loadgrp" hidden>
     <select id="loadmode">
@@ -256,6 +267,7 @@
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-hyp)" stroke-width="2"/></svg> hypervisor-reported</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-ap)" stroke-width="2"/></svg> controller-reported</span>
   <span class="item" data-modes="wiring vlan evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-hyp)" stroke-width="2" stroke-dasharray="3 5"/></svg> VM on host</span>
+  <span class="item" data-modes="wiring load vlan evidence"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" rx="4" fill="var(--r-hyp)" fill-opacity="0.12" stroke="var(--r-hyp)" stroke-opacity="0.5" stroke-dasharray="4 3"/></svg> zone: a host and its VMs · the cluster around them</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--ink)" stroke-width="2"/></svg> declared (operator)</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--muted)" stroke-width="2" stroke-dasharray="5 4"/></svg> unmanaged feed</span>
   <span class="item" data-modes="wiring vlan evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--muted)" stroke-width="2" stroke-dasharray="8 4"/></svg> WAN</span>
@@ -364,6 +376,7 @@ graph.links.forEach(l => {
 
 const g = svg.append("g");
 const gBands = g.append("g").attr("class", "bands");     // drawn first: behind gContent
+const gZones = g.append("g").attr("class", "zones");     // derived hulls (#47), under the content
 const gContent = g.append("g").attr("class", "content"); // links, labels, nodes — fit() measures this
 const zoom = d3.zoom().scaleExtent([0.2, 3]).on("zoom", e => g.attr("transform", e.transform));
 svg.call(zoom);
@@ -543,6 +556,60 @@ function placePortLabel(sel, d, from, dx, dy) {
      .attr("text-anchor", Math.abs(dx) < len * 0.35 ? "middle" : (dx < 0 ? "end" : "start"));
 }
 
+// --- derived zones (#47): a hull behind each hypervisor and its guests, and
+// around the cluster. Sized every tick from the visible members' boxes; a
+// grouping force pulls members toward their zone's centroid so they
+// cluster. Membership visibility comes from the node's _vis flag (set by
+// applyFilters) so the first synchronous tick, which runs before the
+// state model exists, simply draws none.
+let zonesOn = true;
+const zoneG = gZones.selectAll("g.zone").data(graph.zones || []).join("g")
+    .attr("class", d => `zone ${d.kind}`);
+zoneG.append("rect").attr("rx", 14);
+zoneG.append("text");
+zoneG.append("title").text(d => `${d.label}: ${d.members.join(", ")}`);
+// in the tiers layout the bands own Y, and a hull from the Edge band down
+// to Access & compute would wrap the fabric in between as if it belonged:
+// there a zone keeps only the members in its hypervisor's own band (the
+// first member is the hypervisor) and a guest in another band keeps its
+// VM-on-host edge instead
+const zoneMembers = z => {
+  const rank = (byName[z.members[0]] || {}).rank;
+  return z.members.map(n => byName[n])
+    .filter(n => n && n._vis && (!TIERS || n.rank === rank));
+};
+const zoneDrawn = z => zonesOn && zoneMembers(z).length >= 2;
+const halfH = n => isCard(n) ? nodeH(n) / 2 : 30;
+function updateZones() {
+  zoneG.each(function (z) {
+    const gz = d3.select(this), ms = zoneMembers(z);
+    if (!zoneDrawn(z)) { gz.style("display", "none"); return; }
+    gz.style("display", null);
+    const pad = z.kind === "cluster" ? 30 : 16;
+    const x0 = Math.min(...ms.map(n => n.x - n.w / 2)) - pad;
+    const x1 = Math.max(...ms.map(n => n.x + n.w / 2)) + pad;
+    const y0 = Math.min(...ms.map(n => n.y - halfH(n))) - pad - 12;   // label headroom
+    const y1 = Math.max(...ms.map(n => n.y + halfH(n))) + pad;
+    gz.select("rect").attr("x", x0).attr("y", y0).attr("width", x1 - x0).attr("height", y1 - y0);
+    gz.select("text").attr("x", x0 + 12).attr("y", y0 + 15).text(z.label);
+  });
+}
+function zoneForce(alpha) {
+  (graph.zones || []).forEach(z => {
+    if (!zoneDrawn(z)) return;
+    const ms = zoneMembers(z);
+    const k = (z.kind === "cluster" ? 0.04 : 0.12) * alpha;
+    const cx = d3.mean(ms, n => n.x), cy = d3.mean(ms, n => n.y);
+    ms.forEach(n => { n.vx += (cx - n.x) * k; if (!TIERS) n.vy += (cy - n.y) * k; });
+  });
+}
+// a VM-on-host edge says what a drawn zone already shows: it hides inside one
+const zoneCovers = d => (graph.zones || []).some(z => {
+  if (!zoneDrawn(z)) return false;
+  const names = zoneMembers(z).map(n => n.name);
+  return names.includes(d.source.name ?? d.source) && names.includes(d.target.name ?? d.target);
+});
+
 // --- bands, fit-to-view, and focus: Y owned by the tier (ADR-0001 Decision 2) ---
 // A band renders only for a rank with >=1 visible node; its width spans that
 // rank's visible nodes' X extent + 400px each side, recomputed at each settle.
@@ -634,6 +701,7 @@ function ticked() {
          + `${(e.ay + e.by) / 2 + dy / len * d.sstag})`;
   });
   node.attr("transform", d => `translate(${d.x},${d.y})`);
+  updateZones();
 }
 
 const sim = d3.forceSimulation(graph.nodes)
@@ -642,6 +710,7 @@ const sim = d3.forceSimulation(graph.nodes)
     .force("x", d3.forceX(d => d.sx).strength(0.08))
     .force("collide", d3.forceCollide(d => d.w / 2 + 26))
     .force("y", TIERS ? null : d3.forceY(d => bandCenter(d.rank)).strength(0.08))
+    .force("zones", zoneForce)
     .on("tick", ticked)
     .on("end", () => afterSettle(true));
 // the simulation's first tick is async (next animation frame); paint the
@@ -662,7 +731,7 @@ vlansel.append(new Option("all", ""));
 // See docs/adr/0001-page-shell-and-map-modes.md Decision 1 for the contract.
 const DEFAULTS = { view: "wiring", load: "now", vlan: null, focus: null, layout: "free",
                     hideoff: true, coreonly: false, hosts: false, unmhosts: false,
-                    ports: false, chips: true, sel: null };
+                    ports: false, chips: true, zones: true, sel: null };
 const VIEWS = ["wiring", "load", "vlan", "evidence"];
 const STATE_KEYS = Object.keys(DEFAULTS);
 
@@ -685,7 +754,7 @@ function readState() {
   s.focus = params.get("focus") || null;
   s.sel = byName[params.get("sel")] ? params.get("sel") : null;
   s.layout = params.get("layout") === "tiers" ? "tiers" : "free";
-  for (const k of ["hideoff", "coreonly", "hosts", "unmhosts", "ports", "chips"]) {
+  for (const k of ["hideoff", "coreonly", "hosts", "unmhosts", "ports", "chips", "zones"]) {
     const raw = params.get(k);
     s[k] = raw == null ? DEFAULTS[k] : raw === "1";
   }
@@ -711,6 +780,7 @@ function buildParams() {
   if (state.unmhosts !== DEFAULTS.unmhosts) params.set("unmhosts", state.unmhosts ? "1" : "0");
   if (state.ports !== DEFAULTS.ports) params.set("ports", state.ports ? "1" : "0");
   if (state.chips !== DEFAULTS.chips) params.set("chips", state.chips ? "1" : "0");
+  if (state.zones !== DEFAULTS.zones) params.set("zones", state.zones ? "1" : "0");
   if (state.sel) params.set("sel", state.sel);
   for (const k in (state._extra || {})) params.set(k, state._extra[k]);
   return params;
@@ -770,16 +840,22 @@ function nodeVisible(n) {
 let firstSettle = true;
 function applyFilters() {
   const vis = new Set(graph.nodes.filter(nodeVisible).map(n => n.name));
+  graph.nodes.forEach(n => n._vis = vis.has(n.name));
+  zonesOn = state.zones;
   const linkVisible = d =>
       vis.has(d.source.name ?? d.source) && vis.has(d.target.name ?? d.target);
+  // shown = visible and not a VM-on-host edge a drawn zone already states;
+  // the force still uses every visible link, so guests stay near their host
+  const linkShown = d => linkVisible(d)
+      && !(edgeSourceCls(d) === "virtualized" && zoneCovers(d));
   node.style("display", d => vis.has(d.name) ? null : "none");
   node.classed("focused", d => state.focus != null && d.name === state.focus);
   node.classed("selected", d => state.sel != null && d.name === state.sel);
-  link.style("display", d => linkVisible(d) ? null : "none");
-  hit.style("display", d => linkVisible(d) ? null : "none");
-  alab.style("display", d => linkVisible(d) ? null : "none");
-  blab.style("display", d => linkVisible(d) ? null : "none");
-  echip.style("display", d => linkVisible(d) ? null : "none");
+  link.style("display", d => linkShown(d) ? null : "none");
+  hit.style("display", d => linkShown(d) ? null : "none");
+  alab.style("display", d => linkShown(d) ? null : "none");
+  blab.style("display", d => linkShown(d) ? null : "none");
+  echip.style("display", d => linkShown(d) ? null : "none");
   const visNodes = graph.nodes.filter(n => vis.has(n.name));
   assignSlots(visNodes);
   sim.nodes(visNodes);
@@ -922,6 +998,7 @@ function applyControls() {
   svg.classed("ports", state.ports);
   setChip("edgechips", state.chips);
   svg.classed("chips", state.chips);
+  setChip("zonesbox", state.zones);
   document.getElementById("view-" + state.view).checked = true;
   document.getElementById("loadmode").value = state.load;
   vlansel.value = state.vlan == null ? "" : String(state.vlan);
@@ -1030,6 +1107,7 @@ function render() {
 });
 document.getElementById("portnames").addEventListener("click", () => set({ ports: !state.ports }));
 document.getElementById("edgechips").addEventListener("click", () => set({ chips: !state.chips }));
+document.getElementById("zonesbox").addEventListener("click", () => set({ zones: !state.zones }));
 document.querySelectorAll('input[name="view"]').forEach(r =>
     r.addEventListener("change", () => set({ view: r.value })));
 document.getElementById("loadmode").addEventListener("change", e => set({ load: e.target.value }));

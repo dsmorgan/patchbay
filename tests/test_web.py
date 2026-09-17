@@ -1371,3 +1371,32 @@ def test_topology_panel_reads_from_the_graph(clean_env, tmp_path, client):
     assert by["fw1"]["os"] == "opnsense 26.1"
     assert by["sw1"]["seen"] is not None and by["sw1"]["seen"] < 5
     assert _graph_at(client, "?sel=sw1") == g
+
+
+# --- topology: derived zones (#47) --------------------------------------------
+
+def test_topology_zones_derive_from_parents(clean_env, tmp_path, client):
+    # a hypervisor whose guest is a node on the map gets a zone; the cluster
+    # zone appears once two hypervisors share a vSphere, named after the
+    # server like the routed view's box. Computed, never drawn by hand.
+    path = str(tmp_path / "test.db")
+    seed(path)
+    assert _graph(client, tmp_path)["zones"] == []      # fw1 has no parent yet
+    c = sqlite3.connect(path)
+    c.execute("UPDATE devices SET parent='hyp1' WHERE name='fw1'")
+    c.commit(); c.close()
+    zones = _graph(client, tmp_path)["zones"]
+    assert zones == [{"id": "hyp:hyp1", "kind": "hyp", "label": "hyp1",
+                      "members": ["hyp1", "fw1"]}]
+    c = sqlite3.connect(path)
+    c.execute("INSERT INTO devices (name, source, role, status, last_seen) VALUES "
+              "('hyp2', 'vsphere', 'hypervisor', 'up', strftime('%s','now'))")
+    c.commit(); c.close()
+    clean_env.setenv("VSPHERE_HOST", "vc-demo.example.net")
+    zones = _graph(client, tmp_path)["zones"]
+    assert [z["id"] for z in zones] == ["hyp:hyp1", "cluster"]
+    assert zones[1]["label"] == "vc-demo"
+    assert zones[1]["members"] == ["hyp1", "fw1", "hyp2"]
+    body = client.get("/topology").text
+    assert 'id="zonesbox"' in body
+    assert _graph_at(client, "?zones=0") == _graph(client, tmp_path)

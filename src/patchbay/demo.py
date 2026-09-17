@@ -116,11 +116,15 @@ def seed(conn: sqlite3.Connection, *, rnd: random.Random | None = None) -> str:
         mac_of.setdefault(key, _mac(next(macs)))
         return mac_of[key]
 
+    # hypervisor mini-specs (#44): cores and RAM, as vCenter reports them
+    hyp_specs = {"hyp1": (16, 128 * 2 ** 30), "hyp2": (24, 192 * 2 ** 30)}
     ids: dict[str, int] = {}
     for name, role, vendor, model, os_, ip, parent in DEVICES:
+        cpus, mem = hyp_specs.get(name, (None, None))
         ids[name] = db.upsert_device(
             conn, name=name, source="demo", role=role, vendor=vendor,
-            model=model, os=os_, mgmt_ip=ip, parent=parent, status="up")
+            model=model, os=os_, mgmt_ip=ip, parent=parent, status="up",
+            cpus=cpus, mem_bytes=mem)
     for i, vm in enumerate(VMS):
         vid = db.upsert_device(
             conn, name=vm, source="vsphere", role="vm", status="up",

@@ -103,7 +103,8 @@ and renders one navigable picture:
   drawn distinctly. Link thickness encodes speed, a chip on each edge names
   it (and the VLAN, on access links), port names appear on hover, a click
   opens a detail panel beside the map (address, hardware, every link and
-  its ports), a load view recolors edges by 24-hour utilization, and a
+  its ports), a zone gathers each hypervisor with its VMs and the cluster
+  around them, a load view recolors edges by 24-hour utilization, and a
   service-capacity override renders as "10G (3G)".
   Firewall VPN tunnels (WireGuard, OpenVPN, IPsec) draw as type-labeled
   egress nodes hung off their firewall — status and peer, never key material.

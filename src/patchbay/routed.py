@@ -103,6 +103,18 @@ class _Rails:
         return best[1] if best else None
 
 
+def virt_label(settings) -> str | None:
+    """The vSphere server's short label — what the routed view's
+    virtualization box and the topology's cluster zone (#47) are named
+    after. An FQDN loses its domain; an IP address stays whole; no
+    VSPHERE_HOST means None."""
+    host = (getattr(settings, "vsphere_host", None) or "").strip()
+    host = host.split("//")[-1].split("/")[0].split(":")[0]
+    if not host:
+        return None
+    return host if _addr(host) else host.split(".")[0]
+
+
 def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     rails = _Rails()
     for r in conn.execute("SELECT vid, name, source FROM vlans"):
@@ -299,13 +311,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     virt_platform = ("vsphere" if any(
         (devices[n].get("source") or "") == "vsphere" for n in hyp_names)
         else None)
-    virt_name = None
-    if virt_platform:
-        host = (getattr(settings, "vsphere_host", None) or "").strip()
-        host = host.split("//")[-1].split("/")[0].split(":")[0]
-        if host:
-            # short label for an FQDN; an IP address stays whole
-            virt_name = host if _addr(host) else host.split(".")[0]
+    virt_name = virt_label(settings) if virt_platform else None
     ap_names = {n for n, d in devices.items() if d["role"] == "ap"}
     hosts, single = [], {k: [] for k in rails.rails}
     hyp_groups: dict[str, dict[str, list[str]]] = {n: {} for n in hyp_names}

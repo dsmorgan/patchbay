@@ -10,6 +10,19 @@ put.
 
 ### Added
 
+- **Topology: derived zones** (#47). A translucent hull now sits behind
+  each hypervisor and the guests that are nodes on the map (a virtualized
+  firewall, a router VM), and a fainter one around the whole cluster when
+  the hypervisors share a vSphere — named after the vSphere server, like
+  the routed view's box. Zones are computed from the parent relationship
+  patchbay already holds, never drawn by hand; a grouping force pulls
+  members together, the VM-on-host edge hides inside a drawn zone, and
+  zones draw under everything and take no clicks. In the tiers layout a
+  zone keeps only the members in its hypervisor's band, so a hull never
+  wraps the fabric between an Edge-band guest and its host. The `zones`
+  chip (`zones=0`) turns them off. The demo's hypervisors gained specs
+  so the public snapshot shows the #44 line.
+
 - **Topology: node detail panel** (#45). Clicking a node no longer
   leaves the map: a panel floats over the map's right edge with the
   node's role, status and how long ago it was seen, address, hardware,

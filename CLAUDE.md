@@ -125,11 +125,13 @@ site-specific leaked into code, tests, or docs.
 - **The frontend stays frameworkless**: Jinja templates + vanilla JS + one
   vendored d3, no build step, no npm. React Flow was evaluated (2026-09) and
   declined — it wouldn't solve layout, and it would break the
-  snapshot-reuses-the-live-template guarantee. UI polish lives in issues
-  #43–#48 (edge chips, node-card refresh, detail side panel, nav totals,
-  derived group containers, hover-only port labels); each carries its
-  patchbay-fit constraints. Color = reporter on edges stays authoritative —
-  new visual channels must not reassign it.
+  snapshot-reuses-the-live-template guarantee. The 0.14 UI polish (#43–#48:
+  edge chips, node cards, the detail panel, rail totals, derived zones,
+  hover-only port names) each carried a patchbay-fit constraint, recorded
+  in its issue. Color = reporter on edges stays authoritative — new visual
+  channels must not reassign it; chips and zones are deliberately neutral
+  or role-colored, never reporter-colored. Every map toggle is a URL state
+  key (ADR-0001's table), and the snapshot runs the same template.
 - **Navigation is data**: `NAV` and `NAV_ICONS` in `web.py`; the rail in
   `base.html` renders from them. Groups are named for the question a page
   answers (Network: what's out there and how it's wired; Records: what the
