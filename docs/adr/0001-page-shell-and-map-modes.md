@@ -32,6 +32,7 @@ JSON is identical in every mode; the client paints. State table (the source of t
 | `hosts` | `1` \| `0` | `0` | wired hosts |
 | `unmhosts` | `1` \| `0` | `0` | behind unmanaged |
 | `ports` | `1` \| `0` | `0` | every link's port names always on; off = on hover only (#48, added 0.14) |
+| `chips` | `1` \| `0` | `1` | speed / VLAN chips on the edges (#43, added 0.14) |
 
 - **Only non-defaults are serialized**, in table order, so the plain map is a bare `/topology`.
 - Invalid values fall back to the default and the URL is rewritten to the sanitized form on load.

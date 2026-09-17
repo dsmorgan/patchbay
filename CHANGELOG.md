@@ -10,6 +10,15 @@ put.
 
 ### Added
 
+- **Topology: speed and VLAN chips on edges** (#43). The bare mid-edge
+  speed text is now a pill on the edge, and under it a second pill names
+  the link's VLANs when there are three or fewer — an access link says
+  `VLAN 20`, a trunk carrying twelve stays quiet (the tooltip lists
+  them). Chips carry facts, not provenance: card fill and a line border,
+  so edge color stays the reporter's alone; the speed text still warns
+  amber at ≤100M and red at ≤10M, and the load view appends the
+  utilization. The `edge chips` chip (`chips=0`) hides them.
+
 - **Topology: port names on hover** (#48). Edges no longer print their
   interface names permanently — on a dense map neighboring labels
   overlapped into noise. Hovering an edge (its hit area is now a wide

@@ -100,8 +100,10 @@ and renders one navigable picture:
   edge carries its evidence: color is who reported it (switch, hypervisor,
   operator), and a dashed line means inferred rather than stated. Unmanaged
   switches are inferred from ports with many MACs and no LLDP neighbor, and
-  drawn distinctly. Link thickness encodes speed, a load view recolors edges by
-  24-hour utilization, and a service-capacity override renders as "10G (3G)".
+  drawn distinctly. Link thickness encodes speed, a chip on each edge names
+  it (and the VLAN, on access links), port names appear on hover, a load
+  view recolors edges by 24-hour utilization, and a service-capacity
+  override renders as "10G (3G)".
   Firewall VPN tunnels (WireGuard, OpenVPN, IPsec) draw as type-labeled
   egress nodes hung off their firewall — status and peer, never key material.
 - **Routed view** — the L3 answer to the topology's L1: networks as lanes
