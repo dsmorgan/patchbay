@@ -1154,6 +1154,19 @@ def test_routed_page_renders_graph(clean_env, tmp_path, client):
     assert '"peak_ready": false' in r4.text
 
 
+def test_routed_remembers_view_options(clean_env, tmp_path, client):
+    # the topology's #16 rule, applied to /routed: a bare visit restores the
+    # remembered state by rewriting the URL before rstate reads it; explicit
+    # params always win (no merging); focus never persists; the snapshot is
+    # exempt (SNAPSHOT guards both sides, and its state never writes)
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/routed").text
+    assert 'localStorage.getItem("patchbay.routed")' in body
+    assert 'localStorage.setItem("patchbay.routed"' in body
+    assert "if (!SNAPSHOT && !location.search)" in body
+    assert 'keep.delete("focus")' in body
+
+
 # --- /configs canonical display names ---------------------------------------
 
 def test_canonical_label_shortens_known_fqdn_only():

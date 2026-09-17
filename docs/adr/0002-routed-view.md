@@ -278,3 +278,11 @@ The decisions that replaced it, recorded here rather than rewritten above:
   live site exercises the tier. Routers are also pullers in the rail
   ordering (weight 2), so a router's lanes cluster and pass-throughs stay
   short.
+- **Remembered state**, as ADR-0001's #16 rule gives the topology: a bare
+  `/routed` restores the last-used preference half of the table (`view`,
+  `load`, `proto`, `hosts`, `groups`, `axis`) from `localStorage` by
+  rewriting the URL before the state is read; an explicit URL wins
+  outright; `focus` is a one-time destination and never persists; the
+  snapshot, whose state lives in memory, neither reads nor writes it.
+  The `axis` key (0.13.0's amendment) joins the table above by the same
+  serialization rule: `v` for vertical rails, unset for lanes.

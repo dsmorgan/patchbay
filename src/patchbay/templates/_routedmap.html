@@ -290,8 +290,21 @@ const vlanUrl = vid => vid == null ? null : SNAPSHOT ? `#vlan-${vid}` : `/vlans#
 // state lives in memory only: it starts from the defaults and never writes.
 const R_VIEWS = ["routes", "load", "protocol", "evidence"];
 const R_PROTOS = ["all", "4", "6"];
+const R_KEYS = ["view", "load", "proto", "hosts", "groups", "focus", "axis"];
 const R_DEFAULTS = { view: "routes", load: "now", proto: "all", hosts: true, groups: true,
                      focus: null, axis: "lanes" };
+// Remembered view options, the topology's #16 rule applied here: a bare
+// /routed — the rail's link — restores the last-used state from localStorage
+// by rewriting the URL *before* anything reads it, so reload and share see
+// the same honest URL. Any explicit params mean a deep link, which uses its
+// own params + defaults — no merging. The snapshot is exempt: the file IS
+// the state.
+if (!SNAPSHOT && !location.search) {
+  try {
+    const qs = localStorage.getItem("patchbay.routed");
+    if (qs) history.replaceState(null, "", location.pathname + "?" + qs);
+  } catch (e) {}
+}
 const rstate = { ...R_DEFAULTS };
 if (!SNAPSHOT) {
   const p = new URLSearchParams(location.search);
@@ -303,10 +316,11 @@ if (!SNAPSHOT) {
   if (p.get("focus")) rstate.focus = p.get("focus");
   if (p.get("axis") === "v") rstate.axis = "v";
 }
-function rwrite() {
-  if (SNAPSHOT) return;
-  const p = new URLSearchParams(location.search);
-  ["view", "load", "proto", "hosts", "groups", "focus", "axis"].forEach(k => p.delete(k));
+// the view's own params, in ADR order, only non-defaults — foreign params
+// (whatever else the URL carried) are the caller's and stay untouched
+function rparams(into) {
+  const p = into || new URLSearchParams();
+  R_KEYS.forEach(k => p.delete(k));
   if (rstate.view !== R_DEFAULTS.view) p.set("view", rstate.view);
   if (rstate.load !== R_DEFAULTS.load) p.set("load", rstate.load);
   if (rstate.proto !== R_DEFAULTS.proto) p.set("proto", rstate.proto);
@@ -314,8 +328,20 @@ function rwrite() {
   if (!rstate.groups) p.set("groups", "0");
   if (rstate.focus) p.set("focus", rstate.focus);
   if (rstate.axis === "v") p.set("axis", "v");
-  const qs = p.toString();
+  return p;
+}
+function rwrite() {
+  if (SNAPSHOT) return;
+  const qs = rparams(new URLSearchParams(location.search)).toString();
   history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
+  // remember the preference half for the next bare visit: focus names a
+  // one-time destination and foreign params belong to the link that
+  // carried them, so neither persists
+  try {
+    const keep = rparams();
+    keep.delete("focus");
+    localStorage.setItem("patchbay.routed", keep.toString());
+  } catch (e) {}
 }
 
 // --- geometry ---------------------------------------------------------------
@@ -1057,6 +1083,7 @@ function applyView() {
   root.setAttribute("transform",
     `translate(${view.x},${view.y}) scale(${view.k})`);
 }
+rwrite();      // sanitize the URL and remember it, as the topology does on arrival
 redraw();
 applyRouted();
 const wrap = document.getElementById("routedwrap");

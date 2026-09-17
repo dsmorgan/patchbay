@@ -87,6 +87,13 @@ put.
 
 ### Fixed
 
+- **The routed view remembers your view options.** A bare `/routed` — the
+  rail's link — restores the last-used mode, family and load choice,
+  visibility toggles, and axis from the browser's storage by rewriting the
+  URL on arrival, the way `/topology` has since #16. The two maps now
+  follow one rule: an explicit URL always wins outright, `focus` is never
+  remembered, and the snapshot is exempt.
+
 - **Device merge dropped the new specs columns.** A hypervisor that
   LibreNMS also polls folds its vSphere row into the SNMP-owned primary,
   and the merge's identity field list must name every column or the
