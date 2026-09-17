@@ -146,9 +146,19 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                 continue
             leg = legs.setdefault(r["dev"], {}).get(key)
             speed = r["speed_bps"] or 0
-            if leg is None or speed > leg["speed"]:
-                legs.setdefault(r["dev"], {})[key] = {
+            if leg is None:
+                legs[r["dev"]][key] = {
                     "rail": key, "iface": r["iface"], "ip": ip, "speed": speed}
+                continue
+            # every address the device holds on this network rides the leg
+            # (the tooltip lists them; the protocol view reads their
+            # families); the fastest interface's stays the primary
+            if ip != leg["ip"]:
+                ips = leg.setdefault("ips", [leg["ip"]])
+                if ip not in ips:
+                    ips.append(ip)
+            if speed > leg["speed"]:
+                leg.update(iface=r["iface"], ip=ip, speed=speed)
 
     # guests: the hypervisor knows a vNIC's port-group VLAN even when no
     # address is visible — that's an attachment to the VLAN's rail
@@ -200,6 +210,14 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             rl = rails.rails[leg["rail"]]
             rl["routed"] = True
             rl["gateway"] = leg["ip"]
+            # the gateway per family: the protocol view paints the router's
+            # attachment by which families it actually answers on
+            for a in leg.get("ips") or [leg["ip"]]:
+                fam = "gateway6" if ":" in (a or "") else "gateway"
+                if fam == "gateway6":
+                    rl.setdefault("gateway6", a)
+                elif ":" in (rl["gateway"] or ""):
+                    rl["gateway"] = a          # a v4 address beats v6 as THE gateway
             claimed.append(leg["rail"])
         routers.append({"name": name, "rails": sorted(claimed),
                         "parent": devices.get(name, {}).get("parent")})
@@ -581,7 +599,11 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             classes.add("switch")
         if k in pg_vids:
             classes.add("hypervisor")
+        # address families the network carries, from its subnets — what
+        # the protocol view paints (a VLAN with no subnet has none)
+        fams = sorted({6 if ":" in c else 4 for c in r["subnets"]})
         out_rails.append({**r, "sources": sorted(r["sources"]),
+                          "gateway6": r.get("gateway6"), "families": fams,
                           "evidence": [c for c in _EVIDENCE_ORDER if c in classes],
                           "hosts": len(names), "host_names": sorted(names),
                           "unnamed": unnamed.get(k, 0),

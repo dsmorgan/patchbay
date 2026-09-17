@@ -118,6 +118,8 @@ and renders one navigable picture:
   table (per VLAN learned), the controller — and IPAM only lends names and
   fills in networks nothing can observe; powered-off VMs don't count.
   Subnets reachable only through a VPN tunnel hang off the tunnel itself.
+  A Protocol mode paints which networks and attachments carry IPv4, IPv6,
+  or both, and an Evidence mode colors each lane by who reported it.
 - **Health dashboard** — device up/down state, hardware, management IPs, and VM
   placement on cards styled to match the topology nodes, plus an alerts page
   listing everything the checks flag and since when. The nav rail carries

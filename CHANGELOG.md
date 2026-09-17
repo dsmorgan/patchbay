@@ -10,6 +10,15 @@ put.
 
 ### Added
 
+- **Routed view: Protocol mode** (#50, ADR-0002 Decision 3). The third
+  radio paints address families: IPv4 lanes teal, IPv6 lanes amber, a
+  dual-stack lane teal with an amber dash riding it, and every attachment
+  dot — a host's leg, the router's gateway — colored by the families it
+  actually holds there. The select narrows to one family and dims
+  whatever lacks it (`proto=4` / `proto=6`; the default is both). A leg
+  now lists every address a device holds on a network, and a rail knows
+  its IPv4 and IPv6 gateways separately (both in the tooltip).
+
 - **Routed view in the snapshot** (#50). The break-glass file now carries
   the L3 picture under the topology map, from the same builder and
   template as /routed — never a second implementation. Its state lives in

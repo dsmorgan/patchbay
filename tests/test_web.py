@@ -1142,6 +1142,11 @@ def test_routed_page_renders_graph(clean_env, tmp_path, client):
     r2 = client.get("/routed?hosts=0&groups=0&focus=v24&view=evidence&axis=v")
     assert r2.status_code == 200
     assert 'id="rview-evidence"' in r2.text     # the segmented control exists
+    # protocol mode (#50): the third radio and its family select
+    r3 = client.get("/routed?view=protocol&proto=6")
+    assert r3.status_code == 200
+    assert 'id="rview-protocol"' in r3.text and 'id="rproto"' in r3.text
+    assert '"families": [4]' in r3.text
 
 
 # --- /configs canonical display names ---------------------------------------

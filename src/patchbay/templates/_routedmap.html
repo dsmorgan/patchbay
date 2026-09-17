@@ -145,6 +145,39 @@
   #routed .evbadge.ev-ipam { fill: var(--ev-ipam); }
   #routed .evbadge.ev-route { fill: var(--ev-route); opacity: 0.6; }
   #routed .evbadge.ev-other { fill: var(--ink); }
+  /* protocol view: which address family a lane, an attachment, and the
+     router's gateway carry. IPv4 teal, IPv6 amber; a dual-stack lane is
+     teal with an amber dash riding it. With one family chosen, whatever
+     lacks it dims. Boxes and names step back so lanes and dots carry it. */
+  #routedwrap, .rlegend { --p4: #4db8c2; --p6: #f2b552; }
+  #routed .rail6 { stroke: var(--p6); stroke-width: 2; stroke-dasharray: 5 6;
+                   display: none; }
+  #routed.protocol .rail { stroke: var(--muted); stroke-dasharray: none;
+                           opacity: 0.35; stroke-width: 2.6; }
+  #routed.protocol .rail.fam-4 { stroke: var(--p4); opacity: 1; }
+  #routed.protocol .rail.fam-6 { stroke: var(--p6); opacity: 1; }
+  #routed.protocol .rail.fam-4.fam-6 { stroke: var(--p4); }
+  #routed.protocol[data-proto="all"] .rail6.fam-4 { display: initial; }
+  /* one family chosen: the lanes that have it wear that family's color */
+  #routed.protocol[data-proto="6"] .rail.fam-6 { stroke: var(--p6); }
+  #routed.protocol .rim { fill: var(--muted); stroke: var(--card); }
+  #routed.protocol .rim.l4 { fill: var(--p4); }
+  #routed.protocol .rim.l6 { fill: var(--p6); }
+  #routed.protocol .rim.l4.l6 { fill: var(--p4); stroke: var(--p6); stroke-width: 2.2; }
+  #routed.protocol[data-proto="4"] .rail:not(.fam-4),
+  #routed.protocol[data-proto="4"] .vtag:not(.fam-4),
+  #routed.protocol[data-proto="4"] .rim:not(.l4),
+  #routed.protocol[data-proto="4"] .gbox:not(.fam-4) { opacity: 0.15; }
+  #routed.protocol[data-proto="6"] .rail:not(.fam-6),
+  #routed.protocol[data-proto="6"] .vtag:not(.fam-6),
+  #routed.protocol[data-proto="6"] .rim:not(.l6),
+  #routed.protocol[data-proto="6"] .gbox:not(.fam-6) { opacity: 0.15; }
+  #routed.protocol .host > rect, #routed.protocol .host > text,
+  #routed.protocol .spanbox > rect, #routed.protocol .spanbox text,
+  #routed.protocol .router > rect, #routed.protocol .router text,
+  #routed.protocol .ricon, #routed.protocol .cloud, #routed.protocol .tuncloud,
+  #routed.protocol .tunnel text, #routed.protocol .tap, #routed.protocol .defroute,
+  #routed.protocol .tunpath, #routed.protocol .tundrop { opacity: 0.4; }
   #routed .routerlabel { font: 600 11.5px var(--font-ui); fill: var(--ink); }
   #routed .gwlabel { font: 10px var(--font-mono); fill: var(--muted); }
 </style>
@@ -153,8 +186,17 @@
   <span class="grp modes" role="radiogroup" aria-label="View">
     <input type="radio" name="rview" id="rview-routes" value="routes" checked>
     <label for="rview-routes">Routes</label>
+    <input type="radio" name="rview" id="rview-protocol" value="protocol">
+    <label for="rview-protocol">Protocol</label>
     <input type="radio" name="rview" id="rview-evidence" value="evidence">
     <label for="rview-evidence">Evidence</label>
+  </span>
+  <span class="grp" id="rprotogrp" hidden>
+    <select id="rproto" aria-label="address family">
+      <option value="all">IPv4 + IPv6</option>
+      <option value="4">IPv4 only</option>
+      <option value="6">IPv6 only</option>
+    </select>
   </span>
   <span class="grp filters">
     <button type="button" class="fchip" id="r-hosts" aria-pressed="true">multi-homed hosts</button>
@@ -176,6 +218,11 @@
   <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-ipam)" stroke-width="2" stroke-dasharray="4 3"/></svg> IPAM only (documented, nothing carries it)</span>
   <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-route)" stroke-width="2" stroke-dasharray="4 3"/></svg> learned through a tunnel</span>
   <span class="item" data-modes="evidence" style="color: var(--muted)">lane = strongest reporter · tag badges = every reporter, in that order</span>
+  <span class="item" data-modes="protocol"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p4)" stroke-width="2"/></svg> IPv4 network</span>
+  <span class="item" data-modes="protocol"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p6)" stroke-width="2"/></svg> IPv6 network</span>
+  <span class="item" data-modes="protocol"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p4)" stroke-width="2.6"/><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p6)" stroke-width="2" stroke-dasharray="3 3"/></svg> dual-stack</span>
+  <span class="item" data-modes="protocol"><svg width="40" height="14"><circle cx="7" cy="7" r="3.5" fill="var(--p4)"/><circle cx="20" cy="7" r="3.5" fill="var(--p6)"/><circle cx="33" cy="7" r="3.5" fill="var(--p4)" stroke="var(--p6)" stroke-width="2"/></svg> attachment: v4 · v6 · both</span>
+  <span class="item" data-modes="protocol" style="color: var(--muted)">choose one family and whatever lacks it dims · grey = no subnet known</span>
   <span class="item"><svg width="26" height="14"><ellipse cx="13" cy="7" rx="12" ry="6" fill="none" stroke="var(--r-firewall)" stroke-width="1.2" stroke-dasharray="4 3"/></svg> VPN tunnel</span>
   <span class="item"><svg width="26" height="12"><rect x="0" y="0" width="26" height="12" fill="var(--hover)" stroke="var(--line)"/></svg> VLAN label</span>
   <span class="item"><svg width="14" height="14"><circle cx="7" cy="7" r="3.5" fill="var(--accent)" stroke="var(--card)" stroke-width="1.5"/></svg> attached at the rim</span>
@@ -204,12 +251,15 @@ const vlanUrl = vid => vid == null ? null : SNAPSHOT ? `#vlan-${vid}` : `/vlans#
 // --- state in the URL (ADR-0001 rules: only non-defaults serialize). The
 // snapshot's URL belongs to the topology map on the same page, so there the
 // state lives in memory only: it starts from the defaults and never writes.
-const R_VIEWS = ["routes", "evidence"];
-const R_DEFAULTS = { view: "routes", hosts: true, groups: true, focus: null, axis: "lanes" };
+const R_VIEWS = ["routes", "protocol", "evidence"];
+const R_PROTOS = ["all", "4", "6"];
+const R_DEFAULTS = { view: "routes", proto: "all", hosts: true, groups: true,
+                     focus: null, axis: "lanes" };
 const rstate = { ...R_DEFAULTS };
 if (!SNAPSHOT) {
   const p = new URLSearchParams(location.search);
   if (R_VIEWS.includes(p.get("view"))) rstate.view = p.get("view");
+  if (R_PROTOS.includes(p.get("proto"))) rstate.proto = p.get("proto");
   if (p.get("hosts") === "0") rstate.hosts = false;
   if (p.get("groups") === "0") rstate.groups = false;
   if (p.get("focus")) rstate.focus = p.get("focus");
@@ -218,8 +268,9 @@ if (!SNAPSHOT) {
 function rwrite() {
   if (SNAPSHOT) return;
   const p = new URLSearchParams(location.search);
-  ["view", "hosts", "groups", "focus", "axis"].forEach(k => p.delete(k));
+  ["view", "proto", "hosts", "groups", "focus", "axis"].forEach(k => p.delete(k));
   if (rstate.view !== R_DEFAULTS.view) p.set("view", rstate.view);
+  if (rstate.proto !== R_DEFAULTS.proto) p.set("proto", rstate.proto);
   if (!rstate.hosts) p.set("hosts", "0");
   if (!rstate.groups) p.set("groups", "0");
   if (rstate.focus) p.set("focus", rstate.focus);
@@ -312,6 +363,11 @@ function nameList(names) {
        + ((names || []).length > cap ? `\n…and ${names.length - cap} more` : "");
 }
 const clip = (s, n) => s.length > n ? s.slice(0, Math.max(1, n - 1)) + "…" : s;
+// address-family classes for the protocol view: a rail's from its subnets,
+// an attachment's from the addresses it holds there
+const famCls = r => (r.families || []).map(f => ` fam-${f}`).join("");
+const legCls = ips => [...new Set((ips || []).filter(Boolean)
+  .map(a => a.includes(":") ? " l6" : " l4"))].join("");
 
 const router = rg.routers[0] || null;
 // taps draw first so they pass underneath rails and boxes
@@ -495,9 +551,12 @@ function draw() {
     const v = laneV(i);
     const ev = r.evidence || [];
     const cls = "rail" + (r.routed ? "" : " unrouted") + (r.wan ? " wan" : "")
-              + (ev.length ? " ev-" + ev[0] : "");
+              + (ev.length ? " ev-" + ev[0] : "") + famCls(r);
     const endU = r.routed || r.wan ? routerU : routerU - 18;
     const line = lineEl(root, laneStartU, v, endU, v, { class: cls });
+    // a dual-stack lane carries an amber dash over its teal (protocol view)
+    if ((r.families || []).length === 2)
+      track(lineEl(root, laneStartU, v, endU, v, { class: "rail6" + famCls(r) }), [r.key]);
     const viaTun = (r.via_tunnel || []).length;
     // a bare MAC in a switch table is not a host — usually a bond member
     // or kernel port of one already drawn — so it's a count here, not a name
@@ -510,6 +569,7 @@ function draw() {
                  ...(r.subnets.length ? r.subnets : ["no subnet recorded"]),
                  r.gateway ? `gateway ${r.gateway}`
                            : (r.routed || r.wan || viaTun ? "" : "not routed"),
+                 r.gateway6 ? `gateway ${r.gateway6}` : "",
                  `sources: ${r.sources.join(", ")}`,
                  ev.length ? `evidence: ${ev.join(" > ")}` : "",
                  unnamed].filter(Boolean).join("\n");
@@ -518,7 +578,7 @@ function draw() {
     const text = r.vid != null ? `${label} ${r.vid}` : label;
     const sub = (r.subnets[0] || "")
               + (r.subnets.length > 1 ? " +" + (r.subnets.length - 1) : "");
-    const tag = el("g", { class: "vtag" + (ev.length ? " ev-" + ev[0] : "") });
+    const tag = el("g", { class: "vtag" + (ev.length ? " ev-" + ev[0] : "") + famCls(r) });
     // evidence badges: one square per reporter, strongest first, tucked in
     // the tag's top-right corner (evidence view only, see CSS)
     const badges = (right, top) => ev.forEach((c, i) =>
@@ -548,7 +608,7 @@ function draw() {
     act(tag, r.key, [r.key], vlanUrl(r.vid));
     // loose single-homed hosts: a ×N chip riding the lane at the edge
     if (r.hosts > 0) {
-      const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
+      const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted") + famCls(r),
                           "data-kind": "group" });
       const c = P(looseU + chipAlong / 2, v);
       el("rect", { x: c.x - chipW / 2, y: c.y - chipH / 2, width: chipW,
@@ -564,7 +624,7 @@ function draw() {
 
   // --- boxes ------------------------------------------------------------------
   function laneChip(parent, u0, v, names, r, noun) {
-    const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted"),
+    const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted") + famCls(r),
                         "data-kind": "group" }, parent);
     const c = P(u0, v);
     el("rect", { x: c.x - chipW / 2, y: c.y - chipH / 2, width: chipW,
@@ -603,7 +663,8 @@ function draw() {
       // box edge instead of landing on the name
       const c = pos[l.rail] === home ? P(u0, vh) : P(cu, laneV(pos[l.rail]));
       const d = el("circle", { cx: c.x, cy: c.y, r: 4.2,
-                               class: "rim" + (r.routed ? "" : " unrouted") }, grp);
+                               class: "rim" + (r.routed ? "" : " unrouted")
+                                      + legCls(l.ips || [l.ip]) }, grp);
       track(d, [l.rail]);
     });
     track(grp, keys); wireHover(grp, keys);
@@ -638,9 +699,11 @@ function draw() {
       const r = rails[pos[l.rail]];
       const c = P(u0, laneV(pos[l.rail]));
       const d = el("circle", { cx: c.x, cy: c.y, r: 4.2,
-                               class: "rim" + (r.routed ? "" : " unrouted") }, grp);
-      title(d, `${l.ap ? l.ap + " " : ""}${l.iface}${l.ip ? " " + l.ip : ""} → `
-               + `${r.name || l.rail}`);
+                               class: "rim" + (r.routed ? "" : " unrouted")
+                                      + legCls(l.ips || [l.ip]) }, grp);
+      title(d, `${l.ap ? l.ap + " " : ""}${l.iface}`
+               + (l.ips || (l.ip ? [l.ip] : [])).map(a => " " + a).join("")
+               + ` → ${r.name || l.rail}`);
       track(d, [l.rail]);
     });
     // chips ride the content column (lanes) or a row under the name row
@@ -694,9 +757,12 @@ function draw() {
     router.rails.forEach(k => {
       if (!(k in pos)) return;
       const c = P(routerU, laneV(pos[k]));
-      const d = el("circle", { cx: c.x, cy: c.y, r: 4.2, class: "rim" }, rgrp);
       const r = rails[pos[k]];
-      title(d, r.gateway ? `gateway ${r.gateway}` : (r.name || k));
+      const d = el("circle", { cx: c.x, cy: c.y, r: 4.2,
+                               class: "rim" + legCls([r.gateway, r.gateway6]) }, rgrp);
+      title(d, [r.gateway ? `gateway ${r.gateway}` : "",
+                r.gateway6 ? `gateway ${r.gateway6}` : ""].filter(Boolean).join("\n")
+               || (r.name || k));
       track(d, [k]);
     });
     track(rgrp, router.rails); wireHover(rgrp, router.rails);
@@ -811,6 +877,10 @@ function applyRouted() {
   setChip("r-groups", rstate.groups);
   setChip("r-axis", rstate.axis === "v");
   svg.classList.toggle("evidence", rstate.view === "evidence");
+  svg.classList.toggle("protocol", rstate.view === "protocol");
+  svg.dataset.proto = rstate.proto;
+  document.getElementById("rprotogrp").hidden = rstate.view !== "protocol";
+  document.getElementById("rproto").value = rstate.proto;
   const radio = document.getElementById(`rview-${rstate.view}`);
   if (radio) radio.checked = true;
   // legend items name the modes they belong to
@@ -824,6 +894,8 @@ function applyRouted() {
 document.querySelectorAll('input[name="rview"]').forEach(i =>
   i.addEventListener("change", () => {
     if (i.checked) { rstate.view = i.value; rwrite(); applyRouted(); } }));
+document.getElementById("rproto").addEventListener("change", ev => {
+  rstate.proto = ev.target.value; rwrite(); applyRouted(); });
 document.getElementById("r-hosts").addEventListener("click", () => {
   rstate.hosts = !rstate.hosts; rwrite(); applyRouted(); });
 document.getElementById("r-groups").addEventListener("click", () => {

@@ -249,3 +249,10 @@ The decisions that replaced it, recorded here rather than rewritten above:
   so the routed view's state starts from the defaults and never writes —
   which made the axis toggle a redraw in place rather than a reload,
   everywhere. Links become in-page anchors (`#dev-<name>`, `#vlan-<vid>`).
+- **Protocol** paints address families: a rail's from its subnets (a VLAN
+  with no subnet is grey), an attachment's from the addresses it holds on
+  that network — legs now carry every address, and a rail carries
+  `gateway` and `gateway6` apart. The `proto` select defaults to **`all`**
+  rather than Decision 3's `4`: the first look should show the dual-stack
+  picture (teal, amber, teal-with-amber-dash), and narrowing to one family
+  is the second question, not the first.

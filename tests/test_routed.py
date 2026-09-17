@@ -748,3 +748,26 @@ def test_virt_domain_named_after_the_vsphere_server(conn):
     assert g["virt_name"] == "vcsa"              # FQDN shortens to its label
     s.vsphere_host = "192.0.2.200"
     assert build_routed_graph(conn, s)["virt_name"] == "192.0.2.200"
+
+
+def test_rails_and_legs_carry_address_families(conn):
+    """The protocol view (#50) paints by address family: a rail's families
+    come from its subnets, a leg lists every address it holds on the
+    network, and a rail knows its v4 and v6 gateways separately."""
+    seed_site(conn)
+    subnet(conn, "2001:db8:20::/64", vlan=20)
+    fw = conn.execute("SELECT id FROM devices WHERE name='fw1'").fetchone()[0]
+    nas = conn.execute("SELECT id FROM devices WHERE name='nas1'").fetchone()[0]
+    iface(conn, fw, "vmx1", ip6="2001:db8:20::1")
+    iface(conn, nas, "eth1", ip6="2001:db8:20::40")
+    g = build_routed_graph(conn, _S())
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v20"]["families"] == [4, 6]
+    assert by["v1"]["families"] == [4] and by["v103"]["families"] == [4]
+    assert by["v20"]["gateway"] == "198.51.100.1"        # v4 stays THE gateway
+    assert by["v20"]["gateway6"] == "2001:db8:20::1"
+    assert by["v1"]["gateway6"] is None
+    nas_leg = next(l for h in g["hosts"] if h["name"] == "nas1"
+                   for l in h["legs"] if l["rail"] == "v20")
+    assert nas_leg["ip"] == "198.51.100.40"
+    assert nas_leg["ips"] == ["198.51.100.40", "2001:db8:20::40"]
