@@ -120,7 +120,9 @@ site-specific leaked into code, tests, or docs.
   screen as horizontal lanes or, with `?axis=v`, vertical rails with the
   internet at the top — never two drawings. Its data (`routed.py`) is pure and
   unit-tested: one wireless box, one virtualization box named after the vSphere
-  server (a guest router draws inside it), single-homed hosts as ×N chips, and
+  server (a guest router draws inside it), every router in a routing tier
+  (columns from overlapping lane spans, default-route holders last, a cloud
+  per default route), single-homed hosts as ×N chips, and
   the host-placement evidence order in docs/architecture.md — observation
   places, IPAM only names and fills, powered-off VMs and down devices don't
   count. Every placement rule has a scenario test in tests/test_routed.py; add

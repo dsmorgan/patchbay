@@ -69,8 +69,12 @@
   #routed .tunstat.up { fill: var(--ok); }
   #routed .tunstat.down { fill: var(--crit); }
   #routed .tunstat.idle { fill: var(--warn); }
-  #routed .router rect { fill: var(--card); stroke: var(--r-firewall);
-                         stroke-width: 1.4; rx: 8; }
+  /* routers are open frames: a lane routed by a router further along the
+     tier passes under the nearer one on its way, and must stay visible.
+     The interior still takes the click; the name row sits on a pill. */
+  #routed .router > rect { fill: none; stroke: var(--r-firewall);
+                           stroke-width: 1.4; rx: 8; pointer-events: all; }
+  #routed .router > rect.lpill { fill: var(--card); stroke: none; }
   #routed .vtag rect { fill: var(--vbox, var(--hover)); stroke: var(--line); }
   #routed .vtag text { font: 10px var(--font-mono); fill: var(--ink); }
   #routed .vtag { cursor: pointer; }
@@ -401,7 +405,11 @@ const famCls = r => (r.families || []).map(f => ` fam-${f}`).join("");
 const legCls = ips => [...new Set((ips || []).filter(Boolean)
   .map(a => a.includes(":") ? " l6" : " l4"))].join("");
 
-const router = rg.routers[0] || null;
+// the routing tier: every router draws, in the columns the builder
+// assigned (overlapping lane spans stack toward the internet, a default
+// route's holder last); each default route gets its own cloud
+const routers = rg.routers || [];
+const defaults = rg.defaults || (rg.default ? [rg.default] : []);
 // taps draw first so they pass underneath rails and boxes
 let tapLayer = null;
 // the load view's heat segments, painted by applyRouted (see draw)
@@ -502,8 +510,10 @@ function draw() {
       noclick: !rg.virt_name && hyps.length > 1 };
   }
   const hypNames = new Set(hyps.map(h => h.name));
-  const routerInside = !!(virt && router && router.parent
-                          && hypNames.has(router.parent));
+  // the whole tier draws inside the virtualization box only when every
+  // router is a guest; otherwise a guest router says "on <host>" itself
+  const routerInside = !!(virt && routers.length
+                          && routers.every(rt => rt.parent && hypNames.has(rt.parent)));
 
   // --- sizes: along the lane, and across it ---------------------------------
   function hostW(h) { return Math.max(72, h.name.length * 7.4 + 48); }
@@ -568,22 +578,38 @@ function draw() {
   const virtU = virt ? u : 0;
   if (virt) u += slabAlong(virt) + (routerInside ? 0 : colGap);
   u += 26;
-  const routerW = router ? Math.max(130, router.name.length * 7.4 + 60) : 0;
-  const showParent = !!(router && router.parent && !routerInside);
-  const routerAlong = HZ ? routerW : (showParent ? 70 : 58);
-  const routerU = u;
-  u += routerAlong;
-  // inside the virtualization box the router sits at the internet end;
-  // on rails that is the box's top, where its name row needs headroom
+  // the routing tier: one column per builder-assigned `col`, each as wide
+  // as its widest router; a lane runs to the furthest router claiming it
+  const routerW = rt => Math.max(130, rt.name.length * 7.4 + 60);
+  const showParent = rt => !!(rt.parent && !routerInside);
+  const nCols = routers.length ? Math.max(...routers.map(rt => rt.col || 0)) + 1 : 0;
+  const colAlong = [], colU = [];
+  for (let c = 0; c < nCols; c++) {
+    const members = routers.filter(rt => (rt.col || 0) === c);
+    colAlong[c] = HZ ? Math.max(...members.map(routerW))
+                     : (members.some(showParent) ? 70 : 58);
+    colU[c] = u;
+    u += colAlong[c] + (c < nCols - 1 ? 22 : 0);
+  }
+  const routerU = nCols ? colU[0] : u;      // the tier's near edge
+  const farEdge = rt => colU[rt.col || 0] + colAlong[rt.col || 0];
+  // inside the virtualization box the tier sits at the internet end; on
+  // rails that is the box's top, where its name row needs headroom
   if (routerInside) u += HZ ? 14 : 40;
   const routerEnd = u;
-  // the router spans every lane it routes, with headroom for its label
-  const rLanes = router ? router.rails.filter(k => k in pos).map(k => pos[k]) : [];
-  let rV0 = rLanes.length
-    ? laneV(Math.min(...rLanes)) - (HZ ? 52 + (showParent ? 12 : 0) : 24) : across0;
-  let rV1 = rLanes.length
-    ? laneV(Math.max(...rLanes)) + (HZ ? 30 : 24) : across0 + nR * pitch;
-  if (!HZ) rV1 = Math.max(rV1, rV0 + routerW);
+  // each router spans every lane it routes, with headroom for its label;
+  // rV0/rV1 is the whole tier's extent (the virt box and clouds use it)
+  const rSpan = rt => {
+    const ls = rt.rails.filter(k => k in pos).map(k => pos[k]);
+    let v0 = ls.length
+      ? laneV(Math.min(...ls)) - (HZ ? 52 + (showParent(rt) ? 12 : 0) : 24) : across0;
+    let v1 = ls.length ? laneV(Math.max(...ls)) + (HZ ? 30 : 24) : across0 + nR * pitch;
+    if (!HZ) v1 = Math.max(v1, v0 + routerW(rt));
+    return [v0, v1];
+  };
+  const spans = routers.map(rSpan);
+  const rV0 = spans.length ? Math.min(...spans.map(sp => sp[0])) : across0;
+  const rV1 = spans.length ? Math.max(...spans.map(sp => sp[1])) : across0 + nR * pitch;
   const cloudRx = 96, cloudRy = 30, tunRx = 86, tunRy = 27;
   const cloudU = routerEnd + (HZ ? 150 : 84);
   flip = HZ ? 0 : cloudU + cloudRy + 8;
@@ -597,7 +623,12 @@ function draw() {
     const ev = r.evidence || [];
     const cls = "rail" + (r.routed ? "" : " unrouted") + (r.wan ? " wan" : "")
               + (ev.length ? " ev-" + ev[0] : "") + famCls(r);
-    const endU = r.routed || r.wan ? routerU : routerU - 18;
+    // the lane reaches the furthest router that claims it — or, for a
+    // WAN lane nobody holds an address on, the default route's holder
+    const reach = routers.filter(rt => (r.routers || []).includes(rt.name)
+      || defaults.some(d => d.rail === r.key && d.device === rt.name));
+    const endU = reach.length ? Math.max(...reach.map(rt => colU[rt.col || 0]))
+               : routerU - 18;
     const line = lineEl(root, laneStartU, v, endU, v, { class: cls });
     // a dual-stack lane carries an amber dash over its teal (protocol view)
     if ((r.families || []).length === 2)
@@ -612,8 +643,10 @@ function draw() {
                  r.wan ? `internet uplink (${rg.wan_names[0] || "wan"})` : "",
                  viaTun ? `via tunnel ${r.via_tunnel.join(", ")}` : "",
                  ...(r.subnets.length ? r.subnets : ["no subnet recorded"]),
-                 r.gateway ? `gateway ${r.gateway}`
-                           : (r.routed || r.wan || viaTun ? "" : "not routed"),
+                 ...((r.gateways || []).length > 1
+                   ? r.gateways.map(g => `gateway ${g.ip} (${g.router})`)
+                   : [r.gateway ? `gateway ${r.gateway}`
+                                : (r.routed || r.wan || viaTun ? "" : "not routed")]),
                  r.gateway6 ? `gateway ${r.gateway6}` : "",
                  `sources: ${r.sources.join(", ")}`,
                  ev.length ? `evidence: ${ev.join(" > ")}` : "",
@@ -780,119 +813,150 @@ function draw() {
     ? { along: routerEnd - virtU, v0: rV0 - (HZ ? 26 : 12), v1: rV1 + 12 }
     : {});
 
-  // --- router, internet, tunnels ---------------------------------------------
-  if (router) {
-    const R = box(routerU, rV0, routerAlong, rV1 - rV0);
+  // --- the routing tier, internet, tunnels ---------------------------------
+  routers.forEach((rt, ri) => {
+    const ru = colU[rt.col || 0], along = colAlong[rt.col || 0];
+    const [v0, v1] = spans[ri];
+    const R = box(ru, v0, along, v1 - v0);
     const rgrp = el("g", { class: "router" });
     rectEl(rgrp, R, { rx: 8 });
+    // the name row on a pill: a lane bound for a further column passes
+    // under this box, and text over a lane is mud
+    const rows = 2 + (showParent(rt) ? 1 : 0);
+    rectEl(rgrp, { x: R.x + 6, y: R.y + 5, w: R.w - 12, h: 8 + rows * 14 },
+           { rx: 4, class: "lpill" });
     const cx = R.x + R.w / 2 - 8;
     el("text", { x: cx, y: R.y + 18, "text-anchor": "middle",
-                 class: "routerlabel" }, rgrp, router.name);
+                 class: "routerlabel" }, rgrp, rt.name);
     el("text", { x: cx, y: R.y + 33, "text-anchor": "middle", class: "gwlabel" },
-       rgrp, `${router.rails.length} networks`);
+       rgrp, `${rt.rails.length} networks`);
     // a router that is itself a guest says so — common enough at home. When
     // the virtualization box already encloses it, the enclosure says it and
     // the physical host stays a tooltip detail (this view is logical).
-    if (showParent)
+    if (showParent(rt))
       el("text", { x: cx, y: R.y + 46, "text-anchor": "middle", class: "gwlabel" },
-         rgrp, `on ${router.parent}`);
+         rgrp, `on ${rt.parent}`);
     roleIcon(rgrp, "firewall", R.x + R.w - 26, R.y + 6);
-    title(rgrp, `${router.name} · routes ${router.rails.length} networks`
-                + (router.parent ? `\nruns as a VM on ${router.parent}` : ""));
-    router.rails.forEach(k => {
+    title(rgrp, `${rt.name} · routes ${rt.rails.length} networks`
+                + (rt.default ? "\nholds the default route" : "")
+                + (rt.parent ? `\nruns as a VM on ${rt.parent}` : ""));
+    rt.rails.forEach(k => {
       if (!(k in pos)) return;
-      const c = P(routerU, laneV(pos[k]));
+      const c = P(ru, laneV(pos[k]));
       const r = rails[pos[k]];
+      const gw = (rt.gateways || {})[k] || {};
       const d = el("circle", { cx: c.x, cy: c.y, r: 4.2,
-                               class: "rim" + legCls([r.gateway, r.gateway6]) }, rgrp);
-      title(d, [r.gateway ? `gateway ${r.gateway}` : "",
-                r.gateway6 ? `gateway ${r.gateway6}` : ""].filter(Boolean).join("\n")
-               || (r.name || k));
+                               class: "rim" + legCls([gw.ip, gw.ip6]) }, rgrp);
+      title(d, [gw.ip ? `gateway ${gw.ip}` : "", gw.ip6 ? `gateway ${gw.ip6}` : ""]
+               .filter(Boolean).join("\n") || (r.name || k));
       track(d, [k]);
     });
-    track(rgrp, router.rails); wireHover(rgrp, router.rails);
-    act(rgrp, router.name, router.rails, devUrl(router.name));
+    track(rgrp, rt.rails); wireHover(rgrp, rt.rails);
+    act(rgrp, rt.name, rt.rails, devUrl(rt.name));
     // load view: a heat segment where each lane meets the router, tinted by
     // that interface's utilization, the number beside it (applyRouted paints)
-    router.rails.forEach(k => {
+    rt.rails.forEach(k => {
       if (!(k in pos)) return;
-      const ld = (router.load || {})[k] || {};
+      const ld = (rt.load || {})[k] || {};
       const v = laneV(pos[k]);
-      const seg = lineEl(root, routerU - 46, v, routerU - 3, v, { class: "legseg" });
-      const t = P(routerU - 24, v);
+      const seg = lineEl(root, ru - 46, v, ru - 3, v, { class: "legseg" });
+      const t = P(ru - 24, v);
       const lab = el("text", HZ ? { x: t.x, y: t.y - 8, "text-anchor": "middle" }
                                : { x: t.x + 9, y: t.y + 4 }, root);
       lab.setAttribute("class", "legload");
-      title(seg, `${router.name} ${ld.iface || ""} on ${rails[pos[k]].name || k}`);
+      title(seg, `${rt.name} ${ld.iface || ""} on ${rails[pos[k]].name || k}`);
       loadSegs.push({ seg, lab, util: ld.util, peak: ld.peak });
       track(seg, [k]); track(lab, [k]);
     });
+  });
 
-    const wanRail = rg.default && rg.default.rail
-      ? rails.find(r => r.key === rg.default.rail) : null;
-    const cloudV = wanRail ? laneV(pos[wanRail.key]) : (rV0 + rV1) / 2;
+  // one cloud per default route, hung off the router that holds it; a
+  // second cloud on the same lane stacks beside the first
+  const clouds = [];
+  defaults.forEach((d, di) => {
+    const holder = routers.find(rt => rt.name === d.device);
+    if (!holder) return;
+    const [hv0, hv1] = spans[routers.indexOf(holder)];
+    const wanRail = d.rail ? rails.find(r => r.key === d.rail) : null;
+    let cloudV = wanRail ? laneV(pos[wanRail.key]) : (hv0 + hv1) / 2;
+    const gap = HZ ? cloudRy * 2 + 12 : cloudRx * 2 + 16;
+    while (clouds.some(c => Math.abs(c.v - cloudV) < gap)) cloudV += gap;
+    const hu = farEdge(holder);
     const C = P(cloudU, cloudV);
     const cloud = el("g", {});
-    if (rg.default) {
-      const drop = lineEl(root, routerEnd, cloudV, cloudU - cloudEdge - 4, cloudV,
-                          { class: "defroute" });
-      if (wanRail) track(drop, [wanRail.key]);
-      // the drop takes the WAN interface's load: the way out, measured
-      const m = P((routerEnd + cloudU - cloudEdge) / 2, cloudV);
-      const lab = el("text", HZ ? { x: m.x, y: m.y + 14, "text-anchor": "middle" }
-                               : { x: m.x + 9, y: m.y + 18 }, root);   // under the "via" label
-      lab.setAttribute("class", "legload");
-      loadSegs.push({ seg: drop, lab, util: rg.default.util, peak: rg.default.peak });
-    }
+    const drop = lineEl(root, hu, cloudV, cloudU - cloudEdge - 4, cloudV,
+                        { class: "defroute" });
+    if (wanRail) track(drop, [wanRail.key]);
+    // the drop takes the WAN interface's load: the way out, measured
+    const m = P((hu + cloudU - cloudEdge) / 2, cloudV);
+    const lab = el("text", HZ ? { x: m.x, y: m.y + 14, "text-anchor": "middle" }
+                             : { x: m.x + 9, y: m.y + 18 }, root);   // under the "via" label
+    lab.setAttribute("class", "legload");
+    loadSegs.push({ seg: drop, lab, util: d.util, peak: d.peak });
     el("ellipse", { cx: C.x, cy: C.y, rx: cloudRx, ry: cloudRy, class: "cloud" }, cloud);
     el("text", { x: C.x, y: C.y - 3, "text-anchor": "middle", class: "rlabel" },
-       cloud, rg.wan_names[0] || "internet");
-    const gw = rg.gateways[0];
+       cloud, rg.wan_names[di] || rg.wan_names[0] || "internet");
+    const gw = rg.gateways[di] || (di === 0 ? rg.gateways[0] : null);
     if (gw) el("text", { x: C.x, y: C.y + 12, "text-anchor": "middle",
                          class: "gwlabel" }, cloud, `${gw.name} ${gw.status || ""}`.trim());
     if (wanRail) {
-      const m = P((routerEnd + cloudU - cloudEdge) / 2, cloudV);
-      el("text", HZ ? { x: routerEnd + 12, y: m.y - 8 } : { x: m.x + 8, y: m.y + 4 },
+      el("text", HZ ? { x: hu + 12, y: m.y - 8 } : { x: m.x + 8, y: m.y + 4 },
          cloud, wanRail.vid != null ? `via VLAN ${wanRail.vid}` : `via ${wanRail.name}`)
         .setAttribute("class", "gwlabel");
       track(cloud, [wanRail.key]); wireHover(cloud, [wanRail.key]);
     }
-    if (rg.default && rg.default.gateway)
-      title(cloud, `default via ${rg.default.gateway}`);
+    title(cloud, `${holder.name}: default${d.gateway ? ` via ${d.gateway}` : ""}`);
+    clouds.push({ v: cloudV, holder, hv0, hv1, n: 0 });
+  });
 
-    // tunnels sit beside the cloud, on whichever side has more room inside
-    // the router's span, so the encrypted transport leaves the router
-    // straight from its edge instead of diving past its end. A lane
-    // reached through a tunnel connects to the tunnel, not the cloud.
-    const step = HZ ? tunRy * 2 + 10 : tunRx * 2 + 16;
-    const first = HZ ? cloudRy + tunRy + 12 : cloudRx + tunRx + 16;
-    const dir = (cloudV - rV0) >= (rV1 - cloudV) ? -1 : 1;
-    tuns.forEach((t, i) => {
-      const tv = cloudV + dir * (first + i * step);
-      const g = el("g", { class: "tunnel" });
-      const leave = Math.min(Math.max(tv, rV0 + 14), rV1 - 14);
-      track(lineEl(root, routerEnd, leave, cloudU - tunEdge, tv, { class: "tunpath" }),
-            t.rails);
-      t.rails.forEach(k => {
-        if (!(k in pos)) return;
-        track(lineEl(root, routerU - 18, laneV(pos[k]), cloudU - tunEdge, tv,
-                     { class: "tundrop" }), [k]);
-      });
-      const T = P(cloudU, tv);
-      el("ellipse", { cx: T.x, cy: T.y, rx: tunRx, ry: tunRy, class: "tuncloud" }, g);
-      el("text", { x: T.x, y: T.y - 3, "text-anchor": "middle", class: "rlabel" },
-         g, t.name);
-      el("text", { x: T.x, y: T.y + 12, "text-anchor": "middle",
-                   class: "gwlabel tunstat " + (t.status || "") }, g,
-         t.label + (t.status ? " · " + t.status : ""));
-      title(g, [`${t.label} tunnel · ${t.name}`,
-                t.peer ? `peer ${t.peer}` : "", t.detail || "",
-                (t.local_nets || []).length
-                  ? `local side: ${t.local_nets.join(", ")}` : "",
-                `status ${t.status || "unknown"}`].filter(Boolean).join("\n"));
-      if (t.rails.length) { track(g, t.rails); wireHover(g, t.rails); }
+  // tunnels sit beside the cloud of the router that terminates them, on
+  // whichever side has more room inside that router's span, so the
+  // encrypted transport leaves the router straight from its edge instead
+  // of diving past its end. A lane reached through a tunnel connects to
+  // the tunnel, not the cloud. A tunnel with no cloud to sit beside (no
+  // default route known) takes its router's middle.
+  const step = HZ ? tunRy * 2 + 10 : tunRx * 2 + 16;
+  const first = HZ ? cloudRy + tunRy + 12 : cloudRx + tunRx + 16;
+  tuns.forEach(t => {
+    let home = clouds.find(c => c.holder.name === t.device) || clouds[0];
+    if (!home) {
+      const holder = routers.find(rt => rt.name === t.device) || routers[0];
+      if (!holder) return;
+      const [hv0, hv1] = spans[routers.indexOf(holder)];
+      home = { v: (hv0 + hv1) / 2 - first, holder, hv0, hv1, n: 0, bare: true };
+      clouds.push(home);
+    }
+    const dir = (home.v - home.hv0) >= (home.hv1 - home.v) ? -1 : 1;
+    const tv = home.bare ? home.v + first + home.n * step
+                         : home.v + dir * (first + home.n * step);
+    home.n += 1;
+    // the transport leaves the router that terminates the tunnel, even when
+    // it sits beside another router's cloud (an HA secondary, say)
+    const term = routers.find(rt => rt.name === t.device) || home.holder;
+    const [tv0, tv1] = spans[routers.indexOf(term)];
+    const hu = farEdge(term);
+    const g = el("g", { class: "tunnel" });
+    const leave = Math.min(Math.max(tv, tv0 + 14), tv1 - 14);
+    track(lineEl(root, hu, leave, cloudU - tunEdge, tv, { class: "tunpath" }), t.rails);
+    t.rails.forEach(k => {
+      if (!(k in pos)) return;
+      track(lineEl(root, routerU - 18, laneV(pos[k]), cloudU - tunEdge, tv,
+                   { class: "tundrop" }), [k]);
     });
-  }
+    const T = P(cloudU, tv);
+    el("ellipse", { cx: T.x, cy: T.y, rx: tunRx, ry: tunRy, class: "tuncloud" }, g);
+    el("text", { x: T.x, y: T.y - 3, "text-anchor": "middle", class: "rlabel" },
+       g, t.name);
+    el("text", { x: T.x, y: T.y + 12, "text-anchor": "middle",
+                 class: "gwlabel tunstat " + (t.status || "") }, g,
+       t.label + (t.status ? " · " + t.status : ""));
+    title(g, [`${t.label} tunnel · ${t.name}`,
+              t.peer ? `peer ${t.peer}` : "", t.detail || "",
+              (t.local_nets || []).length
+                ? `local side: ${t.local_nets.join(", ")}` : "",
+              `status ${t.status || "unknown"}`].filter(Boolean).join("\n"));
+    if (t.rails.length) { track(g, t.rails); wireHover(g, t.rails); }
+  });
 
   // faint alternating bands make the rows scannable at a distance; sized
   // to the finished drawing and slipped underneath it

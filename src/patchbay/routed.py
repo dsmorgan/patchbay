@@ -71,7 +71,8 @@ class _Rails:
         key = f"v{vid}"
         r = self.rails.setdefault(key, {
             "key": key, "vid": vid, "name": name or "", "subnets": [],
-            "routed": False, "gateway": None, "sources": set()})
+            "routed": False, "gateway": None, "gateway6": None,
+            "routers": [], "gateways": [], "sources": set()})
         if name and not r["name"]:
             r["name"] = name
         return r
@@ -87,7 +88,8 @@ class _Rails:
             key = f"net:{cidr}"
             r = self.rails.setdefault(key, {
                 "key": key, "vid": None, "name": name or cidr, "subnets": [],
-                "routed": False, "gateway": None, "sources": set()})
+                "routed": False, "gateway": None, "gateway6": None,
+                "routers": [], "gateways": [], "sources": set()})
         if cidr not in r["subnets"]:
             r["subnets"].append(cidr)
             self._nets.append((net, r["key"]))
@@ -204,55 +206,65 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                 "rail": key, "iface": "mgmt", "ip": d["mgmt_ip"], "speed": 0}
 
     # routers claim rails: an interface IP inside a subnet routes that
-    # network; the interface address is its gateway (shown on hover)
+    # network; the interface address is its gateway (shown on hover). Every
+    # router draws (#50): a rail lists each claimant — an HA pair, a core
+    # router behind the edge firewall — and its first claimant's address is
+    # THE gateway, per family, for the protocol view.
     routers = []
     for name in sorted(router_names):
         claimed = []
+        gateways: dict[str, dict] = {}
         for leg in legs.get(name, {}).values():
             rl = rails.rails[leg["rail"]]
             rl["routed"] = True
-            rl["gateway"] = leg["ip"]
-            # the gateway per family: the protocol view paints the router's
-            # attachment by which families it actually answers on
-            for a in leg.get("ips") or [leg["ip"]]:
-                fam = "gateway6" if ":" in (a or "") else "gateway"
-                if fam == "gateway6":
-                    rl.setdefault("gateway6", a)
-                elif ":" in (rl["gateway"] or ""):
-                    rl["gateway"] = a          # a v4 address beats v6 as THE gateway
+            ips = leg.get("ips") or [leg["ip"]]
+            v4 = next((a for a in ips if a and ":" not in a), None)
+            v6 = next((a for a in ips if a and ":" in a), None)
+            if rl["gateway"] is None:
+                rl["gateway"] = v4 or v6
+            if rl["gateway6"] is None:
+                rl["gateway6"] = v6
+            rl["routers"].append(name)
+            rl["gateways"].append({"router": name, "ip": v4 or v6})
+            gateways[leg["rail"]] = {"ip": v4 or v6, "ip6": v6}
             claimed.append(leg["rail"])
         routers.append({"name": name, "rails": sorted(claimed),
+                        "gateways": gateways,
                         "parent": devices.get(name, {}).get("parent")})
 
-    # default route + WAN health
-    default = None
+    # default routes + WAN health: one default per router that holds one
+    # (a multi-egress site has two clouds); `default` stays the first for
+    # the single-router reading
+    defaults: list[dict] = []
     for r in conn.execute(
             "SELECT device, gateway, interface, flags FROM routes WHERE "
-            "destination IN ('0.0.0.0/0', '::/0') ORDER BY proto"):
+            "destination IN ('0.0.0.0/0', '::/0') ORDER BY device, proto"):
         if any(f in (r["flags"] or "") for f in ("B", "R")):
             continue
-        if default is None:
-            default = {"device": r["device"], "gateway": r["gateway"],
-                       "interface": r["interface"], "rail": None}
+        if any(d["device"] == r["device"] for d in defaults):
+            continue
+        defaults.append({"device": r["device"], "gateway": r["gateway"],
+                         "interface": r["interface"], "rail": None})
+    default = defaults[0] if defaults else None
     gws = [dict(r) for r in conn.execute(
         "SELECT name, address, status, loss, delay FROM gateways")]
 
-    # which rail the default route leaves on: the exit interface's VLAN
+    # which rail a default route leaves on: the exit interface's VLAN
     # membership (untagged first), else the rail holding the next-hop
     # address. An appliance whose WAN port never touches the switch fabric
     # resolves to neither — the cloud then attaches straight to the router,
     # which is also the truth.
-    wan_rail = None
-    if default:
+    for d in defaults:
         row = conn.execute(
             "SELECT vid FROM port_vlans WHERE device = ? AND interface = ? "
             "ORDER BY tagged, vid LIMIT 1",
-            (default["device"], default["interface"] or "")).fetchone()
+            (d["device"], d["interface"] or "")).fetchone()
         if row is not None and f"v{row['vid']}" in rails.rails:
-            wan_rail = f"v{row['vid']}"
-        elif default["gateway"]:
-            wan_rail = rails.rail_of_ip(default["gateway"])
-        default["rail"] = wan_rail
+            d["rail"] = f"v{row['vid']}"
+        elif d["gateway"]:
+            d["rail"] = rails.rail_of_ip(d["gateway"])
+    wan_rail = default["rail"] if default else None
+    wan_rails = {d["rail"] for d in defaults if d["rail"]}
 
     # load (#50): the router's per-network legs are the only edges on this
     # view with counters — its VLAN interfaces, when the firewall is a
@@ -287,10 +299,10 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             rt["load"][leg["rail"]] = {"iface": leg["iface"],
                                        "util": util_of.get(key),
                                        "peak": peak_of.get(key)}
-    if default:
-        key = (default["device"], default["interface"] or "")
-        default["util"] = util_of.get(key)
-        default["peak"] = peak_of.get(key)
+    for d in defaults:
+        key = (d["device"], d["interface"] or "")
+        d["util"] = util_of.get(key)
+        d["peak"] = peak_of.get(key)
 
     # VPN tunnels (#42): egress objects beside the internet cloud. A rail
     # reached *through* a tunnel (a route whose exit interface is the
@@ -583,8 +595,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         attached |= set(box["rails"])
     live = {k: r for k, r in rails.rails.items()
             if r["routed"] or single.get(k) or k in attached}
-    if wan_rail and wan_rail not in live:   # the way out always draws
-        live[wan_rail] = rails.rails[wan_rail]
+    for k in wan_rails:                     # the way out always draws
+        live.setdefault(k, rails.rails[k])
     for t in tunnels:                       # so does the far side of a tunnel
         for k in t["rails"]:
             live.setdefault(k, rails.rails[k])
@@ -594,10 +606,33 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # the whole picture, so its adjacency is worth more
     pullers = hosts + [
         {"legs": [{"rail": k} for k in b["rails"]], "weight": 3}
-        for b in hypervisors + aps]
+        for b in hypervisors + aps] + [
+        {"legs": [{"rail": k} for k in rt["rails"]], "weight": 2}
+        for rt in routers]
     order = order_rails(live, pullers, declared=getattr(
         settings, "routed_order", ()) or ())
     pos = {k: i for i, k in enumerate(order)}
+
+    # the routing tier (#50): routers whose lane spans don't overlap share
+    # a column; overlapping ones — an HA pair, a core router behind the
+    # edge firewall — take successive columns toward the internet, and a
+    # router holding a default route stands last, beside its cloud. A lane
+    # runs to the furthest router that claims it, passing the nearer ones.
+    default_devs = {d["device"] for d in defaults}
+    columns: list[list[tuple[int, int]]] = []
+    for rt in sorted(routers, key=lambda rt: (rt["name"] in default_devs, rt["name"])):
+        rt["default"] = rt["name"] in default_devs
+        ps = [pos[k] for k in rt["rails"] if k in pos]
+        span = (min(ps), max(ps)) if ps else None
+        c = len(columns) - 1 if rt["default"] and columns else 0
+        while span and c < len(columns) and any(
+                not (span[1] < a or span[0] > b) for a, b in columns[c]):
+            c += 1
+        while len(columns) <= c:
+            columns.append([])
+        if span:
+            columns[c].append(span)
+        rt["col"] = c
     for h in hosts:
         h["legs"].sort(key=lambda l: pos.get(l["rail"], 0))
     hosts.sort(key=lambda h: pos.get(h["home"], 0))
@@ -647,12 +682,13 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                           "evidence": [c for c in _EVIDENCE_ORDER if c in classes],
                           "hosts": len(names), "host_names": sorted(names),
                           "unnamed": unnamed.get(k, 0),
-                          "wan": k == wan_rail,
+                          "wan": k in wan_rails,
                           "via_tunnel": via_tunnel.get(k, [])})
     return {
         "rails": out_rails,
         "routers": routers,
         "default": default,
+        "defaults": defaults,
         "gateways": gws,
         "hosts": hosts,
         "hypervisors": hypervisors,

@@ -263,3 +263,18 @@ The decisions that replaced it, recorded here rather than rewritten above:
   arithmetic as the topology (`util_of` / `peak_of`, capacity overrides
   honored). Needs the firewall in the SNMP poller's inventory; without
   counters every leg is grey and says so.
+- **The routing tier** (Decision 4's deferred design) draws every router.
+  The builder assigns columns: routers whose lane spans don't overlap
+  share one; overlapping spans take successive columns toward the
+  internet; a default route's holder always stands last, beside its
+  cloud, and each default route gets a cloud (multi-egress). A lane runs
+  to the furthest router that claims it, so router boxes became open
+  frames with a name pill — the lane bound for the edge firewall passes
+  visibly through the core router's frame, which is the picture. A rail
+  carries `routers` and `gateways` (every claimant; the first's address
+  stays `gateway`), routers carry `col` and `default`, tunnels leave the
+  router that terminates them. Fixtures for an HA pair, an inner router
+  with a transit lane, and two egress routers are the contract until a
+  live site exercises the tier. Routers are also pullers in the rail
+  ordering (weight 2), so a router's lanes cluster and pass-throughs stay
+  short.

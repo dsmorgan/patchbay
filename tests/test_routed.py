@@ -795,3 +795,73 @@ def test_router_legs_carry_load(conn):
     s = _S()
     s.capacities = {("fw1", "vmx0"): 1_000_000_000}      # a 1G circuit on a 10G port
     assert build_routed_graph(conn, s)["routers"][0]["load"]["v1"]["util"] == 50.0
+
+
+# --- the routing tier: more than one router (#50) ----------------------------
+
+def _default_route(c, dev, iface, gw):
+    c.execute("INSERT INTO routes (device, destination, gateway, interface, proto, "
+              "flags, source, last_seen) VALUES (?, '0.0.0.0/0', ?, ?, 'static', "
+              "'UGS', 'test', ?)", (dev, gw, iface, pdb.now()))
+
+
+def test_ha_pair_takes_two_columns_and_both_claim_each_lane(conn):
+    """Two firewalls with addresses on the same networks (a CARP pair) both
+    route them: the lane lists both claimants, the first's address is THE
+    gateway, and the pair stands in successive columns — the default-route
+    holder last, beside the cloud."""
+    seed_site(conn)
+    fw2 = dev(conn, "fw2", role="firewall")
+    iface(conn, fw2, "vmx0", ip="192.0.2.2", speed_bps=10_000_000_000)
+    iface(conn, fw2, "vmx1", ip="198.51.100.2", speed_bps=10_000_000_000)
+    _default_route(conn, "fw2", "vmx0", "192.0.2.254")
+    g = build_routed_graph(conn, _S())
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v1"]["routers"] == ["fw1", "fw2"]
+    assert by["v1"]["gateway"] == "192.0.2.1"
+    assert by["v1"]["gateways"] == [{"router": "fw1", "ip": "192.0.2.1"},
+                                    {"router": "fw2", "ip": "192.0.2.2"}]
+    rt = {r["name"]: r for r in g["routers"]}
+    assert (rt["fw1"]["col"], rt["fw2"]["col"]) == (0, 1)
+    assert rt["fw2"]["default"] and not rt["fw1"]["default"]
+    assert rt["fw2"]["gateways"]["v20"] == {"ip": "198.51.100.2", "ip6": None}
+    assert [d["device"] for d in g["defaults"]] == ["fw2"]
+
+
+def test_inner_router_stands_before_the_edge_firewall(conn):
+    """A core router routing its own VLANs, with a transit address on a
+    network the edge firewall also routes, overlaps the firewall on that
+    lane: it takes the first column and the firewall (the default route)
+    the last, so the transit lane runs past the router to the firewall."""
+    seed_site(conn)
+    vlan(conn, 30, "core-lan"); subnet(conn, "198.18.30.0/24", vlan=30)
+    rtr = dev(conn, "rtr1", role="router")
+    iface(conn, rtr, "ge0", ip="198.51.100.5", speed_bps=1_000_000_000)   # transit on v20
+    iface(conn, rtr, "ge1", ip="198.18.30.1", speed_bps=1_000_000_000)
+    _default_route(conn, "fw1", "vmx0", "192.0.2.254")
+    g = build_routed_graph(conn, _S())
+    rt = {r["name"]: r for r in g["routers"]}
+    assert rt["rtr1"]["rails"] == ["v20", "v30"] and rt["rtr1"]["col"] == 0
+    assert rt["fw1"]["col"] == 1 and rt["fw1"]["default"]
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v20"]["routers"] == ["fw1", "rtr1"]
+    assert by["v30"]["routers"] == ["rtr1"] and by["v30"]["gateway"] == "198.18.30.1"
+
+
+def test_two_egress_routers_each_hold_a_default(conn):
+    """Multi-egress: two routers with disjoint lanes and a default route
+    each share a column and each get a cloud — `defaults` lists both, the
+    first stays `default` for the single-router reading."""
+    seed_site(conn)
+    fw2 = dev(conn, "fw2", role="firewall")
+    iface(conn, fw2, "vmx0", ip="203.0.113.2", speed_bps=10_000_000_000)   # v103 only
+    _default_route(conn, "fw1", "vmx0", "192.0.2.254")
+    _default_route(conn, "fw2", "vmx0", "203.0.113.254")
+    g = build_routed_graph(conn, _S())
+    assert [d["device"] for d in g["defaults"]] == ["fw1", "fw2"]
+    assert g["default"]["device"] == "fw1"
+    rt = {r["name"]: r for r in g["routers"]}
+    assert rt["fw1"]["col"] == rt["fw2"]["col"] == 0      # disjoint spans share
+    assert rt["fw1"]["default"] and rt["fw2"]["default"]
+    by = {r["key"]: r for r in g["rails"]}
+    assert by["v1"]["wan"] and by["v103"]["wan"]             # both ways out draw
