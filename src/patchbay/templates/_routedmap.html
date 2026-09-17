@@ -74,6 +74,9 @@
      The interior still takes the click; the name row sits on a pill. */
   #routed .router > rect { fill: none; stroke: var(--r-firewall);
                            stroke-width: 1.4; rx: 8; pointer-events: all; }
+  /* a plain router (no firewall role) wears the router color and glyph,
+     as its Overview card does */
+  #routed .router.isrouter > rect { stroke: var(--r-router); }
   #routed .router > rect.lpill { fill: var(--card); stroke: none; }
   #routed .vtag rect { fill: var(--vbox, var(--hover)); stroke: var(--line); }
   #routed .vtag text { font: 10px var(--font-mono); fill: var(--ink); }
@@ -818,7 +821,7 @@ function draw() {
     const ru = colU[rt.col || 0], along = colAlong[rt.col || 0];
     const [v0, v1] = spans[ri];
     const R = box(ru, v0, along, v1 - v0);
-    const rgrp = el("g", { class: "router" });
+    const rgrp = el("g", { class: "router" + (rt.role === "router" ? " isrouter" : "") });
     rectEl(rgrp, R, { rx: 8 });
     // the name row on a pill: a lane bound for a further column passes
     // under this box, and text over a lane is mud
@@ -836,7 +839,7 @@ function draw() {
     if (showParent(rt))
       el("text", { x: cx, y: R.y + 46, "text-anchor": "middle", class: "gwlabel" },
          rgrp, `on ${rt.parent}`);
-    roleIcon(rgrp, "firewall", R.x + R.w - 26, R.y + 6);
+    roleIcon(rgrp, rt.role === "router" ? "router" : "firewall", R.x + R.w - 26, R.y + 6);
     title(rgrp, `${rt.name} · routes ${rt.rails.length} networks`
                 + (rt.default ? "\nholds the default route" : "")
                 + (rt.parent ? `\nruns as a VM on ${rt.parent}` : ""));

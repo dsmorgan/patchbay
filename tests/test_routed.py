@@ -842,6 +842,7 @@ def test_inner_router_stands_before_the_edge_firewall(conn):
     g = build_routed_graph(conn, _S())
     rt = {r["name"]: r for r in g["routers"]}
     assert rt["rtr1"]["rails"] == ["v20", "v30"] and rt["rtr1"]["col"] == 0
+    assert rt["rtr1"]["role"] == "router" and rt["fw1"]["role"] == "firewall"   # drawn apart
     assert rt["fw1"]["col"] == 1 and rt["fw1"]["default"]
     by = {r["key"]: r for r in g["rails"]}
     assert by["v20"]["routers"] == ["fw1", "rtr1"]

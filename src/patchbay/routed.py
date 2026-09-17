@@ -230,6 +230,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             claimed.append(leg["rail"])
         routers.append({"name": name, "rails": sorted(claimed),
                         "gateways": gateways,
+                        "role": devices.get(name, {}).get("role"),
                         "parent": devices.get(name, {}).get("parent")})
 
     # default routes + WAN health: one default per router that holds one

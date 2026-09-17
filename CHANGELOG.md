@@ -18,9 +18,10 @@ put.
   gets a cloud per default route). Router boxes are open frames now, so a
   lane bound for a further router visibly passes the nearer one; a lane
   lists every router that claims it (all gateways in the tooltip); a
-  tunnel leaves the router that terminates it. Scenario tests cover the
-  HA pair, the inner router, and two egress routers — no live site yet
-  exercises them, so they are the contract.
+  tunnel leaves the router that terminates it. A plain router wears the
+  router glyph and color, a firewall the firewall's, as on the Overview.
+  Scenario tests cover the HA pair, the inner router, and two egress
+  routers — no live site yet exercises them, so they are the contract.
 
 - **Routed view: Load mode** (#50, ADR-0002 Decision 3). The router's
   per-network legs are the only edges on this view with counters — its
