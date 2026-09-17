@@ -116,7 +116,8 @@ and renders one navigable picture:
   Subnets reachable only through a VPN tunnel hang off the tunnel itself.
 - **Health dashboard** — device up/down state, hardware, management IPs, and VM
   placement on cards styled to match the topology nodes, plus an alerts page
-  listing everything the checks flag and since when. Device pages embed
+  listing everything the checks flag and since when. The nav rail carries
+  device totals (up, down, stale) onto every page. Device pages embed
   LibreNMS graphs (traffic and errors per port; CPU, memory, storage, and
   temperature per device; 24-hour to 1-year windows) through a server-side
   proxy, so the API token never reaches the browser. The graphs are recolored

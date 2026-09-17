@@ -36,6 +36,7 @@
     --rail-heading-pad: 0.3rem 0.5rem 0.25rem; --rail-heading-h: auto;
     --rail-tab-pad: 0.36rem 0.6rem 0.36rem 0.5rem; --rail-tab-justify: flex-start;
     --rail-indent: 6px; --rail-top-justify: flex-end;
+    --rail-tot-dir: row; --rail-tot-align: stretch;
   }
   html.rail-collapsed {
     --rail-w: 54px; --when-wide: none; --when-narrow: block;
@@ -44,6 +45,7 @@
     --rail-heading-pad: 0; --rail-heading-h: 6px;
     --rail-tab-pad: 0.42rem 0; --rail-tab-justify: center;
     --rail-indent: 0; --rail-top-justify: center;
+    --rail-tot-dir: column; --rail-tot-align: center;
   }
   @media (max-width: 640px) {
     :root {
@@ -53,6 +55,7 @@
       --rail-heading-pad: 0; --rail-heading-h: 6px;
       --rail-tab-pad: 0.42rem 0; --rail-tab-justify: center;
       --rail-indent: 0; --rail-top-justify: center;
+      --rail-tot-dir: column; --rail-tot-align: center;
     }
     .rail .rail-toggle { display: none; }  /* nothing to toggle: too narrow for labels */
     .rail .rail-pin { display: none; }
@@ -158,6 +161,22 @@
   .rail-label { display: block; overflow: hidden; text-overflow: ellipsis;
                 white-space: nowrap; max-width: var(--rail-label-max);
                 opacity: var(--rail-label-o); visibility: var(--rail-label-vis); }
+  /* device totals (#46) at the top of the rail's foot: the count in
+     heading ink, the state buckets under it in the rail's own label size.
+     Collapsed, the buckets stack and center like the icon column. */
+  .rail-totals { display: flex; flex-direction: column; gap: 1px;
+                 align-items: var(--rail-tot-align); padding: var(--rail-tab-pad);
+                 margin-bottom: 3px; border-radius: 6px; color: var(--muted);
+                 font: 600 0.72rem/1.35 var(--font-ui); white-space: nowrap;
+                 font-variant-numeric: tabular-nums; }
+  .rail-totals:hover { background: var(--hover); color: var(--ink); text-decoration: none; }
+  .rail-tot-head { display: flex; align-items: baseline; gap: var(--rail-gap); }
+  .rail-tot-head .n { font-size: 0.95rem; color: var(--ink2); }
+  .rail-tot-row { display: flex; flex-direction: var(--rail-tot-dir);
+                  flex-wrap: wrap; gap: 0.05rem 0.55rem; }
+  .rail-totals .tot { display: inline-flex; align-items: center; gap: var(--rail-gap); }
+  .rail-totals .dot { width: 7px; height: 7px; margin-right: 0.28rem; }
+  .dot.stale { background: var(--warn); }
   /* pin only exists while there are labels to keep; pinned = accent */
   html.rail-collapsed .rail-pin { display: none; }
   .rail-pin[aria-pressed="true"] { color: var(--accent); }

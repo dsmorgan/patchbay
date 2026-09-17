@@ -134,7 +134,9 @@ site-specific leaked into code, tests, or docs.
   answers (Network: what's out there and how it's wired; Records: what the
   documentation says and whether the network agrees), never for the mechanism
   — a page that fits neither is the case for a third heading, not a longer
-  list. Ops and sign-out are utilities and live in the rail's foot. The lit
+  list. Ops and sign-out are utilities and live in the rail's foot, under
+  the device totals (`attention.device_totals`, delivered to every render
+  by the `_shell_context` context processor — never per handler). The lit
   entry comes from the path prefix, so drill-downs keep their section; a page
   that sets `bare = true` (login) gets no rail and no shell grid.
 

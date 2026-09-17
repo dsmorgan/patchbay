@@ -53,6 +53,7 @@ def test_snapshot_generates_offline(clean_env, tmp_path):
     t = path.read_text()
     assert "const SNAPSHOT = true" in t
     assert 'id="dev-sw1"' in t and 'id="dev-hyp1"' in t
+    assert "4 devices, 4 up, 0 down" in t     # rail totals, frozen (#46)
     # no oxidized configured -> no configs SECTION (the intro prose mentions
     # the word, so match the heading, not the phrase)
     assert "<h2>Device configs (redacted)</h2>" not in t

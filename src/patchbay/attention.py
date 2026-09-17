@@ -55,6 +55,37 @@ def source_ages(conn: sqlite3.Connection) -> dict[str, float]:
     return {r["source"]: round(r["mins"], 1) for r in rows}
 
 
+# a device nobody has reported for this long is stale whatever its last
+# status said — the same window that ages out inferred links (normalize
+# EVIDENCE_TTL), so "stale" means one thing across the model
+DEVICE_STALE_S = 2 * 3600
+
+# states that mean "not on the network right now" — the routed view's
+# _INACTIVE set, spelled out here so the rail and the map count alike
+DOWN_STATES = {"down", "disabled", "off", "poweredoff", "notresponding"}
+
+
+def device_totals(conn: sqlite3.Connection) -> dict[str, int]:
+    """The rail's device totals (#46): every device patchbay knows (inferred
+    unmanaged switches excluded — they are a guess, not a device), split
+    into up / down / stale. Stale outranks status: a box whose collector
+    stopped reporting it two hours ago is not "up", whatever it said last.
+    Unknown states count in the total only."""
+    cutoff = db.now() - DEVICE_STALE_S
+    tot = {"total": 0, "up": 0, "down": 0, "stale": 0}
+    for r in conn.execute(
+            "SELECT status, last_seen FROM devices "
+            "WHERE role IS NULL OR role != 'unmanaged-switch'"):
+        tot["total"] += 1
+        if (r["last_seen"] or 0) < cutoff:
+            tot["stale"] += 1
+        elif (r["status"] or "").lower() == "up":
+            tot["up"] += 1
+        elif (r["status"] or "").lower() in DOWN_STATES:
+            tot["down"] += 1
+    return tot
+
+
 def speed_tier(bps: int | None) -> str:
     """"" | "slow" (<=100M) | "vslow" (<=10M) — the one shared threshold the
     map's edge styling (`edge_speed`) and the slow-link check both apply, so

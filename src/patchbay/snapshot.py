@@ -81,6 +81,7 @@ def generate(settings: Settings) -> str:
         is_demo = db.get_state(conn, "demo_seed") == "1"
         graph_json, peak_ready = web.build_topology_graph(conn, settings)
         ages = web.source_ages(conn)
+        totals = web.device_totals(conn)   # frozen at generation, like ages
         devices = [dict(r) for r in conn.execute(
             "SELECT * FROM devices ORDER BY CASE role "
             "WHEN 'firewall' THEN 0 WHEN 'switch' THEN 1 WHEN 'hypervisor' THEN 2 "
@@ -175,7 +176,7 @@ def generate(settings: Settings) -> str:
         generated=time.strftime("%Y-%m-%d %H:%M %Z"), ages=ages,
         devices=devices, links=links, vlans=vlans, subnets=subnets,
         endpoints=endpoints, gateways=gateways, configs=configs,
-        n_ipam=n_ipam, is_demo=is_demo, font_url=font_url,
+        n_ipam=n_ipam, is_demo=is_demo, font_url=font_url, totals=totals,
         tunnel_labels=web.TUNNEL_TYPE_LABEL, now=db.now())
 
 

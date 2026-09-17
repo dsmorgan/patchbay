@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import db
 from . import routed
-from .attention import (CATEGORIES, STALE_MIN, attention_items, drift_report,
+from .attention import (CATEGORIES, STALE_MIN, attention_items, device_totals, drift_report,
                         human_age, human_speed, ip_sort_key, ipam_link,
                         source_ages, speed_tier, stamp_first_seen)
 from .config import load_settings
@@ -32,7 +32,24 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 from .ports import port_kind
 
 app = FastAPI(title="patchbay")
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+def _shell_context(request: Request) -> dict:
+    """Context every page gets: the rail's device totals (#46). One
+    aggregate read per render — the rail is on every page, so the count
+    can't depend on which handler built the page."""
+    try:
+        conn = _conn()
+    except Exception:
+        return {"totals": None}
+    try:
+        return {"totals": device_totals(conn)}
+    except sqlite3.Error:
+        return {"totals": None}
+    finally:
+        conn.close()
+
+
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR),
+                            context_processors=[_shell_context])
 
 
 def _build_version() -> str:

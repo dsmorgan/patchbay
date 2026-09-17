@@ -6,6 +6,19 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+
+- **Device totals in the nav rail** (#46). Every page's rail carries how
+  many devices patchbay knows and how they split: up, down, and stale — a
+  device no source has reported for two hours counts as stale whatever
+  its last status said, the same window that ages out inferred links.
+  Inferred unmanaged switches are a guess, not a device, and don't count.
+  Collapsed, the numbers stack under their dots; the block links to the
+  Overview. The snapshot header carries the same totals, frozen at
+  generation beside the data ages.
+
 ## [0.13.0] — 2026-09-08
 
 ### Added

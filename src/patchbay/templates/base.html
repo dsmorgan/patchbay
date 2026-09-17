@@ -61,6 +61,22 @@
   {# the foot: how patchbay itself is fed and set, and the way out —
      utilities, apart from where you are in the network #}
   <div class="rail-foot">
+    {# device totals (#46): how many devices patchbay knows and how many
+       are up, down, or stale — the one number worth carrying onto every
+       page. Stale means no source has reported the device for two hours,
+       whatever its last status said. Collapsed, the labels go and the
+       numbers stack; the whole block is the way to the Overview. #}
+    {% if totals %}
+    <a class="rail-totals" href="/"
+       title="{{ totals.total }} devices · {{ totals.up }} up · {{ totals.down }} down{% if totals.stale %} · {{ totals.stale }} stale (unreported for 2 h){% endif %}">
+      <span class="rail-tot-head"><span class="n">{{ totals.total }}</span><span class="rail-label">devices</span></span>
+      <span class="rail-tot-row">
+        <span class="tot"><i class="dot up"></i>{{ totals.up }}<span class="rail-label">up</span></span>
+        <span class="tot"><i class="dot down"></i>{{ totals.down }}<span class="rail-label">down</span></span>
+        {% if totals.stale %}<span class="tot"><i class="dot stale"></i>{{ totals.stale }}<span class="rail-label">stale</span></span>{% endif %}
+      </span>
+    </a>
+    {% endif %}
     <a class="rail-tab{{ ' on' if path.startswith('/ops') }}" href="/ops"
        title="Collect now, the effective configuration, and operator declarations"
        data-name="Ops" data-desc="Collect now, the effective configuration, and operator declarations"

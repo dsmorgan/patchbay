@@ -1276,3 +1276,42 @@ def test_device_page_lists_vpn_tunnels(clean_env, tmp_path, client):
     assert "allowed 172.16.44.0/24" in body
     # a device with no tunnels shows no section
     assert "VPN tunnels" not in client.get("/device/core1").text
+
+
+# --- rail device totals (#46) ------------------------------------------------
+
+def test_device_totals_buckets(conn):
+    from patchbay.attention import device_totals
+    from patchbay import db as pdb
+
+    now = pdb.now()
+    for name, role, status, seen in (
+            ("sw1", "switch", "up", now), ("fw1", "firewall", "up", now),
+            ("ap9", "ap", "down", now), ("vm9", "vm", "poweredOff", now),
+            ("mystery", "switch", None, now),                # unknown: total only
+            ("old1", "switch", "up", now - 3 * 3600),        # stale outranks "up"
+            ("unmanaged@sw1:1/0/9", "unmanaged-switch", "up", now)):  # a guess, not a device
+        conn.execute("INSERT INTO devices (name, source, role, status, last_seen) "
+                     "VALUES (?, 'test', ?, ?, ?)", (name, role, status, seen))
+    t = device_totals(conn)
+    assert t == {"total": 6, "up": 2, "down": 2, "stale": 1}
+
+
+def test_rail_carries_device_totals(clean_env, tmp_path, client):
+    # every shell page's rail shows how many devices patchbay knows and how
+    # they split; the numbers come from one shared query, not the handler
+    path = str(tmp_path / "test.db")
+    seed(path)
+    c = sqlite3.connect(path)
+    c.execute("INSERT INTO devices (name, source, role, status, last_seen) VALUES "
+              "('ap9', 'unifi', 'ap', 'down', strftime('%s','now'))")
+    c.execute("INSERT INTO devices (name, source, role, status, last_seen) VALUES "
+              "('old1', 'librenms', 'switch', 'up', strftime('%s','now') - 4 * 3600)")
+    c.commit(); c.close()
+    for p in ("/", "/vlans", "/device/sw1", "/routed"):
+        body = client.get(p).text
+        assert 'class="rail-totals"' in body, p
+        assert "6 devices" in body, p            # sw1 fw1 hyp1 vm-a ap9 old1
+        assert '</i>4<span class="rail-label">up<' in body, p
+        assert '</i>1<span class="rail-label">down<' in body, p
+        assert '</i>1<span class="rail-label">stale<' in body, p

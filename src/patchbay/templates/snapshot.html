@@ -23,7 +23,7 @@
 <body>
 <header>
   <h1>{% include "_mark.html" %}patchbay snapshot</h1>
-  <nav class="muted">generated {{ generated }} · build {{ BUILD }}</nav>
+  <nav class="muted">generated {{ generated }} · build {{ BUILD }} · {{ totals.total }} devices, {{ totals.up }} up, {{ totals.down }} down{% if totals.stale %}, {{ totals.stale }} stale{% endif %}</nav>
   <span class="ages">data age at generation: {% for s, m in ages.items() %}{{ s }} {{ m | age }}{{ " · " if not loop.last }}{% endfor %}</span>
 </header>
 <main>
