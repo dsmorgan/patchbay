@@ -1,6 +1,6 @@
 # ADR-0002 — The routed view: the logical network
 
-*Status: accepted (2026-08-31), amended (2026-09-08) · Issue: [#17](https://github.com/dsmorgan/patchbay/issues/17) · Follow-ups: [#50](https://github.com/dsmorgan/patchbay/issues/50)*
+*Status: accepted (2026-08-31), amended (2026-09-17) · Issue: [#17](https://github.com/dsmorgan/patchbay/issues/17) · Follow-ups: [#50](https://github.com/dsmorgan/patchbay/issues/50)*
 
 ![Design mock: the rails layout on a 15-network model](0002-routed-view-mock.png)
 
@@ -238,7 +238,7 @@ The decisions that replaced it, recorded here rather than rewritten above:
   badge per reporter, everything attached goes quiet. Load, Protocol,
   multi-router sites, and snapshot embedding are tracked in #50.
 
-## Amendment — 2026-09-17: the #50 follow-ups (0.14)
+## Amendment — 2026-09-17: the #50 follow-ups (0.14.0)
 
 - **Snapshot embedding** (Decision 1's follow-up) is done the way the
   physical map is: `snapshot.py` calls `build_routed_graph()` and

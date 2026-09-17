@@ -31,10 +31,10 @@ JSON is identical in every mode; the client paints. State table (the source of t
 | `coreonly` | `1` \| `0` | `0` | core only |
 | `hosts` | `1` \| `0` | `0` | wired hosts |
 | `unmhosts` | `1` \| `0` | `0` | behind unmanaged |
-| `ports` | `1` \| `0` | `0` | every link's port names always on; off = on hover only (#48, added 0.14) |
-| `chips` | `1` \| `0` | `1` | speed / VLAN chips on the edges (#43, added 0.14) |
-| `sel` | a node name | unset | the node whose detail panel is open (#45, added 0.14); like `focus`, never remembered across visits |
-| `zones` | `1` \| `0` | `1` | derived hulls around a hypervisor and its VMs, and the cluster (#47, added 0.14) |
+| `ports` | `1` \| `0` | `0` | every link's port names always on; off = on hover only (#48, added 0.14.0) |
+| `chips` | `1` \| `0` | `1` | speed / VLAN chips on the edges (#43, added 0.14.0) |
+| `sel` | a node name | unset | the node whose detail panel is open (#45, added 0.14.0); like `focus`, never remembered across visits |
+| `zones` | `1` \| `0` | `1` | derived hulls around a hypervisor and its VMs, and the cluster (#47, added 0.14.0) |
 
 - **Only non-defaults are serialized**, in table order, so the plain map is a bare `/topology`.
 - Invalid values fall back to the default and the URL is rewritten to the sanitized form on load.

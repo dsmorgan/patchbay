@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>patchbay snapshot — 2026-09-08 23:52 EDT</title>
+<title>patchbay snapshot — 2026-09-17 19:09 EDT</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -2 32 32"><g fill="%232b383c"><rect x="1" y="1" width="30" height="8" rx="2.2"/><rect x="1" y="19" width="30" height="8" rx="2.2"/></g><g fill="%2312191b"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="14" y="2.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="2.5" width="4" height="5" rx="1.1"/><rect x="3" y="20.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="14" y="20.5" width="4" height="5" rx="1.1"/><rect x="19.5" y="20.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="none" stroke-width="2.1" stroke-linecap="round"><path stroke="%234db8c2" d="M5 7.5C5 14 27 14 27 20.5"/><path stroke="%2312191b" stroke-width="4.3" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/><path stroke="%23c792ea" d="M21.5 7.5C21.5 14 10.5 14 10.5 20.5"/></g><g fill="%234db8c2"><rect x="3" y="2.5" width="4" height="5" rx="1.1"/><rect x="25" y="20.5" width="4" height="5" rx="1.1"/></g><g fill="%23c792ea"><rect x="19.5" y="2.5" width="4" height="5" rx="1.1"/><rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/></g></svg>'>
 <style>
   /* IBM Plex Sans, variable weight, Latin subset, self-hosted (SIL OFL 1.1 —
@@ -43,6 +43,7 @@
     --rail-heading-pad: 0.3rem 0.5rem 0.25rem; --rail-heading-h: auto;
     --rail-tab-pad: 0.36rem 0.6rem 0.36rem 0.5rem; --rail-tab-justify: flex-start;
     --rail-indent: 6px; --rail-top-justify: flex-end;
+    --rail-tot-dir: row; --rail-tot-align: stretch;
   }
   html.rail-collapsed {
     --rail-w: 54px; --when-wide: none; --when-narrow: block;
@@ -51,6 +52,7 @@
     --rail-heading-pad: 0; --rail-heading-h: 6px;
     --rail-tab-pad: 0.42rem 0; --rail-tab-justify: center;
     --rail-indent: 0; --rail-top-justify: center;
+    --rail-tot-dir: column; --rail-tot-align: center;
   }
   @media (max-width: 640px) {
     :root {
@@ -60,6 +62,7 @@
       --rail-heading-pad: 0; --rail-heading-h: 6px;
       --rail-tab-pad: 0.42rem 0; --rail-tab-justify: center;
       --rail-indent: 0; --rail-top-justify: center;
+      --rail-tot-dir: column; --rail-tot-align: center;
     }
     .rail .rail-toggle { display: none; }  /* nothing to toggle: too narrow for labels */
     .rail .rail-pin { display: none; }
@@ -165,6 +168,22 @@
   .rail-label { display: block; overflow: hidden; text-overflow: ellipsis;
                 white-space: nowrap; max-width: var(--rail-label-max);
                 opacity: var(--rail-label-o); visibility: var(--rail-label-vis); }
+  /* device totals (#46) at the top of the rail's foot: the count in
+     heading ink, the state buckets under it in the rail's own label size.
+     Collapsed, the buckets stack and center like the icon column. */
+  .rail-totals { display: flex; flex-direction: column; gap: 1px;
+                 align-items: var(--rail-tot-align); padding: var(--rail-tab-pad);
+                 margin-bottom: 3px; border-radius: 6px; color: var(--muted);
+                 font: 600 0.72rem/1.35 var(--font-ui); white-space: nowrap;
+                 font-variant-numeric: tabular-nums; }
+  .rail-totals:hover { background: var(--hover); color: var(--ink); text-decoration: none; }
+  .rail-tot-head { display: flex; align-items: baseline; gap: var(--rail-gap); }
+  .rail-tot-head .n { font-size: 0.95rem; color: var(--ink2); }
+  .rail-tot-row { display: flex; flex-direction: var(--rail-tot-dir);
+                  flex-wrap: wrap; gap: 0.05rem 0.55rem; }
+  .rail-totals .tot { display: inline-flex; align-items: center; gap: var(--rail-gap); }
+  .rail-totals .dot { width: 7px; height: 7px; margin-right: 0.28rem; }
+  .dot.stale { background: var(--warn); }
   /* pin only exists while there are labels to keep; pinned = accent */
   html.rail-collapsed .rail-pin { display: none; }
   .rail-pin[aria-pressed="true"] { color: var(--accent); }
@@ -305,7 +324,7 @@
     <rect x="8.5" y="20.5" width="4" height="5" rx="1.1"/>
   </g>
 </svg>patchbay snapshot</h1>
-  <nav class="muted">generated 2026-09-08 23:52 EDT · build 0.13.0</nav>
+  <nav class="muted">generated 2026-09-17 19:09 EDT · build 0.14.0+ac6afe0-dirty · 15 devices, 15 up, 0 down</nav>
   <span class="ages">data age at generation: librenms 0 min · opnsense 0 min · oxidized 0 min · phpipam 0 min · unifi 0 min · vsphere 0 min</span>
 </header>
 <main>
@@ -338,31 +357,88 @@ from your own network.</p>
   .edge.tunnel { stroke-dasharray: 4 3; stroke: var(--r-firewall); }
   .edge.oob { stroke-dasharray: 2 4; opacity: 0.6; }
   .edge.fdbhost { opacity: 0.45; }
-  .portlab, .speedlab { font: 10.5px var(--font-mono); fill: var(--muted);
+  .portlab { font: 10.5px var(--font-mono); fill: var(--muted);
              paint-order: stroke; stroke: var(--bg); stroke-width: 3.5px; }
+  /* mid-edge chips (#43): the speed, and the VLAN when the link carries
+     few enough to name (an access link; a trunk stays quiet). Facts, not
+     provenance — card fill and a line border, never the reporter color,
+     which stays the edge's alone. The speed text still warns: amber
+     ≤100M, red ≤10M. */
+  .echip { pointer-events: none; }
+  .echip rect { fill: var(--card); stroke: var(--line); stroke-width: 1; }
+  .echip text { font: 10.5px var(--font-mono); fill: var(--ink2); text-anchor: middle; }
+  .echip text.vl { fill: var(--muted); }
+  .echip.slow text.spd { fill: var(--warn); }
+  .echip.vslow text.spd { fill: var(--crit); }
+  #topo:not(.chips) .echip { display: none; }
+  /* port names show on hover (#48): the hovered edge's two ends, or every
+     link of a hovered device — "what is plugged into this switch". They
+     render above the nodes, so revealing them never collides with a
+     neighbor. The `port names` chip (state.ports) shows them all. */
+  .portlab { pointer-events: none; }
+  #topo:not(.ports) .portlab:not(.show) { display: none; }
+  /* the invisible wide twin of every edge: a forgiving hover target that
+     carries the edge's tooltip, so a 4px line is not the hit area */
+  .hit { stroke: transparent; stroke-width: 16; fill: none; pointer-events: stroke; }
   .portlab.trunk { fill: var(--accent); font-weight: 600; }
   /* a mirror destination carries copies, not conversation — mark the port and
      lighten the cable so it doesn't read as a normal path through the fabric */
   .portlab.monitor { fill: var(--r-firewall); font-weight: 600; }
   .edge.monitor { opacity: 0.4; }
-  .speedlab { fill: var(--accent); font-weight: 600; }
-  /* the *speed label* warns — the line keeps its evidence color */
-  .speedlab.slow { fill: var(--warn); }    /* ≤100M */
-  .speedlab.vslow { fill: var(--crit); }   /* ≤10M */
-  .node rect { fill: var(--card); stroke: var(--line); stroke-width: 1.4; }
-  .node.switch rect { stroke: var(--r-switch); }
-  .node.router rect { stroke: var(--r-router); }
-  .node.firewall rect { stroke: var(--r-firewall); }
-  .node.hypervisor rect { stroke: var(--r-hyp); }
-  .node.ap rect { stroke: var(--r-ap); }
-  .node:hover rect, .node:hover ellipse { stroke-width: 2.6; }
-  .node.pinned rect { stroke-width: 2; }
-  .node.focused rect, .node.focused ellipse {
+
+  /* node cards (#44): the box is role-stroked; inside it a rounded-square
+     icon chip anchors the left edge, the status LED pins the top-right
+     corner, and hypervisors get a third line of hardware mini-specs. Role
+     color = the stroke and the glyph, status = the LED, never a glow. */
+  .node rect.box { fill: var(--card); stroke: var(--line); stroke-width: 1.4; }
+  .node.switch rect.box { stroke: var(--r-switch); }
+  .node.router rect.box { stroke: var(--r-router); }
+  .node.firewall rect.box { stroke: var(--r-firewall); }
+  .node.hypervisor rect.box { stroke: var(--r-hyp); }
+  .node.ap rect.box { stroke: var(--r-ap); }
+  .node:hover rect.box, .node:hover ellipse { stroke-width: 2.6; }
+  .node.pinned rect.box { stroke-width: 2; }
+  .node.focused rect.box, .node.focused ellipse {
     filter: drop-shadow(0 0 0 2px var(--accent)) drop-shadow(0 0 6px var(--accent));
   }
+  /* the node whose panel is open (#45): a heavier stroke and a soft ink
+     halo — distinct from the accent halo of a URL focus */
+  .node.selected rect.box, .node.selected ellipse {
+    stroke-width: 2.4; filter: drop-shadow(0 0 5px var(--ink2)); }
+  /* the detail panel floats over the map's right edge rather than beside
+     it, so opening it never resizes (and re-fits) the map */
+  .mapwrap { position: relative; }
+  #npanel { position: absolute; top: 10px; right: 10px; bottom: 10px; width: 290px;
+            overflow: auto; background: var(--card); border: 1px solid var(--line);
+            border-radius: 8px; padding: 0.75rem 0.9rem 0.9rem; font-size: 0.8rem;
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
+  #npanel .ph { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.15rem; }
+  #npanel .ph svg { width: 18px; height: 18px; flex: none; }
+  #npanel .ph .nm { font-weight: 650; font-size: 0.95rem; flex: 1 1 auto; min-width: 0;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #npanel .pclose { background: none; border: 0; color: var(--muted); font-size: 1.1rem;
+                    line-height: 1; cursor: pointer; padding: 0 0.2rem; }
+  #npanel .pclose:hover { color: var(--ink); }
+  #npanel .pstate { color: var(--muted); margin-bottom: 0.6rem; }
+  #npanel dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.7rem;
+               margin: 0 0 0.7rem; }
+  #npanel dt { color: var(--muted); font-size: 0.72rem; text-transform: uppercase;
+               letter-spacing: 0.08em; padding-top: 0.1rem; }
+  #npanel dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  #npanel h3 { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em;
+               color: var(--muted); margin: 0.6rem 0 0.3rem; }
+  #npanel ul { list-style: none; margin: 0; padding: 0; }
+  #npanel li { padding: 0.22rem 0; border-top: 1px solid var(--grid); line-height: 1.35; }
+  #npanel li .peer { color: var(--accent); cursor: pointer; font-weight: 600; }
+  #npanel li .peer:hover { text-decoration: underline; }
+  #npanel li .via { color: var(--muted); font-size: 0.74rem; }
+  #npanel .pfoot { margin-top: 0.8rem; }
+  #npanel .pfoot a { font-weight: 600; }
+  .node rect.ichip { fill: var(--hover); stroke: var(--line); stroke-width: 1; }
   .node text.nm { font: 600 12.5px var(--font-ui); fill: var(--ink); }
   .node text.sub { font: 10.5px var(--font-ui); fill: var(--muted); }
-  .node.unmanaged-switch rect { stroke-dasharray: 5 4; stroke: var(--muted); }
+  .node text.specs { font: 10px var(--font-mono); fill: var(--muted); }
+  .node.unmanaged-switch rect.box { stroke-dasharray: 5 4; stroke: var(--muted); }
   /* VPN tunnels: cloud-shaped but dashed and firewall-purple — an egress,
      never mistakable for the provider cloud */
   .node.tunnel ellipse { stroke-dasharray: 6 4; stroke: var(--r-firewall) !important; }
@@ -446,6 +522,16 @@ from your own network.</p>
   .band:nth-of-type(odd) rect { opacity: 0.4; }
   .band:nth-of-type(even) rect { opacity: 0; }
   .band-label { font: 11px var(--font-ui); fill: var(--muted); opacity: 0.75; }
+  /* derived zones (#47): a translucent hull behind a hypervisor and its
+     guests, a fainter one around the cluster. Computed from the parent
+     relationship, drawn under everything, never a click target. Hypervisor
+     blue, because that is what the zone says. */
+  .zones { pointer-events: none; }
+  .zone rect { fill: var(--r-hyp); fill-opacity: 0.07; stroke: var(--r-hyp);
+               stroke-opacity: 0.4; stroke-width: 1.2; stroke-dasharray: 6 5; }
+  .zone.cluster rect { fill-opacity: 0.035; stroke-opacity: 0.28; }
+  .zone text { font: 600 10.5px var(--font-ui); fill: var(--r-hyp); opacity: 0.75;
+               letter-spacing: 0.04em; }
   .toolbar .fitbtn { background: none; border: 0; color: var(--ink); font: inherit;
                       cursor: pointer; padding: 0; }
   .toolbar .fitbtn:hover { color: var(--accent); }
@@ -468,6 +554,9 @@ from your own network.</p>
     <button type="button" class="fchip" id="hosts" aria-pressed="false">wired hosts</button>
     <button type="button" class="fchip" id="unmhosts" aria-pressed="false">behind unmanaged</button>
     <button type="button" class="fchip" id="tierbox" aria-pressed="false" title="lanes own each node's vertical position; off = arrange freely, pins keep both axes">tier lanes</button>
+    <button type="button" class="fchip" id="portnames" aria-pressed="false" title="show every link's interface names; off = only while hovering an edge or a device">port names</button>
+    <button type="button" class="fchip" id="edgechips" aria-pressed="true" title="speed and access-VLAN chips on the edges">edge chips</button>
+    <button type="button" class="fchip" id="zonesbox" aria-pressed="true" title="a zone around each hypervisor and its VMs, and around the cluster; the VM-on-host edge hides inside a zone">zones</button>
   </span>
   <span class="grp" id="loadgrp" hidden>
     <select id="loadmode">
@@ -486,10 +575,15 @@ from your own network.</p>
   </span>
 </div>
 
+<div class="mapwrap">
 <svg id="topo"></svg>
+
+<aside id="npanel" hidden aria-label="Node detail"></aside>
+</div>
 
 <p class="legend" id="legend">
   <span class="item" data-modes="wiring load vlan evidence"><svg width="30" height="10"><line x1="0" y1="7" x2="12" y2="7" stroke="var(--muted)" stroke-width="1.4"/><line x1="16" y1="5" x2="30" y2="5" stroke="var(--muted)" stroke-width="5"/></svg> thicker = faster</span>
+  <span class="item" data-modes="wiring load vlan evidence">chips: <span class="mono" style="border: 1px solid var(--line); border-radius: 999px; padding: 0 0.4em; color: var(--ink2)">10G</span> speed · <span class="mono" style="border: 1px solid var(--line); border-radius: 999px; padding: 0 0.4em">VLAN 20</span> the link's VLANs when three or fewer</span>
   <span class="item" data-modes="wiring"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--muted)" stroke-width="2"/></svg> confirmed cable</span>
   <span class="item" data-modes="wiring"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--muted)" stroke-width="2" stroke-dasharray="7 3"/></svg> inferred cable</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--accent)" stroke-width="2"/></svg> LLDP/CDP-confirmed</span>
@@ -497,6 +591,7 @@ from your own network.</p>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-hyp)" stroke-width="2"/></svg> hypervisor-reported</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-ap)" stroke-width="2"/></svg> controller-reported</span>
   <span class="item" data-modes="wiring vlan evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--r-hyp)" stroke-width="2" stroke-dasharray="3 5"/></svg> VM on host</span>
+  <span class="item" data-modes="wiring load vlan evidence"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" rx="4" fill="var(--r-hyp)" fill-opacity="0.12" stroke="var(--r-hyp)" stroke-opacity="0.5" stroke-dasharray="4 3"/></svg> zone: a host and its VMs · the cluster around them</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--ink)" stroke-width="2"/></svg> declared (operator)</span>
   <span class="item" data-modes="evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--muted)" stroke-width="2" stroke-dasharray="5 4"/></svg> unmanaged feed</span>
   <span class="item" data-modes="wiring vlan evidence"><svg width="26" height="6"><line x1="0" y1="3" x2="26" y2="3" stroke="var(--muted)" stroke-width="2" stroke-dasharray="8 4"/></svg> WAN</span>
@@ -521,7 +616,7 @@ from your own network.</p>
     <span class="swatch" style="background: var(--crit)"></span>60%+
     <span id="leg-peak">· pk = 24h peak</span></span>
   <span class="item" id="leg-vlan" data-modes="wiring load vlan evidence" style="color: var(--ink)"></span>
-  <span class="hint">drag pins a node · scroll zooms · background pans · hover an edge for speed, load &amp; VLANs · click a device for detail</span>
+  <span class="hint">drag pins a node · scroll zooms · background pans · hover an edge for its port names, speed, load &amp; VLANs, a device for the names on every link · click a device for its detail panel, double-click opens its page (⌘/Ctrl-click: new tab)</span>
 </p>
 
 <script>// https://d3js.org v7.9.0 Copyright 2010-2023 Mike Bostock
@@ -530,7 +625,7 @@ from your own network.</p>
 
 <script>
 const SNAPSHOT = true;
-const graph = {"nodes": [{"name": "ap-attic", "label": "ap-attic", "w": 134.8, "sub": "1 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-attic", "vlans": [1], "px": null, "py": null}, {"name": "ap-den", "label": "ap-den", "w": 119.6, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-den", "vlans": [1], "px": null, "py": null}, {"name": "ap-garage", "label": "ap-garage", "w": 142.39999999999998, "sub": "2 clients", "status": "up", "role": "ap", "rank": 2, "title": "ap-garage", "vlans": [1], "px": null, "py": null}, {"name": "core1", "label": "core1", "w": 180.0, "sub": "192.0.2.2", "status": "up", "role": "switch", "rank": 1, "title": "core1", "vlans": [1], "px": null, "py": null}, {"name": "edge1", "label": "edge1", "w": 180.0, "sub": "192.0.2.3", "status": "up", "role": "switch", "rank": 1, "title": "edge1", "vlans": [1], "px": null, "py": null}, {"name": "fw1", "label": "fw1", "w": 107.4, "sub": "192.0.2.1", "status": "up", "role": "firewall", "rank": 0, "title": "fw1", "vlans": [1, 20, 30], "px": null, "py": null}, {"name": "hyp1", "label": "hyp1", "w": 180.0, "sub": "192.0.2.10 \u00b7 4/4 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp1", "vlans": [1], "px": null, "py": null}, {"name": "hyp2", "label": "hyp2", "w": 180.0, "sub": "192.0.2.11 \u00b7 3/3 VMs", "status": "up", "role": "hypervisor", "rank": 2, "title": "hyp2", "vlans": [1], "px": null, "py": null}, {"name": "unmanaged@edge1:e1/0/8", "label": "unmanaged", "w": 142.39999999999998, "sub": "5 MACs", "status": "up", "role": "unmanaged-switch", "rank": 2, "title": "unmanaged@edge1:e1/0/8 \u00b7 ~5 MACs behind edge1 e1/0/8", "vlans": [30], "px": null, "py": null}, {"name": "internet", "role": "cloud", "rank": -1, "w": 127.60000000000001, "sub": "WAN_GW Online", "status": "up", "vlans": [], "px": null, "py": null}, {"name": "vpn:wireguard:site-b \u00b7 wg-peer", "label": "site-b \u00b7 wg-peer", "role": "tunnel", "rank": -1, "w": 169.2, "sub": "WireGuard", "status": "up", "title": "WireGuard tunnel \u00b7 site-b \u00b7 wg-peer \u00b7 peer 192.0.2.200:51820 \u00b7 allowed 172.16.44.0/24", "vlans": [], "px": null, "py": null}, {"name": "console", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "203.0.113.61", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "nas1", "role": "host", "rank": 2, "viaUn": false, "w": 114.0, "sub": "wired host", "status": "up", "vlans": [20], "px": null, "py": null}, {"name": "pi-hole", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.62", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "printer", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.61", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "shelly-plug", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.62", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "tv-basement", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.60", "status": "up", "vlans": [30], "px": null, "py": null}], "links": [{"source": "core1", "target": "hyp1", "alab": "1/0/1 [1]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.2, "putil": 33.3, "vlans": [1], "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/2 [2]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 0.7, "putil": 33.8, "vlans": [1], "note": null}, {"source": "core1", "target": "edge1", "alab": "1/0/3 [3]", "blab": "e1/0/1", "amode": "trunk", "bmode": "trunk", "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.5, "putil": 33.3, "vlans": [1], "note": null}, {"source": "ap-attic", "target": "edge1", "alab": "eth0", "blab": "e1/0/2", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 4.4, "putil": 33.0, "vlans": null, "note": null}, {"source": "ap-den", "target": "edge1", "alab": "eth0", "blab": "e1/0/3", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 9.4, "putil": 33.9, "vlans": null, "note": null}, {"source": "ap-garage", "target": "edge1", "alab": "eth0", "blab": "e1/0/4", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 10.3, "putil": 33.8, "vlans": null, "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/4", "blab": "vmnic1", "amode": null, "bmode": null, "cls": "vspherehint", "sw": 7.4, "speed": "10G", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "edge1", "target": "unmanaged@edge1:e1/0/8", "alab": "e1/0/8", "blab": "", "amode": "access", "bmode": null, "cls": "fdbinference", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "fw1", "target": "hyp1", "alab": "vm", "blab": "", "amode": null, "bmode": null, "cls": "virtualized", "sw": 2.5, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "internet", "alab": "WAN", "blab": "", "amode": null, "bmode": null, "cls": "wan", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "vpn:wireguard:site-b \u00b7 wg-peer", "alab": "wg1", "blab": "", "amode": null, "bmode": null, "cls": "tunnel", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "console", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "edge1", "target": "nas1", "alab": "e1/0/10", "blab": "lan1", "amode": "access", "bmode": null, "cls": "fdbhost", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [20], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "pi-hole", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "printer", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "shelly-plug", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "tv-basement", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}], "vlans": [{"vid": 1, "name": "mgmt"}, {"vid": 20, "name": "servers"}, {"vid": 30, "name": "iot"}]};
+const graph = {"nodes": [{"name": "ap-attic", "label": "ap-attic", "mgmt": "192.0.2.31", "hw": "UbiFi AP-6-Pro", "os": "7.0.66", "parent": null, "seen": 0, "w": 118.8, "sub": "1 clients", "status": "up", "specs": "", "role": "ap", "rank": 2, "title": "ap-attic", "vlans": [1], "px": null, "py": null}, {"name": "ap-den", "label": "ap-den", "mgmt": "192.0.2.32", "hw": "UbiFi AP-6-Lite", "os": "7.0.66", "parent": null, "seen": 0, "w": 117.4, "sub": "2 clients", "status": "up", "specs": "", "role": "ap", "rank": 2, "title": "ap-den", "vlans": [1], "px": null, "py": null}, {"name": "ap-garage", "label": "ap-garage", "mgmt": "192.0.2.33", "hw": "UbiFi AP-6-Lite", "os": "7.0.66", "parent": null, "seen": 0, "w": 126.39999999999999, "sub": "2 clients", "status": "up", "specs": "", "role": "ap", "rank": 2, "title": "ap-garage", "vlans": [1], "px": null, "py": null}, {"name": "core1", "label": "core1", "mgmt": "192.0.2.2", "hw": "Exemplar ES-2400X", "os": "exos 9.2", "parent": null, "seen": 0, "w": 190.0, "sub": "192.0.2.2", "status": "up", "specs": "", "role": "switch", "rank": 1, "title": "core1", "vlans": [1], "px": null, "py": null}, {"name": "edge1", "label": "edge1", "mgmt": "192.0.2.3", "hw": "Exemplar ES-1200", "os": "exos 9.2", "parent": null, "seen": 0, "w": 190.0, "sub": "192.0.2.3", "status": "up", "specs": "", "role": "switch", "rank": 1, "title": "edge1", "vlans": [1], "px": null, "py": null}, {"name": "fw1", "label": "fw1", "mgmt": "192.0.2.1", "hw": "Deciso DEC750", "os": "opnsense 26.1", "parent": "hyp1", "seen": 0, "w": 117.4, "sub": "192.0.2.1", "status": "up", "specs": "", "role": "firewall", "rank": 0, "title": "fw1", "vlans": [1, 20, 30], "px": null, "py": null}, {"name": "hyp1", "label": "hyp1", "mgmt": "192.0.2.10", "hw": "Supermicro X12SPi-TF", "os": "esxi 8.0.3", "parent": null, "seen": 0, "w": 190.0, "sub": "192.0.2.10 \u00b7 4/4 VMs", "status": "up", "specs": "16c \u00b7 128 GB", "role": "hypervisor", "rank": 2, "title": "hyp1", "vlans": [1], "px": null, "py": null}, {"name": "hyp2", "label": "hyp2", "mgmt": "192.0.2.11", "hw": "Supermicro X12SPi-TF", "os": "esxi 8.0.3", "parent": null, "seen": 0, "w": 190.0, "sub": "192.0.2.11 \u00b7 3/3 VMs", "status": "up", "specs": "24c \u00b7 192 GB", "role": "hypervisor", "rank": 2, "title": "hyp2", "vlans": [1], "px": null, "py": null}, {"name": "unmanaged@edge1:e1/0/8", "label": "unmanaged", "mgmt": null, "hw": "~5 MACs behind edge1 e1/0/8", "os": null, "parent": null, "seen": 0, "w": 126.39999999999999, "sub": "5 MACs", "status": "up", "specs": "", "role": "unmanaged-switch", "rank": 2, "title": "unmanaged@edge1:e1/0/8 \u00b7 ~5 MACs behind edge1 e1/0/8", "vlans": [30], "px": null, "py": null}, {"name": "internet", "role": "cloud", "rank": -1, "w": 127.60000000000001, "sub": "WAN_GW Online", "status": "up", "vlans": [], "px": null, "py": null}, {"name": "vpn:wireguard:site-b \u00b7 wg-peer", "label": "site-b \u00b7 wg-peer", "role": "tunnel", "rank": -1, "w": 169.2, "sub": "WireGuard", "status": "up", "title": "WireGuard tunnel \u00b7 site-b \u00b7 wg-peer \u00b7 peer 192.0.2.200:51820 \u00b7 allowed 172.16.44.0/24", "vlans": [], "px": null, "py": null}, {"name": "console", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "203.0.113.61", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "nas1", "role": "host", "rank": 2, "viaUn": false, "w": 114.0, "sub": "wired host", "status": "up", "vlans": [20], "px": null, "py": null}, {"name": "pi-hole", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.62", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "printer", "role": "host", "rank": 2, "viaUn": true, "w": 127.19999999999999, "sub": "192.0.2.61", "status": "up", "vlans": [1], "px": null, "py": null}, {"name": "shelly-plug", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.62", "status": "up", "vlans": [30], "px": null, "py": null}, {"name": "tv-basement", "role": "host", "rank": 2, "viaUn": true, "w": 157.6, "sub": "203.0.113.60", "status": "up", "vlans": [30], "px": null, "py": null}], "links": [{"source": "core1", "target": "hyp1", "alab": "1/0/1 [1]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 2.5, "putil": 33.4, "vlans": [1], "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/2 [2]", "blab": "vmnic0", "amode": "trunk", "bmode": null, "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.5, "putil": 33.3, "vlans": [1], "note": null}, {"source": "core1", "target": "edge1", "alab": "1/0/3 [3]", "blab": "e1/0/1", "amode": "trunk", "bmode": "trunk", "cls": "lldp", "sw": 7.4, "speed": "10G", "util": 1.0, "putil": 33.5, "vlans": [1], "note": null}, {"source": "ap-attic", "target": "edge1", "alab": "eth0", "blab": "e1/0/2", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 1.9, "putil": 33.5, "vlans": null, "note": null}, {"source": "ap-den", "target": "edge1", "alab": "eth0", "blab": "e1/0/3", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 2.7, "putil": 33.7, "vlans": null, "note": null}, {"source": "ap-garage", "target": "edge1", "alab": "eth0", "blab": "e1/0/4", "amode": null, "bmode": "access", "cls": "lldp", "sw": 5.5, "speed": "2.5G", "util": 2.6, "putil": 33.6, "vlans": null, "note": null}, {"source": "core1", "target": "hyp2", "alab": "1/0/4", "blab": "vmnic1", "amode": null, "bmode": null, "cls": "vspherehint", "sw": 7.4, "speed": "10G", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "edge1", "target": "unmanaged@edge1:e1/0/8", "alab": "e1/0/8", "blab": "", "amode": "access", "bmode": null, "cls": "fdbinference", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "fw1", "target": "hyp1", "alab": "vm", "blab": "", "amode": null, "bmode": null, "cls": "virtualized", "sw": 2.5, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "internet", "alab": "WAN", "blab": "", "amode": null, "bmode": null, "cls": "wan", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "fw1", "target": "vpn:wireguard:site-b \u00b7 wg-peer", "alab": "wg1", "blab": "", "amode": null, "bmode": null, "cls": "tunnel", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1, 20, 30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "console", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "edge1", "target": "nas1", "alab": "e1/0/10", "blab": "lan1", "amode": "access", "bmode": null, "cls": "fdbhost", "sw": 5.5, "speed": "2.5G", "util": null, "putil": null, "vlans": [20], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "pi-hole", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "printer", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [1], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "shelly-plug", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}, {"source": "unmanaged@edge1:e1/0/8", "target": "tv-basement", "alab": "", "blab": "", "amode": null, "bmode": null, "cls": "fdbhost", "sw": 4.2, "speed": "", "util": null, "putil": null, "vlans": [30], "note": null}], "vlans": [{"vid": 1, "name": "mgmt"}, {"vid": 20, "name": "servers"}, {"vid": 30, "name": "iot"}], "zones": [{"id": "hyp:hyp1", "kind": "hyp", "label": "hyp1", "members": ["hyp1", "fw1"]}]};
 const svg = d3.select("#topo");
 let W, H;
 ({ width: W, height: H } = svg.node().getBoundingClientRect());
@@ -606,6 +701,7 @@ graph.links.forEach(l => {
 
 const g = svg.append("g");
 const gBands = g.append("g").attr("class", "bands");     // drawn first: behind gContent
+const gZones = g.append("g").attr("class", "zones");     // derived hulls (#47), under the content
 const gContent = g.append("g").attr("class", "content"); // links, labels, nodes — fit() measures this
 const zoom = d3.zoom().scaleExtent([0.2, 3]).on("zoom", e => g.attr("transform", e.transform));
 svg.call(zoom);
@@ -638,44 +734,115 @@ graph.nodes.forEach(n => {
 const link = gContent.append("g").selectAll("line").data(graph.links).join("line")
     .attr("class", d => `edge ${d.cls}`)
     .attr("stroke-width", d => d.sw);
-link.append("title").text(d =>
+// the hover twin: wide, invisible, above the edges and below the nodes —
+// it carries the tooltip and the hover that reveals the port names
+const hit = gContent.append("g").selectAll("line").data(graph.links).join("line")
+    .attr("class", "hit");
+hit.append("title").text(d =>
     `${d.source} ${d.alab || ""} ↔ ${d.target} ${d.blab || ""}` +
     `${d.speed ? ` · ${d.speed}` : ""}${d.util != null ? ` · ${d.util}% used` : ""}` +
     `${d.vlans ? ` · vlans ${d.vlans.length > 8 ? d.vlans.length + " (all)" : d.vlans.join(",")}` : ""}` +
     `${d.note ? `\n${d.note}` : ""}`);
-const alab = gContent.append("g").selectAll("text").data(graph.links.filter(d => d.alab)).join("text")
+// port-name layers are created here but raised above the nodes further
+// down, once the nodes exist (a revealed label must never sit under a box)
+const gAlab = gContent.append("g"), gBlab = gContent.append("g");
+const alab = gAlab.selectAll("text").data(graph.links.filter(d => d.alab)).join("text")
     .attr("class", d => "portlab" + (d.amode ? " " + d.amode : "")).text(d => d.alab);
-const blab = gContent.append("g").selectAll("text").data(graph.links.filter(d => d.blab)).join("text")
+const blab = gBlab.selectAll("text").data(graph.links.filter(d => d.blab)).join("text")
     .attr("class", d => "portlab" + (d.bmode ? " " + d.bmode : "")).text(d => d.blab);
-const slab = gContent.append("g").selectAll("text").data(graph.links.filter(d => d.speed)).join("text")
-    .attr("class", d => "speedlab" + (d.cls.includes("vslow") ? " vslow"
-                                      : d.cls.includes("slow") ? " slow" : ""))
-    .attr("text-anchor", "middle").text(d => d.speed);
+// mid-edge chips (#43): a speed chip, and under it a VLAN chip when the
+// link carries at most three — an access link says "VLAN 20"; a trunk
+// carrying twelve says nothing here (the tooltip lists them)
+const vlanChip = d => d.vlans && d.vlans.length && d.vlans.length <= 3
+  ? "VLAN " + d.vlans.join(",") : null;
+const chipW = t => t.length * 6.4 + 12;
+const echip = gContent.append("g").selectAll("g")
+    .data(graph.links.filter(d => d.speed || vlanChip(d))).join("g")
+    .attr("class", d => "echip" + (d.cls.includes("vslow") ? " vslow"
+                                   : d.cls.includes("slow") ? " slow" : ""));
+echip.each(function (d) {
+  const g = d3.select(this);
+  let y = 0;
+  if (d.speed) {
+    g.append("rect").attr("class", "spd").attr("height", 16).attr("y", -8).attr("rx", 8);
+    g.append("text").attr("class", "spd").attr("y", 4);
+    y = 18;
+  }
+  const v = vlanChip(d);
+  if (v) {
+    g.append("rect").attr("class", "vl").attr("height", 16).attr("y", y - 8).attr("rx", 8)
+     .attr("width", chipW(v)).attr("x", -chipW(v) / 2);
+    g.append("text").attr("class", "vl").attr("y", y + 4).text(v);
+  }
+});
+// the speed chip's text changes with the mode (load adds the percentage),
+// so its pill is sized whenever the text is set
+function setSpeedText(fn) {
+  echip.select("text.spd").text(fn);
+  echip.select("rect.spd").attr("width", d => chipW(fn(d))).attr("x", d => -chipW(fn(d)) / 2);
+}
+setSpeedText(d => d.speed);
 
 // role icons come from the shared server-side dictionary (web.py ICONS)
 const ICONS = {"ap": "M9 13.2a1.2 1.2 0 100 .01 M5.5 10a5 5 0 017 0 M3 7a8.5 8.5 0 0112 0", "firewall": "M1 3h16v12H1z M1 9h16 M9 3v6 M5 9v6 M13 9v6", "host": "M3 2h12v7h-2.5v3H10v2H8v-2H5.5V9H3z M6 2v3 M9 2v3 M12 2v3", "hypervisor": "M9 2l7 3.5L9 9 2 5.5z M2 9l7 3.5 7-3.5 M2 12.5L9 16l7-3.5", "router": "M2 9a7 7 0 0014 0A7 7 0 002 9z M5 6.6h6.8 M11.8 6.6L10 4.8 M11.8 6.6L10 8.4 M13 11.4H6.2 M6.2 11.4L8 9.6 M6.2 11.4L8 13.2", "switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5", "tunnel": "M5 8V6a4 4 0 018 0v2 M3 8h12v7H3z M9 11v2", "unmanaged-switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5"};
 
 const node = gContent.append("g").selectAll("g").data(graph.nodes).join("g")
     .attr("class", d => `node ${d.role}` + (d.px != null ? " pinned" : ""));
-node.filter(d => d.role !== "cloud" && d.role !== "tunnel").append("rect")
-    .attr("x", d => -d.w / 2).attr("y", -24).attr("width", d => d.w).attr("height", 48)
-    .attr("rx", 8);
-node.filter(d => d.role === "cloud" || d.role === "tunnel").append("ellipse")
+// card nodes (rects) get the #44 layout: icon chip left, LED top-right,
+// name / sub / specs rows. Ovals (cloud, tunnel) keep dot-left, icon-right.
+const isCard = d => d.role !== "cloud" && d.role !== "tunnel";
+const nodeH = d => isCard(d) && d.specs ? 60 : 48;
+const card = node.filter(isCard), oval = node.filter(d => !isCard(d));
+card.append("rect").attr("class", "box")
+    .attr("x", d => -d.w / 2).attr("y", d => -nodeH(d) / 2)
+    .attr("width", d => d.w).attr("height", nodeH).attr("rx", 8);
+oval.append("ellipse")
     .attr("rx", d => d.w / 2 + 8).attr("ry", 30)
     .attr("fill", "var(--card)").attr("stroke", "var(--line)");
-node.filter(d => ICONS[d.role]).append("path")
+card.filter(d => ICONS[d.role]).append("rect").attr("class", "ichip")
+    .attr("x", d => -d.w / 2 + 8).attr("y", -12).attr("width", 24).attr("height", 24).attr("rx", 6);
+card.filter(d => ICONS[d.role]).append("path")
+    .attr("class", "ricon").attr("d", d => ICONS[d.role])
+    .attr("transform", d => `translate(${-d.w / 2 + 11}, -9)`);
+oval.filter(d => ICONS[d.role]).append("path")
     .attr("class", "ricon").attr("d", d => ICONS[d.role])
     .attr("transform", d => `translate(${d.w / 2 - 26}, -9)`);
-node.append("circle").attr("class", d => `sdot ${d.status}`)
+card.append("circle").attr("class", d => `sdot ${d.status}`)
+    .attr("cx", d => d.w / 2 - 10).attr("cy", d => -nodeH(d) / 2 + 10).attr("r", 4);
+oval.append("circle").attr("class", d => `sdot ${d.status}`)
     .attr("cx", d => -d.w / 2 + 14).attr("cy", -6).attr("r", 4.5);
-node.append("text").attr("class", "nm").attr("x", d => -d.w / 2 + 24).attr("y", -2)
+const textX = d => isCard(d) ? -d.w / 2 + 40 : -d.w / 2 + 24;
+const nameY = d => -nodeH(d) / 2 + 22;
+node.append("text").attr("class", "nm").attr("x", textX).attr("y", nameY)
     .text(d => d.label ?? d.name);
-node.append("text").attr("class", "sub").attr("x", d => -d.w / 2 + 24).attr("y", 14)
+node.append("text").attr("class", "sub").attr("x", textX).attr("y", d => nameY(d) + 16)
     .text(d => d.sub);
+card.filter(d => d.specs).append("text").attr("class", "specs")
+    .attr("x", textX).attr("y", d => nameY(d) + 30).text(d => d.specs);
 node.append("title").text(d => d.title ?? d.name);
+gAlab.raise(); gBlab.raise();   // port names paint above every node
+// hover reveals port names (#48): an edge shows its two ends, a device
+// shows the names on every one of its links
+let hovLink = null, hovNode = null;
+function showPortNames() {
+  const on = d => d === hovLink || (hovNode != null &&
+    (d.source === hovNode || d.target === hovNode));
+  alab.classed("show", on);
+  blab.classed("show", on);
+}
+hit.on("mouseenter", (e, d) => { hovLink = d; showPortNames(); })
+   .on("mouseleave", () => { hovLink = null; showPortNames(); });
+node.on("mouseenter", (e, d) => { hovNode = d; showPortNames(); })
+    .on("mouseleave", () => { hovNode = null; showPortNames(); });
+// a node's page: the live device page, or its section in the snapshot;
+// clouds, tunnels, and wired hosts have no page of their own
+const hasPage = d => d.role !== "cloud" && d.role !== "host" && d.role !== "tunnel";
+const pageUrl = d => SNAPSHOT ? "#dev-" + d.name : `/device/${encodeURIComponent(d.name)}`;
+// click opens the detail panel (#45); the page is the secondary action —
+// double-click, or ⌘/Ctrl-click for a new tab — the routed view's contract
 node.on("click", (e, d) => {
   if (e.defaultPrevented) return;      // this was the tail of a drag
-  if (e.shiftKey && !SNAPSHOT) {       // shift-click unpins (plain click navigates)
+  if (e.shiftKey && !SNAPSHOT) {       // shift-click unpins
     d.fx = null;                       // in tiers the band keeps owning Y
     if (!TIERS) d.fy = null;
     savePos(d.name, null, null);
@@ -683,10 +850,12 @@ node.on("click", (e, d) => {
     sim.alpha(0.3).restart();
     return;
   }
-  if (d.role !== "cloud" && d.role !== "host" && d.role !== "tunnel") {
-    if (SNAPSHOT) window.location.hash = "dev-" + d.name;
-    else window.location = `/device/${encodeURIComponent(d.name)}`;
-  }
+  if ((e.metaKey || e.ctrlKey) && hasPage(d)) { window.open(pageUrl(d), "_blank"); return; }
+  set({ sel: state.sel === d.name ? null : d.name });
+});
+node.on("dblclick", (e, d) => {
+  e.preventDefault(); e.stopPropagation();
+  if (hasPage(d)) window.location = pageUrl(d);
 });
 
 // offset endpoints for a link, shifted perpendicular for parallel runs
@@ -701,7 +870,7 @@ function ends(d) {
 function exitDist(n, dx, dy, len) {
   const ux = Math.abs(dx / len), uy = Math.abs(dy / len);
   return Math.min(ux > 1e-6 ? (n.w / 2) / ux : Infinity,
-                  uy > 1e-6 ? 24 / uy : Infinity);
+                  uy > 1e-6 ? (nodeH(n) / 2) / uy : Infinity);
 }
 function placePortLabel(sel, d, from, dx, dy) {
   const len = Math.hypot(dx, dy) || 1;
@@ -711,6 +880,60 @@ function placePortLabel(sel, d, from, dx, dy) {
      // text runs away from the node, never back across it
      .attr("text-anchor", Math.abs(dx) < len * 0.35 ? "middle" : (dx < 0 ? "end" : "start"));
 }
+
+// --- derived zones (#47): a hull behind each hypervisor and its guests, and
+// around the cluster. Sized every tick from the visible members' boxes; a
+// grouping force pulls members toward their zone's centroid so they
+// cluster. Membership visibility comes from the node's _vis flag (set by
+// applyFilters) so the first synchronous tick, which runs before the
+// state model exists, simply draws none.
+let zonesOn = true;
+const zoneG = gZones.selectAll("g.zone").data(graph.zones || []).join("g")
+    .attr("class", d => `zone ${d.kind}`);
+zoneG.append("rect").attr("rx", 14);
+zoneG.append("text");
+zoneG.append("title").text(d => `${d.label}: ${d.members.join(", ")}`);
+// in the tiers layout the bands own Y, and a hull from the Edge band down
+// to Access & compute would wrap the fabric in between as if it belonged:
+// there a zone keeps only the members in its hypervisor's own band (the
+// first member is the hypervisor) and a guest in another band keeps its
+// VM-on-host edge instead
+const zoneMembers = z => {
+  const rank = (byName[z.members[0]] || {}).rank;
+  return z.members.map(n => byName[n])
+    .filter(n => n && n._vis && (!TIERS || n.rank === rank));
+};
+const zoneDrawn = z => zonesOn && zoneMembers(z).length >= 2;
+const halfH = n => isCard(n) ? nodeH(n) / 2 : 30;
+function updateZones() {
+  zoneG.each(function (z) {
+    const gz = d3.select(this), ms = zoneMembers(z);
+    if (!zoneDrawn(z)) { gz.style("display", "none"); return; }
+    gz.style("display", null);
+    const pad = z.kind === "cluster" ? 30 : 16;
+    const x0 = Math.min(...ms.map(n => n.x - n.w / 2)) - pad;
+    const x1 = Math.max(...ms.map(n => n.x + n.w / 2)) + pad;
+    const y0 = Math.min(...ms.map(n => n.y - halfH(n))) - pad - 12;   // label headroom
+    const y1 = Math.max(...ms.map(n => n.y + halfH(n))) + pad;
+    gz.select("rect").attr("x", x0).attr("y", y0).attr("width", x1 - x0).attr("height", y1 - y0);
+    gz.select("text").attr("x", x0 + 12).attr("y", y0 + 15).text(z.label);
+  });
+}
+function zoneForce(alpha) {
+  (graph.zones || []).forEach(z => {
+    if (!zoneDrawn(z)) return;
+    const ms = zoneMembers(z);
+    const k = (z.kind === "cluster" ? 0.04 : 0.12) * alpha;
+    const cx = d3.mean(ms, n => n.x), cy = d3.mean(ms, n => n.y);
+    ms.forEach(n => { n.vx += (cx - n.x) * k; if (!TIERS) n.vy += (cy - n.y) * k; });
+  });
+}
+// a VM-on-host edge says what a drawn zone already shows: it hides inside one
+const zoneCovers = d => (graph.zones || []).some(z => {
+  if (!zoneDrawn(z)) return false;
+  const names = zoneMembers(z).map(n => n.name);
+  return names.includes(d.source.name ?? d.source) && names.includes(d.target.name ?? d.target);
+});
 
 // --- bands, fit-to-view, and focus: Y owned by the tier (ADR-0001 Decision 2) ---
 // A band renders only for a rank with >=1 visible node; its width spans that
@@ -782,6 +1005,10 @@ function ticked() {
     const e = ends(d);
     d3.select(this).attr("x1", e.ax).attr("y1", e.ay).attr("x2", e.bx).attr("y2", e.by);
   });
+  hit.each(function (d) {
+    const e = ends(d);
+    d3.select(this).attr("x1", e.ax).attr("y1", e.ay).attr("x2", e.bx).attr("y2", e.by);
+  });
   alab.each(function (d) {
     const e = ends(d);
     placePortLabel(d3.select(this), d, { n: d.source, x: e.ax, y: e.ay },
@@ -792,14 +1019,14 @@ function ticked() {
     placePortLabel(d3.select(this), d, { n: d.target, x: e.bx, y: e.by },
                    e.ax - e.bx, e.ay - e.by);
   });
-  slab.each(function (d) {
+  echip.attr("transform", d => {
     const e = ends(d), dx = e.bx - e.ax, dy = e.by - e.ay,
           len = Math.hypot(dx, dy) || 1;
-    d3.select(this)
-      .attr("x", (e.ax + e.bx) / 2 + dx / len * d.sstag)
-      .attr("y", (e.ay + e.by) / 2 + dy / len * d.sstag - 5);
+    return `translate(${(e.ax + e.bx) / 2 + dx / len * d.sstag},`
+         + `${(e.ay + e.by) / 2 + dy / len * d.sstag})`;
   });
   node.attr("transform", d => `translate(${d.x},${d.y})`);
+  updateZones();
 }
 
 const sim = d3.forceSimulation(graph.nodes)
@@ -808,6 +1035,7 @@ const sim = d3.forceSimulation(graph.nodes)
     .force("x", d3.forceX(d => d.sx).strength(0.08))
     .force("collide", d3.forceCollide(d => d.w / 2 + 26))
     .force("y", TIERS ? null : d3.forceY(d => bandCenter(d.rank)).strength(0.08))
+    .force("zones", zoneForce)
     .on("tick", ticked)
     .on("end", () => afterSettle(true));
 // the simulation's first tick is async (next animation frame); paint the
@@ -827,7 +1055,8 @@ vlansel.append(new Option("all", ""));
 // the map's whole state lives in the URL; `view` is a mode, not a checkbox.
 // See docs/adr/0001-page-shell-and-map-modes.md Decision 1 for the contract.
 const DEFAULTS = { view: "wiring", load: "now", vlan: null, focus: null, layout: "free",
-                    hideoff: true, coreonly: false, hosts: false, unmhosts: false };
+                    hideoff: true, coreonly: false, hosts: false, unmhosts: false,
+                    ports: false, chips: true, zones: true, sel: null };
 const VIEWS = ["wiring", "load", "vlan", "evidence"];
 const STATE_KEYS = Object.keys(DEFAULTS);
 
@@ -848,8 +1077,9 @@ function readState() {
   s.vlan = (vnum != null && !Number.isNaN(vnum) &&
             (graph.vlans || []).some(v => v.vid === vnum)) ? vnum : null;
   s.focus = params.get("focus") || null;
+  s.sel = byName[params.get("sel")] ? params.get("sel") : null;
   s.layout = params.get("layout") === "tiers" ? "tiers" : "free";
-  for (const k of ["hideoff", "coreonly", "hosts", "unmhosts"]) {
+  for (const k of ["hideoff", "coreonly", "hosts", "unmhosts", "ports", "chips", "zones"]) {
     const raw = params.get(k);
     s[k] = raw == null ? DEFAULTS[k] : raw === "1";
   }
@@ -873,6 +1103,10 @@ function buildParams() {
   if (state.coreonly !== DEFAULTS.coreonly) params.set("coreonly", state.coreonly ? "1" : "0");
   if (state.hosts !== DEFAULTS.hosts) params.set("hosts", state.hosts ? "1" : "0");
   if (state.unmhosts !== DEFAULTS.unmhosts) params.set("unmhosts", state.unmhosts ? "1" : "0");
+  if (state.ports !== DEFAULTS.ports) params.set("ports", state.ports ? "1" : "0");
+  if (state.chips !== DEFAULTS.chips) params.set("chips", state.chips ? "1" : "0");
+  if (state.zones !== DEFAULTS.zones) params.set("zones", state.zones ? "1" : "0");
+  if (state.sel) params.set("sel", state.sel);
   for (const k in (state._extra || {})) params.set(k, state._extra[k]);
   return params;
 }
@@ -888,6 +1122,7 @@ function writeState() {
   try {
     const keep = buildParams();
     keep.delete("focus");
+    keep.delete("sel");      // a selection belongs to the visit, like focus
     for (const k in (state._extra || {})) keep.delete(k);
     localStorage.setItem("patchbay.topo", keep.toString());
   } catch (e) {}
@@ -930,14 +1165,22 @@ function nodeVisible(n) {
 let firstSettle = true;
 function applyFilters() {
   const vis = new Set(graph.nodes.filter(nodeVisible).map(n => n.name));
+  graph.nodes.forEach(n => n._vis = vis.has(n.name));
+  zonesOn = state.zones;
   const linkVisible = d =>
       vis.has(d.source.name ?? d.source) && vis.has(d.target.name ?? d.target);
+  // shown = visible and not a VM-on-host edge a drawn zone already states;
+  // the force still uses every visible link, so guests stay near their host
+  const linkShown = d => linkVisible(d)
+      && !(edgeSourceCls(d) === "virtualized" && zoneCovers(d));
   node.style("display", d => vis.has(d.name) ? null : "none");
   node.classed("focused", d => state.focus != null && d.name === state.focus);
-  link.style("display", d => linkVisible(d) ? null : "none");
-  alab.style("display", d => linkVisible(d) ? null : "none");
-  blab.style("display", d => linkVisible(d) ? null : "none");
-  slab.style("display", d => linkVisible(d) ? null : "none");
+  node.classed("selected", d => state.sel != null && d.name === state.sel);
+  link.style("display", d => linkShown(d) ? null : "none");
+  hit.style("display", d => linkShown(d) ? null : "none");
+  alab.style("display", d => linkShown(d) ? null : "none");
+  blab.style("display", d => linkShown(d) ? null : "none");
+  echip.style("display", d => linkShown(d) ? null : "none");
   const visNodes = graph.nodes.filter(n => vis.has(n.name));
   assignSlots(visNodes);
   sim.nodes(visNodes);
@@ -989,7 +1232,7 @@ function applyPaint() {
       return INFERRED_CABLE.has(edgeSourceCls(d)) ? "7 3" : "none";
     });
   }
-  slab.text(state.view === "load"
+  setSpeedText(state.view === "load"
     ? d => { const u = state.load === "peak" ? d.putil : d.util;
              return u != null ? `${d.speed} · ${u}%${state.load === "peak" ? " pk" : ""}`
                                : d.speed; }
@@ -1020,7 +1263,7 @@ function applyVlan() {
   syncEdgeOpacity();
   alab.style("opacity", d => vlanLit(d) ? null : 0.06);
   blab.style("opacity", d => vlanLit(d) ? null : 0.06);
-  slab.style("opacity", d => vlanLit(d) ? null : 0.06);
+  echip.style("opacity", d => vlanLit(d) ? null : 0.06);
 }
 
 // --- legend: every .item carries data-modes; shown iff it names the
@@ -1076,6 +1319,11 @@ function applyControls() {
   setChip("hosts", state.hosts);
   setChip("unmhosts", state.unmhosts);
   setChip("tierbox", state.layout === "tiers");
+  setChip("portnames", state.ports);
+  svg.classed("ports", state.ports);
+  setChip("edgechips", state.chips);
+  svg.classed("chips", state.chips);
+  setChip("zonesbox", state.zones);
   document.getElementById("view-" + state.view).checked = true;
   document.getElementById("loadmode").value = state.load;
   vlansel.value = state.vlan == null ? "" : String(state.vlan);
@@ -1084,17 +1332,107 @@ function applyControls() {
   renderChips();
 }
 
+// --- the detail panel (#45): built from the node and its links ------------
+const SOURCE_LABEL = { lldp: "LLDP/CDP", declared: "declared", vspherehint: "hypervisor",
+  unifi: "controller", fdbuplink: "MAC table", fdbinference: "MAC table",
+  fdbhost: "MAC table", virtualized: "VM on host", wan: "WAN", tunnel: "tunnel",
+  oob: "out-of-band" };
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "onclick") e.addEventListener("click", v); else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) e.append(k);
+  return e;
+}
+function applyPanel() {
+  const panel = document.getElementById("npanel");
+  const d = state.sel ? byName[state.sel] : null;
+  if (!d) { panel.hidden = true; panel.innerHTML = ""; return; }
+  panel.innerHTML = "";
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("viewBox", "0 0 18 18");
+  if (ICONS[d.role]) {
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", ICONS[d.role]); p.setAttribute("fill", "none");
+    p.setAttribute("stroke", "currentColor"); p.setAttribute("stroke-width", "1.5");
+    p.setAttribute("stroke-linecap", "round"); p.setAttribute("stroke-linejoin", "round");
+    icon.append(p);
+  }
+  const roleColor = { switch: "var(--r-switch)", router: "var(--r-router)",
+    firewall: "var(--r-firewall)", hypervisor: "var(--r-hyp)", ap: "var(--r-ap)",
+    tunnel: "var(--r-firewall)" }[d.role] || "var(--muted)";
+  icon.style.color = roleColor;
+  panel.append(h("div", { class: "ph" }, icon,
+    h("span", { class: "nm", title: d.name }, d.label ?? d.name),
+    h("button", { type: "button", class: "pclose", "aria-label": "close",
+                  onclick: () => set({ sel: null }) }, "×")));
+  const dot = h("span", { class: `dot ${d.status}` });
+  const seen = d.seen == null ? "" : d.seen < 60 ? ` · seen ${d.seen} min ago`
+             : d.seen < 2880 ? ` · seen ${Math.round(d.seen / 60)} h ago`
+             : ` · seen ${Math.round(d.seen / 1440)} d ago`;
+  panel.append(h("div", { class: "pstate" }, dot,
+    `${d.role.replace("-", " ")} · ${d.status}${seen}`));
+  const dl = h("dl");
+  const row = (k, v) => { if (v) { dl.append(h("dt", {}, k), h("dd", {}, v)); } };
+  row("address", d.mgmt ? h("span", { class: "mono" }, d.mgmt) : null);
+  row("hardware", d.hw);
+  row("specs", d.specs);
+  row("os", d.os);
+  row("on", d.parent);
+  if (d.role === "cloud" || d.role === "tunnel" || d.role === "host") row("detail", d.sub);
+  if (d.vlans && d.vlans.length)
+    row("vlans", h("span", { class: "mono" }, d.vlans.length > 12
+      ? `${d.vlans.slice(0, 12).join(", ")} … (${d.vlans.length})` : d.vlans.join(", ")));
+  if (dl.children.length) panel.append(dl);
+  // links: every edge touching the node, this end's port first
+  const mine = graph.links.filter(l =>
+    (l.source.name ?? l.source) === d.name || (l.target.name ?? l.target) === d.name);
+  if (mine.length) {
+    panel.append(h("h3", {}, `${mine.length} link${mine.length > 1 ? "s" : ""}`));
+    const ul = h("ul");
+    mine.forEach(l => {
+      const src = l.source.name ?? l.source;
+      const here = src === d.name;
+      const peer = here ? (l.target.name ?? l.target) : src;
+      const myPort = here ? l.alab : l.blab, theirPort = here ? l.blab : l.alab;
+      const peerNode = byName[peer];
+      const facts = [l.speed, l.util != null ? `${l.util}%` : null,
+                     SOURCE_LABEL[edgeSourceCls(l)] || edgeSourceCls(l)].filter(Boolean);
+      ul.append(h("li", {},
+        myPort ? h("span", { class: "mono" }, myPort + " ") : null,
+        "→ ",
+        h("span", { class: "peer", onclick: () => set({ sel: peer }) },
+          peerNode ? (peerNode.label ?? peer) : peer),
+        theirPort ? h("span", { class: "mono" }, " " + theirPort) : null,
+        h("div", { class: "via" }, facts.join(" · "))));
+    });
+    panel.append(ul);
+  }
+  if (hasPage(d))
+    panel.append(h("div", { class: "pfoot" },
+      h("a", { href: pageUrl(d) }, SNAPSHOT ? "Jump to its section ↓" : "Open device page →")));
+  panel.hidden = false;
+}
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && state.sel) set({ sel: null });
+});
+
 function render() {
   applyControls();
   applyFilters();
   applyPaint();
   applyVlan();
   applyLegend();
+  applyPanel();
 }
 
 ["hideoff", "coreonly", "hosts", "unmhosts"].forEach(id => {
   document.getElementById(id).addEventListener("click", () => set({ [id]: !state[id] }));
 });
+document.getElementById("portnames").addEventListener("click", () => set({ ports: !state.ports }));
+document.getElementById("edgechips").addEventListener("click", () => set({ chips: !state.chips }));
+document.getElementById("zonesbox").addEventListener("click", () => set({ zones: !state.zones }));
 document.querySelectorAll('input[name="view"]').forEach(r =>
     r.addEventListener("change", () => set({ view: r.value })));
 document.getElementById("loadmode").addEventListener("change", e => set({ load: e.target.value }));
@@ -1170,6 +1508,1127 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
   e.preventDefault();
   fetch("/api/positions/reset", { method: "POST" }).then(() => location.reload());
 });
+</script>
+
+<h2 id="routed-view">Routed view</h2>
+
+
+<style>
+  #routedwrap { border: 1px solid var(--grid); border-radius: 10px;
+                background: var(--card); height: 72vh; overflow: hidden;
+                cursor: grab; position: relative; }
+  #routedwrap:active { cursor: grabbing; }
+  #routed { width: 100%; height: 100%; display: block; }
+  .rlegend { display: flex; flex-wrap: wrap; align-items: center;
+             gap: 0.35rem 1.1rem; color: var(--muted); font-size: 0.78rem;
+             margin: 0 0 0.55rem 0.15rem; }
+  .rlegend .item { display: inline-flex; align-items: center; gap: 0.4rem;
+                   white-space: nowrap; }
+  .rlegend svg { flex: none; display: block; }
+  .rtool { display: flex; align-items: center; gap: 0.4rem 1rem;
+           flex-wrap: wrap; margin-bottom: 0.55rem; font-size: 0.8rem; }
+  .rtool .fitbtn { margin-left: auto; }
+  /* one control height across the row: the segmented group, the filter
+     chips, and the fit button share a baseline instead of each deriving a
+     height from its own padding. margin: 0 on .filters — the page-level
+     .filters rule in _style.html adds a 1rem bottom margin that inflates
+     this flex line and floats the chips 8px above everything else. */
+  .rtool .grp, .rtool .fchip, .rtool .fitbtn { box-sizing: border-box; height: 2.1rem; }
+  .rtool .fchip, .rtool .fitbtn { display: inline-flex; align-items: center;
+                                  padding: 0.24rem 0.7rem; }
+  .rtool .grp.filters { border: none; background: none; padding: 0;
+                        gap: 0.4rem; margin: 0; display: inline-flex;
+                        align-items: center; }
+  /* segmented view control, the topology's grammar: hidden radios, pill
+     labels, the checked one ringed like an .fchip.on */
+  .rtool .grp.modes { display: inline-flex; align-items: center; gap: 0;
+                      padding: 0.22rem; border: 1px solid var(--line);
+                      border-radius: 999px; height: 2.1rem; box-sizing: border-box; }
+  .rtool .grp.modes input[type="radio"] {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .rtool .grp.modes label { padding: 0.24rem 0.7rem; border-radius: 999px;
+                            color: var(--muted); font-weight: 500; cursor: pointer; }
+  .rtool .grp.modes input:checked + label {
+    box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
+  .rtool .grp.modes input:focus-visible + label {
+    outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  #routed .band { fill: var(--muted); font: 600 10px var(--font-mono);
+                  letter-spacing: 0.14em; opacity: 0.55; }
+  #routed .bandline { stroke: var(--grid); stroke-dasharray: 2 6; }
+  #routed .rail { stroke: var(--accent); stroke-width: 2; }
+  #routed .rail.unrouted { stroke: var(--muted); opacity: 0.75; }
+  #routed .rail.wan { stroke: var(--ok); opacity: 1; }
+  #routed .raildot.wan { fill: var(--ok); }
+  #routed .fan { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+  #routed .defroute { stroke: var(--ok); stroke-width: 1.6;
+                      stroke-dasharray: 6 4; fill: none; }
+  #routed .raildot { fill: var(--accent); }
+  #routed .raildot.unrouted { fill: var(--muted); }
+  #routed .cloud { fill: var(--card); stroke: var(--line); }
+  /* VPN tunnels: dashed, firewall-purple — an egress that is not the
+     provider cloud, even though the encrypted transport rides it */
+  #routed .tuncloud { fill: var(--card); stroke: var(--r-firewall);
+                      stroke-dasharray: 6 4; }
+  #routed .tunpath { stroke: var(--r-firewall); stroke-width: 1.4;
+                     stroke-dasharray: 4 3; opacity: 0.65; }
+  #routed .tundrop { stroke: var(--r-firewall); stroke-width: 1.6;
+                     stroke-dasharray: 6 4; fill: none; }
+  #routed .tunstat.up { fill: var(--ok); }
+  #routed .tunstat.down { fill: var(--crit); }
+  #routed .tunstat.idle { fill: var(--warn); }
+  /* routers are open frames: a lane routed by a router further along the
+     tier passes under the nearer one on its way, and must stay visible.
+     The interior still takes the click; the name row sits on a pill. */
+  #routed .router > rect { fill: none; stroke: var(--r-firewall);
+                           stroke-width: 1.4; rx: 8; pointer-events: all; }
+  /* a plain router (no firewall role) wears the router color and glyph,
+     as its Overview card does */
+  #routed .router.isrouter > rect { stroke: var(--r-router); }
+  #routed .router > rect.lpill { fill: var(--card); stroke: none; }
+  #routed .vtag rect { fill: var(--vbox, var(--hover)); stroke: var(--line); }
+  #routed .vtag text { font: 10px var(--font-mono); fill: var(--ink); }
+  #routed .vtag { cursor: pointer; }
+  #routed .gbox rect { fill: var(--card); stroke: var(--accent);
+                       stroke-width: 1.1; stroke-dasharray: 5 4; rx: 8; }
+  #routed .gbox.unrouted rect { stroke: var(--muted); }
+  #routed .gbox text { font: 10.5px var(--font-ui); fill: var(--muted); }
+  #routed .gbox { cursor: pointer; }
+  #routed .host rect { fill: var(--card); stroke: var(--ink2, var(--ink));
+                       stroke-width: 1.2; rx: 8; }
+  #routed .host text { font: 600 11px var(--font-ui); fill: var(--ink); }
+  #routed .host { cursor: pointer; }
+  #routed .tap { stroke: var(--muted); stroke-width: 1.2; }
+  #routed .rim { fill: var(--accent); stroke: var(--card); stroke-width: 1.5; }
+  #routed .rim.unrouted { fill: var(--muted); }
+  #routed .rlabel { font: 600 11px var(--font-ui); fill: var(--ink); }
+  /* !important: an unrouted rail's own opacity rule outranks a bare class
+     (.rail.unrouted beats .dim), so gray rails never visibly dimmed and
+     hover-highlighting looked like it skipped the isolated networks */
+  #routed .dim { opacity: 0.18 !important; transition: opacity 0.12s; }
+  /* spanning boxes (hypervisors, APs): open frames, not filled cards — the
+     rails run through them and the tenants inside sit on the rails */
+  #routed .spanbox > rect { fill: none; stroke-width: 1.3; }
+  #routed .spanbox.hyp > rect { stroke: var(--r-hyp); }
+  #routed .spanbox.ap > rect { stroke: var(--r-ap); }
+  /* the name row's pill masks rails crossing under it (after the role
+     strokes above so its stroke: none wins the tie) */
+  #routed .spanbox > rect.lpill { fill: var(--card); stroke: none; }
+  #routed .spanbox { cursor: pointer; }
+  #routed .ricon path { fill: none; stroke-width: 1.5;
+                        stroke-linecap: round; stroke-linejoin: round; }
+  /* lanes layout: faint alternating bands keep rows readable at a glance */
+  #routed .laneband { fill: var(--hover); opacity: 0.28; }
+  /* a down / not-responding infrastructure box stays on the map — its
+     cabling and tenants are still facts — but reads as asleep */
+  #routed .spanbox.down > rect { opacity: 0.55; stroke-dasharray: 6 4; }
+  #routed .spanbox.down text { opacity: 0.7; }
+  /* evidence view: each lane takes the color of who reported it — the
+     firewall's config, a switch carrying the VLAN, the controller, a
+     hypervisor port group, IPAM alone (dashed: documented, nothing
+     carries it), a route through a tunnel — and everything attached goes
+     quiet so the lanes carry the whole message */
+  #routedwrap, .rlegend { --ev-firewall: #c792ea; --ev-switch: #f2b552;
+    --ev-controller: #ff7eb6; --ev-hypervisor: #6fa8ff; --ev-ipam: #8a9aa0;
+    --ev-route: #c792ea; }
+  #routed.evidence .rail { stroke: var(--ev-ipam); stroke-width: 3.4;
+                           stroke-dasharray: none; opacity: 1; }
+  #routed.evidence .rail.ev-firewall { stroke: var(--ev-firewall); }
+  #routed.evidence .rail.ev-switch { stroke: var(--ev-switch); }
+  #routed.evidence .rail.ev-controller { stroke: var(--ev-controller); }
+  #routed.evidence .rail.ev-hypervisor { stroke: var(--ev-hypervisor); }
+  #routed.evidence .rail.ev-ipam { stroke-dasharray: 7 5; }
+  #routed.evidence .rail.ev-route { stroke: var(--ev-route); stroke-dasharray: 7 5; }
+  /* the tag borrows its lane's color so the row reads as one thing */
+  #routed.evidence .vtag.ev-firewall rect { stroke: var(--ev-firewall); stroke-width: 1.6; }
+  #routed.evidence .vtag.ev-switch rect { stroke: var(--ev-switch); stroke-width: 1.6; }
+  #routed.evidence .vtag.ev-controller rect { stroke: var(--ev-controller); stroke-width: 1.6; }
+  #routed.evidence .vtag.ev-hypervisor rect { stroke: var(--ev-hypervisor); stroke-width: 1.6; }
+  #routed.evidence .vtag.ev-ipam rect { stroke: var(--ev-ipam); stroke-dasharray: 4 3; }
+  #routed.evidence .vtag.ev-route rect { stroke: var(--ev-route); stroke-dasharray: 4 3; }
+  #routed.evidence .host, #routed.evidence .gbox, #routed.evidence .spanbox,
+  #routed.evidence .router, #routed.evidence .tunnel, #routed.evidence .cloud,
+  #routed.evidence .tap, #routed.evidence .defroute, #routed.evidence .tunpath,
+  #routed.evidence .tundrop, #routed.evidence .rim { opacity: 0.28; }
+  /* per-source badges on the lane tag, evidence view only */
+  #routed .evbadge { display: none; stroke: var(--card); stroke-width: 1; }
+  #routed.evidence .evbadge { display: initial; }
+  #routed .evbadge.ev-firewall { fill: var(--ev-firewall); }
+  #routed .evbadge.ev-switch { fill: var(--ev-switch); }
+  #routed .evbadge.ev-controller { fill: var(--ev-controller); }
+  #routed .evbadge.ev-hypervisor { fill: var(--ev-hypervisor); }
+  #routed .evbadge.ev-ipam { fill: var(--ev-ipam); }
+  #routed .evbadge.ev-route { fill: var(--ev-route); opacity: 0.6; }
+  #routed .evbadge.ev-other { fill: var(--ink); }
+  /* protocol view: which address family a lane, an attachment, and the
+     router's gateway carry. IPv4 teal, IPv6 amber; a dual-stack lane is
+     teal with an amber dash riding it. With one family chosen, whatever
+     lacks it dims. Boxes and names step back so lanes and dots carry it. */
+  #routedwrap, .rlegend { --p4: #4db8c2; --p6: #f2b552; }
+  #routed .rail6 { stroke: var(--p6); stroke-width: 2; stroke-dasharray: 5 6;
+                   display: none; }
+  #routed.protocol .rail { stroke: var(--muted); stroke-dasharray: none;
+                           opacity: 0.35; stroke-width: 2.6; }
+  #routed.protocol .rail.fam-4 { stroke: var(--p4); opacity: 1; }
+  #routed.protocol .rail.fam-6 { stroke: var(--p6); opacity: 1; }
+  #routed.protocol .rail.fam-4.fam-6 { stroke: var(--p4); }
+  #routed.protocol[data-proto="all"] .rail6.fam-4 { display: initial; }
+  /* one family chosen: the lanes that have it wear that family's color */
+  #routed.protocol[data-proto="6"] .rail.fam-6 { stroke: var(--p6); }
+  #routed.protocol .rim { fill: var(--muted); stroke: var(--card); }
+  #routed.protocol .rim.l4 { fill: var(--p4); }
+  #routed.protocol .rim.l6 { fill: var(--p6); }
+  #routed.protocol .rim.l4.l6 { fill: var(--p4); stroke: var(--p6); stroke-width: 2.2; }
+  #routed.protocol[data-proto="4"] .rail:not(.fam-4),
+  #routed.protocol[data-proto="4"] .vtag:not(.fam-4),
+  #routed.protocol[data-proto="4"] .rim:not(.l4),
+  #routed.protocol[data-proto="4"] .gbox:not(.fam-4) { opacity: 0.15; }
+  #routed.protocol[data-proto="6"] .rail:not(.fam-6),
+  #routed.protocol[data-proto="6"] .vtag:not(.fam-6),
+  #routed.protocol[data-proto="6"] .rim:not(.l6),
+  #routed.protocol[data-proto="6"] .gbox:not(.fam-6) { opacity: 0.15; }
+  #routed.protocol .host > rect, #routed.protocol .host > text,
+  #routed.protocol .spanbox > rect, #routed.protocol .spanbox text,
+  #routed.protocol .router > rect, #routed.protocol .router text,
+  #routed.protocol .ricon, #routed.protocol .cloud, #routed.protocol .tuncloud,
+  #routed.protocol .tunnel text, #routed.protocol .tap, #routed.protocol .defroute,
+  #routed.protocol .tunpath, #routed.protocol .tundrop { opacity: 0.4; }
+  /* load view: the router's per-network legs — its VLAN interfaces are the
+     only edges here with counters — heat-tinted like the topology's edges,
+     with the number beside each; the default route's drop takes the WAN
+     interface's. Lanes and attachments go quiet. Grey = no measurement. */
+  #routed .legseg, #routed .legload { display: none; }
+  #routed.load .legseg { display: initial; stroke-width: 7; stroke-linecap: round; }
+  #routed.load .legload { display: initial; font: 600 10px var(--font-mono);
+                          fill: var(--ink); }
+  #routed.load .rail { opacity: 0.3; }
+  #routed.load .host, #routed.load .gbox, #routed.load .spanbox, #routed.load .vtag,
+  #routed.load .tunnel, #routed.load .cloud, #routed.load .tap, #routed.load .tunpath,
+  #routed.load .tundrop, #routed.load .rim { opacity: 0.28; }
+  #routed .routerlabel { font: 600 11.5px var(--font-ui); fill: var(--ink); }
+  #routed .gwlabel { font: 10px var(--font-mono); fill: var(--muted); }
+</style>
+
+<div class="rtool">
+  <span class="grp modes" role="radiogroup" aria-label="View">
+    <input type="radio" name="rview" id="rview-routes" value="routes" checked>
+    <label for="rview-routes">Routes</label>
+    <input type="radio" name="rview" id="rview-load" value="load">
+    <label for="rview-load">Load</label>
+    <input type="radio" name="rview" id="rview-protocol" value="protocol">
+    <label for="rview-protocol">Protocol</label>
+    <input type="radio" name="rview" id="rview-evidence" value="evidence">
+    <label for="rview-evidence">Evidence</label>
+  </span>
+  <span class="grp" id="rloadgrp" hidden>
+    <select id="rload" aria-label="load window">
+      <option value="now">now</option>
+      <option value="peak" id="rload-peak">24h peak</option>
+    </select>
+  </span>
+  <span class="grp" id="rprotogrp" hidden>
+    <select id="rproto" aria-label="address family">
+      <option value="all">IPv4 + IPv6</option>
+      <option value="4">IPv4 only</option>
+      <option value="6">IPv6 only</option>
+    </select>
+  </span>
+  <span class="grp filters">
+    <button type="button" class="fchip" id="r-hosts" aria-pressed="true">multi-homed hosts</button>
+    <button type="button" class="fchip" id="r-groups" aria-pressed="true">single-homed groups</button>
+    <button type="button" class="fchip" id="r-axis" aria-pressed="false"
+            title="switch between horizontal network lanes and vertical rails">vertical rails</button>
+  </span>
+  <button type="button" class="fchip fitbtn" id="r-fit" title="fit the whole map">fit ⤢</button>
+</div>
+
+<div class="rlegend" id="rlegend">
+  <span class="item" data-modes="routes"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--accent)" stroke-width="2"/></svg> routed network</span>
+  <span class="item" data-modes="routes"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--muted)" stroke-width="2" opacity="0.75"/></svg> not routed</span>
+  <span class="item" data-modes="routes"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ok)" stroke-width="2"/></svg> internet uplink</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-firewall)" stroke-width="2"/></svg> firewall interface (routes it)</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-switch)" stroke-width="2"/></svg> switch carries the VLAN</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-controller)" stroke-width="2"/></svg> controller network</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-hypervisor)" stroke-width="2"/></svg> hypervisor port group</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-ipam)" stroke-width="2" stroke-dasharray="4 3"/></svg> IPAM only (documented, nothing carries it)</span>
+  <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-route)" stroke-width="2" stroke-dasharray="4 3"/></svg> learned through a tunnel</span>
+  <span class="item" data-modes="evidence" style="color: var(--muted)">lane = strongest reporter · tag badges = every reporter, in that order</span>
+  <span class="item" data-modes="load">router legs:
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--line)"></span>no data
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #5b84a8"></span>idle
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #4a9d6e"></span>&lt;5%
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #8fc45f"></span>&lt;15%
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #c9cf56"></span>&lt;30%
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--warn)"></span>&lt;60%
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--crit)"></span>60%+
+    <span id="rleg-peak">· pk = 24h peak</span></span>
+  <span class="item" data-modes="load" style="color: var(--muted)">each leg = the router's interface on that network, busier direction over capacity · lanes carry no counters</span>
+  <span class="item" data-modes="protocol"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p4)" stroke-width="2"/></svg> IPv4 network</span>
+  <span class="item" data-modes="protocol"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p6)" stroke-width="2"/></svg> IPv6 network</span>
+  <span class="item" data-modes="protocol"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p4)" stroke-width="2.6"/><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p6)" stroke-width="2" stroke-dasharray="3 3"/></svg> dual-stack</span>
+  <span class="item" data-modes="protocol"><svg width="40" height="14"><circle cx="7" cy="7" r="3.5" fill="var(--p4)"/><circle cx="20" cy="7" r="3.5" fill="var(--p6)"/><circle cx="33" cy="7" r="3.5" fill="var(--p4)" stroke="var(--p6)" stroke-width="2"/></svg> attachment: v4 · v6 · both</span>
+  <span class="item" data-modes="protocol" style="color: var(--muted)">choose one family and whatever lacks it dims · grey = no subnet known</span>
+  <span class="item"><svg width="26" height="14"><ellipse cx="13" cy="7" rx="12" ry="6" fill="none" stroke="var(--r-firewall)" stroke-width="1.2" stroke-dasharray="4 3"/></svg> VPN tunnel</span>
+  <span class="item"><svg width="26" height="12"><rect x="0" y="0" width="26" height="12" fill="var(--hover)" stroke="var(--line)"/></svg> VLAN label</span>
+  <span class="item"><svg width="14" height="14"><circle cx="7" cy="7" r="3.5" fill="var(--accent)" stroke="var(--card)" stroke-width="1.5"/></svg> attached at the rim</span>
+  <span class="item"><svg width="30" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="var(--muted)" stroke-width="1.2"/><circle cx="26" cy="5" r="3" fill="var(--accent)"/></svg> attached beyond the box</span>
+  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--accent)" stroke-width="1.1" stroke-dasharray="4 3" rx="4"/></svg> ×N single-homed hosts</span>
+  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="var(--card)" stroke="var(--ink)" stroke-width="1.2" rx="4"/></svg> multi-homed host</span>
+  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--r-hyp)" stroke-width="1.3" rx="4"/></svg> virtualization (VMs inside)</span>
+  <span class="item"><svg width="26" height="14"><rect x="1" y="1" width="24" height="12" fill="none" stroke="var(--r-ap)" stroke-width="1.3" rx="4"/></svg> AP (clients inside)</span>
+  <span class="item" style="color: var(--muted)">hover for subnets, gateway &amp; sources · click to focus, again or on the background to clear · double-click opens its page (⌘/Ctrl-click: new tab) · scroll zooms · drag pans</span>
+</div>
+
+<div id="routedwrap"><svg id="routed"></svg></div>
+
+<script>
+// the whole renderer lives in one function scope: the snapshot puts this
+// template on the same page as the topology's, and two scripts sharing
+// the global scope would fight over `svg`, `state`, and friends
+(() => {
+const rg = {"rails": [{"key": "v20", "vid": 20, "name": "servers", "subnets": ["198.51.100.0/24", "2001:db8:0:20::/64"], "routed": true, "gateway": "198.51.100.1", "gateway6": "2001:db8:0:20::1", "routers": ["fw1"], "gateways": [{"router": "fw1", "ip": "198.51.100.1"}], "sources": ["demo", "phpipam"], "families": [4, 6], "evidence": ["firewall", "switch", "hypervisor", "ipam", "other"], "hosts": 0, "host_names": [], "unnamed": 0, "wan": false, "via_tunnel": []}, {"key": "v1", "vid": 1, "name": "mgmt", "subnets": ["192.0.2.0/24"], "routed": true, "gateway": "192.0.2.1", "gateway6": null, "routers": ["fw1"], "gateways": [{"router": "fw1", "ip": "192.0.2.1"}], "sources": ["demo", "phpipam"], "families": [4], "evidence": ["firewall", "switch", "ipam", "other"], "hosts": 5, "host_names": ["core1", "edge1", "esp32-a1b2c3", "pi-hole", "printer"], "unnamed": 0, "wan": false, "via_tunnel": []}, {"key": "v30", "vid": 30, "name": "iot", "subnets": ["203.0.113.0/24"], "routed": true, "gateway": "203.0.113.1", "gateway6": null, "routers": ["fw1"], "gateways": [{"router": "fw1", "ip": "203.0.113.1"}], "sources": ["demo", "phpipam"], "families": [4], "evidence": ["firewall", "switch", "ipam", "other"], "hosts": 5, "host_names": ["console", "pi-hole", "printer", "shelly-plug", "tv-basement"], "unnamed": 0, "wan": false, "via_tunnel": []}, {"key": "v103", "vid": 103, "name": "iscsi", "subnets": ["2001:db8:0:103::/64"], "routed": false, "gateway": null, "gateway6": null, "routers": [], "gateways": [], "sources": ["demo", "phpipam"], "families": [6], "evidence": ["switch", "ipam", "other"], "hosts": 0, "host_names": [], "unnamed": 0, "wan": false, "via_tunnel": []}, {"key": "v199", "vid": 199, "name": "uplink", "subnets": [], "routed": false, "gateway": null, "gateway6": null, "routers": [], "gateways": [], "sources": ["demo"], "families": [], "evidence": ["switch", "other"], "hosts": 0, "host_names": [], "unnamed": 0, "wan": true, "via_tunnel": []}, {"key": "net:172.16.44.0/24", "vid": null, "name": "172.16.44.0/24", "subnets": ["172.16.44.0/24"], "routed": false, "gateway": null, "gateway6": null, "routers": [], "gateways": [], "sources": ["route"], "families": [4], "evidence": ["route"], "hosts": 0, "host_names": [], "unnamed": 0, "wan": false, "via_tunnel": ["site-b \u00b7 wg-peer"]}], "routers": [{"name": "fw1", "rails": ["v1", "v20", "v30"], "gateways": {"v1": {"ip": "192.0.2.1", "ip6": null}, "v20": {"ip": "198.51.100.1", "ip6": "2001:db8:0:20::1"}, "v30": {"ip": "203.0.113.1", "ip6": null}}, "role": "firewall", "parent": "hyp1", "load": {"v1": {"iface": "vmx1", "util": 1.9, "peak": 33.6}, "v20": {"iface": "vmx2", "util": 2.2, "peak": 33.8}, "v30": {"iface": "vmx3", "util": 2.1, "peak": 33.5}}, "default": true, "col": 0}], "default": {"device": "fw1", "gateway": "100.64.10.1", "interface": "vmx0", "rail": "v199", "util": 0.7, "peak": 33.2}, "defaults": [{"device": "fw1", "gateway": "100.64.10.1", "interface": "vmx0", "rail": "v199", "util": 0.7, "peak": 33.2}], "gateways": [{"name": "WAN_GW", "address": "100.64.10.1", "status": "Online", "loss": "0.0 %", "delay": "8.1 ms"}], "hosts": [{"name": "nas1", "role": "host", "legs": [{"rail": "v20", "iface": "lan2", "ip": "198.51.100.21", "speed": 10000000000}, {"rail": "v1", "iface": "lan1", "ip": "192.0.2.21", "speed": 1000000000}, {"rail": "v103", "iface": "lan3", "ip": "2001:db8:0:103::21", "speed": 10000000000}], "home": "v103", "row": 0}], "hypervisors": [{"name": "hyp1", "role": "hypervisor", "legs": [{"rail": "v1", "iface": "vmk0", "ip": "192.0.2.10", "speed": 0}, {"rail": "v103", "iface": "vmk1", "ip": "2001:db8:0:103::10", "speed": 0}], "rails": ["v20", "v1", "v103"], "groups": {"v20": ["vm-backup", "vm-git", "vm-web1"]}, "guests": [], "off": [], "status": "up", "row": 0}, {"name": "hyp2", "role": "hypervisor", "legs": [{"rail": "v1", "iface": "vmk0", "ip": "192.0.2.11", "speed": 0}, {"rail": "v103", "iface": "vmk1", "ip": "2001:db8:0:103::11", "speed": 0}], "rails": ["v20", "v1", "v103"], "groups": {"v20": ["vm-db1", "vm-media", "vm-monitor"]}, "guests": [], "off": [], "status": "up", "row": 1}], "virt_platform": null, "virt_name": null, "aps": [{"name": "ap-attic", "role": "ap", "legs": [{"rail": "v1", "iface": "mgmt", "ip": "192.0.2.31", "speed": 0}], "rails": ["v1", "v30"], "groups": {"v30": ["tablet-liv"]}, "status": "up", "guests": [], "row": 0}, {"name": "ap-den", "role": "ap", "legs": [{"rail": "v1", "iface": "mgmt", "ip": "192.0.2.32", "speed": 0}], "rails": ["v1", "v30"], "groups": {"v30": ["laptop-kay", "phone-sam"]}, "status": "up", "guests": [], "row": 1}, {"name": "ap-garage", "role": "ap", "legs": [{"rail": "v1", "iface": "mgmt", "ip": "192.0.2.33", "speed": 0}], "rails": ["v1", "v30"], "groups": {"v30": ["doorbell", "thermostat"]}, "status": "up", "guests": [], "row": 2}], "tunnels": [{"name": "site-b \u00b7 wg-peer", "type": "wireguard", "label": "WireGuard", "status": "up", "device": "fw1", "peer": "192.0.2.200:51820", "detail": "allowed 172.16.44.0/24", "rails": ["net:172.16.44.0/24"], "local_nets": []}], "peak_ready": true, "wan_names": ["internet"]};
+const SNAPSHOT = true;
+// where a node's page is: the live device page, or its section in the
+// snapshot; a VLAN's row on /vlans, or its row in the snapshot's table
+const devUrl = name => SNAPSHOT ? "#dev-" + name : `/device/${encodeURIComponent(name)}`;
+const vlanUrl = vid => vid == null ? null : SNAPSHOT ? `#vlan-${vid}` : `/vlans#v${vid}`;
+
+// --- state in the URL (ADR-0001 rules: only non-defaults serialize). The
+// snapshot's URL belongs to the topology map on the same page, so there the
+// state lives in memory only: it starts from the defaults and never writes.
+const R_VIEWS = ["routes", "load", "protocol", "evidence"];
+const R_PROTOS = ["all", "4", "6"];
+const R_KEYS = ["view", "load", "proto", "hosts", "groups", "focus", "axis"];
+const R_DEFAULTS = { view: "routes", load: "now", proto: "all", hosts: true, groups: true,
+                     focus: null, axis: "lanes" };
+// Remembered view options, the topology's #16 rule applied here: a bare
+// /routed — the rail's link — restores the last-used state from localStorage
+// by rewriting the URL *before* anything reads it, so reload and share see
+// the same honest URL. Any explicit params mean a deep link, which uses its
+// own params + defaults — no merging. The snapshot is exempt: the file IS
+// the state.
+if (!SNAPSHOT && !location.search) {
+  try {
+    const qs = localStorage.getItem("patchbay.routed");
+    if (qs) history.replaceState(null, "", location.pathname + "?" + qs);
+  } catch (e) {}
+}
+const rstate = { ...R_DEFAULTS };
+if (!SNAPSHOT) {
+  const p = new URLSearchParams(location.search);
+  if (R_VIEWS.includes(p.get("view"))) rstate.view = p.get("view");
+  if (R_PROTOS.includes(p.get("proto"))) rstate.proto = p.get("proto");
+  if (p.get("load") === "peak") rstate.load = "peak";
+  if (p.get("hosts") === "0") rstate.hosts = false;
+  if (p.get("groups") === "0") rstate.groups = false;
+  if (p.get("focus")) rstate.focus = p.get("focus");
+  if (p.get("axis") === "v") rstate.axis = "v";
+}
+// the view's own params, in ADR order, only non-defaults — foreign params
+// (whatever else the URL carried) are the caller's and stay untouched
+function rparams(into) {
+  const p = into || new URLSearchParams();
+  R_KEYS.forEach(k => p.delete(k));
+  if (rstate.view !== R_DEFAULTS.view) p.set("view", rstate.view);
+  if (rstate.load !== R_DEFAULTS.load) p.set("load", rstate.load);
+  if (rstate.proto !== R_DEFAULTS.proto) p.set("proto", rstate.proto);
+  if (!rstate.hosts) p.set("hosts", "0");
+  if (!rstate.groups) p.set("groups", "0");
+  if (rstate.focus) p.set("focus", rstate.focus);
+  if (rstate.axis === "v") p.set("axis", "v");
+  return p;
+}
+function rwrite() {
+  if (SNAPSHOT) return;
+  const qs = rparams(new URLSearchParams(location.search)).toString();
+  history.replaceState(null, "", qs ? `?${qs}` : location.pathname);
+  // remember the preference half for the next bare visit: focus names a
+  // one-time destination and foreign params belong to the link that
+  // carried them, so neither persists
+  try {
+    const keep = rparams();
+    keep.delete("focus");
+    localStorage.setItem("patchbay.routed", keep.toString());
+  } catch (e) {}
+}
+
+// --- geometry ---------------------------------------------------------------
+// One renderer, two axes. Everything is laid out in lane space — u runs
+// along the networks from the edge toward the internet, v runs across
+// them — and P()/box() map that onto the screen: lanes (u→x, v→y) or
+// vertical rails (u→y upward, v→x). Boxes that carry text keep their screen
+// proportions on both axes; only placement and what they span transposes,
+// so the two views share every grouping, box, and rule.
+const rails = rg.rails, nR = rails.length;
+const hyps = rg.hypervisors || [], aps = rg.aps || [];
+const pos = {}; rails.forEach((r, i) => pos[r.key] = i);
+
+// role icons + colors, shared with the topology's vocabulary
+const RICONS = {"ap": "M9 13.2a1.2 1.2 0 100 .01 M5.5 10a5 5 0 017 0 M3 7a8.5 8.5 0 0112 0", "firewall": "M1 3h16v12H1z M1 9h16 M9 3v6 M5 9v6 M13 9v6", "host": "M3 2h12v7h-2.5v3H10v2H8v-2H5.5V9H3z M6 2v3 M9 2v3 M12 2v3", "hypervisor": "M9 2l7 3.5L9 9 2 5.5z M2 9l7 3.5 7-3.5 M2 12.5L9 16l7-3.5", "router": "M2 9a7 7 0 0014 0A7 7 0 002 9z M5 6.6h6.8 M11.8 6.6L10 4.8 M11.8 6.6L10 8.4 M13 11.4H6.2 M6.2 11.4L8 9.6 M6.2 11.4L8 13.2", "switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5", "tunnel": "M5 8V6a4 4 0 018 0v2 M3 8h12v7H3z M9 11v2", "unmanaged-switch": "M3 6h11 M14 6l-2.5-2.5 M14 6l-2.5 2.5 M15 12H4 M4 12l2.5-2.5 M4 12l2.5 2.5"};
+const RCOLOR = { firewall: "var(--r-firewall)", router: "var(--r-router)",
+                 switch: "var(--r-switch)", hypervisor: "var(--r-hyp)",
+                 ap: "var(--r-ap)" };
+function roleIcon(parent, role, x, y) {
+  const d = RICONS[role] || RICONS.host;
+  const g = el("g", { transform: `translate(${x},${y})`, class: "ricon" }, parent);
+  el("path", { d, stroke: RCOLOR[role] || "var(--muted)" }, g);
+  return g;
+}
+
+const svg = document.getElementById("routed");
+const NS = "http://www.w3.org/2000/svg";
+const root = document.createElementNS(NS, "g");
+svg.appendChild(root);
+function el(tag, attrs, parent, textContent) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  (parent || root).appendChild(e);
+  if (textContent != null) e.textContent = textContent;
+  return e;
+}
+function title(parent, text) { el("title", {}, parent, text); }
+
+// hover: everything not related to the hovered rail set dims
+const members = [];   // [element, Set(railKeys)]
+function track(e, keys) { members.push([e, new Set(keys)]); }
+function wireHover(e, keys) {
+  e.addEventListener("mouseenter", () => {
+    const on = new Set(keys);
+    for (const [m, ks] of members)
+      m.classList.toggle("dim", ![...ks].some(k => on.has(k)));
+  });
+  e.addEventListener("mouseleave", applyFocus);
+}
+// click focuses in place; a page is the secondary action. Navigating on a
+// plain click felt like falling through the map, so: click = focus (again
+// to clear), double-click = open its page, ⌘/Ctrl-click or middle-click =
+// open it in a new tab, click the background = clear. Right-click stays
+// the browser's.
+const focusSets = {};   // focus id -> Set(railKeys) it lights
+function act(e, id, keys, url) {
+  focusSets[id] = new Set(keys);
+  e.style.cursor = "pointer";
+  e.addEventListener("click", ev => {
+    ev.stopPropagation();
+    if (ev.metaKey || ev.ctrlKey) { if (url) window.open(url, "_blank"); return; }
+    rstate.focus = rstate.focus === id ? null : id;
+    rwrite(); applyFocus();
+  });
+  e.addEventListener("dblclick", ev => {
+    ev.stopPropagation(); ev.preventDefault();
+    if (url) location.href = url;
+  });
+  e.addEventListener("auxclick", ev => {
+    if (ev.button === 1 && url) { ev.preventDefault(); window.open(url, "_blank"); }
+  });
+}
+function applyFocus() {
+  const on = rstate.focus ? focusSets[rstate.focus] : null;
+  for (const [m, ks] of members)
+    m.classList.toggle("dim", !!on && ![...ks].some(k => on.has(k)));
+}
+
+// a ×N group's tooltip names what it stands for, capped so a 50-client
+// wifi group doesn't become a screen-length tooltip
+function nameList(names) {
+  const cap = 30;
+  return (names || []).slice(0, cap).join("\n")
+       + ((names || []).length > cap ? `\n…and ${names.length - cap} more` : "");
+}
+const clip = (s, n) => s.length > n ? s.slice(0, Math.max(1, n - 1)) + "…" : s;
+// address-family classes for the protocol view: a rail's from its subnets,
+// an attachment's from the addresses it holds there
+const famCls = r => (r.families || []).map(f => ` fam-${f}`).join("");
+const legCls = ips => [...new Set((ips || []).filter(Boolean)
+  .map(a => a.includes(":") ? " l6" : " l4"))].join("");
+
+// the routing tier: every router draws, in the columns the builder
+// assigned (overlapping lane spans stack toward the internet, a default
+// route's holder last); each default route gets its own cloud
+const routers = rg.routers || [];
+const defaults = rg.defaults || (rg.default ? [rg.default] : []);
+// taps draw first so they pass underneath rails and boxes
+let tapLayer = null;
+// the load view's heat segments, painted by applyRouted (see draw)
+let loadSegs = [];
+// the topology's heat ramp: fine steps at the low end, brighter and
+// warmer with load so intensity reads on a dark ground
+function heat(u) {
+  if (u == null) return "var(--line)";
+  if (u < 0.1) return "#5b84a8";
+  if (u < 5) return "#4a9d6e";
+  if (u < 15) return "#8fc45f";
+  if (u < 30) return "#c9cf56";
+  if (u < 60) return "var(--warn)";
+  return "var(--crit)";
+}
+
+// networks-as-lanes is the default; axis=v (the `vertical rails` chip)
+// turns the same drawing on its side — vertical rails, edge at the bottom,
+// internet at the top. draw() reads the axis each time, so a toggle is a
+// redraw in place, not a reload.
+function draw() {
+  const HZ = rstate.axis !== "v";
+  // across pitch: lanes are a tight fixed row; rails spread toward a
+  // comfortable width, with a ceiling so two networks don't sit absurdly
+  // far apart and a floor so twenty stay legible
+  const pitch = HZ ? 56
+    : nR > 1 ? Math.min(130, Math.max(72, Math.round(1000 / (nR - 1)))) : 130;
+  const across0 = HZ ? 60 : 40;
+  const laneV = i => across0 + i * pitch + pitch / 2;
+  // vertical rails run upward — the internet at the top — so u flips
+  // against a constant fixed once the layout knows how far it reaches
+  let flip = 0;
+  const P = (u, v) => HZ ? { x: u, y: v } : { x: v, y: flip - u };
+  const box = (u0, v0, du, dv) => HZ ? { x: u0, y: v0, w: du, h: dv }
+                                     : { x: v0, y: flip - u0 - du, w: dv, h: du };
+  const rectEl = (parent, R, attrs) =>
+    el("rect", { x: R.x, y: R.y, width: R.w, height: R.h, ...attrs }, parent);
+  const lineEl = (parent, u1, v1, u2, v2, attrs) => {
+    const a = P(u1, v1), b = P(u2, v2);
+    return el("line", { x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...attrs }, parent);
+  };
+  const colGap = HZ ? 16 : 12, chipW = 56, chipH = 30, hostH = 40;
+  const chipAlong = HZ ? chipW : chipH;
+  const labelW = 176;          // lanes: the left gutter holding lane tags
+  const tagAlong = 44;         // rails: the tag row along the bottom edge
+
+  // one logical wireless container: every AP folded together — the map
+  // shows the wireless *network*; which AP saw a client is tooltip detail
+  let wifi = null;
+  if (aps.length) {
+    const groups = {};
+    const legs = [];
+    aps.forEach(a => {
+      Object.entries(a.groups).forEach(([k, names]) =>
+        (groups[k] = groups[k] || []).push(...names.map(n => `${n} (${a.name})`)));
+      a.legs.forEach(l => legs.push({ ...l, ap: a.name }));
+    });
+    const span = new Set([...Object.keys(groups),
+                          ...legs.map(l => l.rail)].filter(k => k in pos));
+    if (span.size) wifi = {
+      name: aps.length > 1 ? "wireless" : aps[0].name, role: "ap",
+      rails: [...span], groups, legs,
+      aps: aps.map(a => a.name) };
+  }
+  // one logical virtualization box: every hypervisor folded together, the
+  // wireless container's sibling. This view is logical — which physical
+  // host a VM runs on is tooltip detail, like which AP saw a client. The
+  // box is named after the vSphere server; a router that runs as a guest
+  // draws inside the box.
+  let virt = null;
+  if (hyps.length) {
+    const groups = {};
+    const legs = [];
+    const guests = [];
+    hyps.forEach(hy => {
+      Object.entries(hy.groups).forEach(([k, names]) =>
+        (groups[k] = groups[k] || []).push(...names.map(n => `${n} (${hy.name})`)));
+      hy.legs.forEach(l => legs.push({ ...l, ap: hy.name }));
+      (hy.guests || []).forEach(v => guests.push(v));
+    });
+    const span = new Set([...Object.keys(groups), ...legs.map(l => l.rail),
+                          ...guests.flatMap(v => v.legs.map(l => l.rail))]
+                         .filter(k => k in pos));
+    const name = rg.virt_name
+      || (hyps.length === 1 ? hyps[0].name : "virtualization");
+    // powered-off guests don't count on the map; the box still knows them
+    const off = hyps.flatMap(h => h.off || []);
+    if (span.size) virt = {
+      name, role: "hypervisor", rails: [...span], groups, legs, guests,
+      sub: (rg.virt_platform ? rg.virt_platform + " · " : "")
+           + `${hyps.length} hypervisor${hyps.length > 1 ? "s" : ""}`,
+      status: hyps.every(h => h.status && h.status !== "up") ? "down" : "up",
+      members: [...hyps.map(h => h.name
+                  + (h.status && h.status !== "up" ? ` · ${h.status}` : "")),
+                ...(off.length
+                  ? [`${off.length} VM${off.length > 1 ? "s" : ""} powered off, not counted: `
+                     + nameList(off).replace(/\n/g, ", ")] : [])],
+      noclick: !rg.virt_name && hyps.length > 1 };
+  }
+  const hypNames = new Set(hyps.map(h => h.name));
+  // the whole tier draws inside the virtualization box only when every
+  // router is a guest; otherwise a guest router says "on <host>" itself
+  const routerInside = !!(virt && routers.length
+                          && routers.every(rt => rt.parent && hypNames.has(rt.parent)));
+
+  // --- sizes: along the lane, and across it ---------------------------------
+  function hostW(h) { return Math.max(72, h.name.length * 7.4 + 48); }
+  const hostAlong = h => HZ ? hostW(h) : hostH;
+  function hasGroups(b) { return Object.keys(b.groups || {}).some(k => k in pos); }
+  function textNeed(b) {
+    return 14 + b.name.length * 7.4 + (b.sub || b.role || "").length * 6 + 44;
+  }
+  // lanes: a slab's width holds its name row, a chip column, and guests
+  // side by side; rails: its height stacks a chip row and guest rows
+  // under the name row
+  function slabW(b) {
+    let w = Math.max(96, textNeed(b) + (b.status && b.status !== "up" && !b.sub
+                                        ? (b.status.length + 3) * 6 : 0));
+    let gsum = 8;
+    (b.guests || []).forEach(v => gsum += hostW(v) + 10);
+    if (gsum > 20) w = Math.max(w, gsum + 8);
+    if (hasGroups(b)) w = Math.max(w, chipW + 28);
+    return w;
+  }
+  function slabAlong(b) {
+    if (HZ) return slabW(b);
+    return 30 + (hasGroups(b) ? 40 : 0) + (b.guests || []).length * (hostH + 10) + 8;
+  }
+  // lanes give the name row its own headroom above the first lane so it
+  // never collides with a chip riding that lane; rails pad each side and
+  // widen to fit the text and the guests' boxes
+  function slabAcross(b) {
+    const lanes = b.rails.filter(k => k in pos).map(k => pos[k]);
+    let v0 = laneV(Math.min(...lanes)) - (HZ ? 48 : 40);
+    let v1 = laneV(Math.max(...lanes)) + (HZ ? 30 : 40);
+    if (!HZ) {
+      (b.guests || []).forEach(g => {
+        v0 = Math.min(v0, laneV(pos[g.home]) - hostW(g) / 2 - 8);
+        v1 = Math.max(v1, laneV(pos[g.home]) + hostW(g) / 2 + 8);
+      });
+      v1 = Math.max(v1, v0 + textNeed(b));
+    }
+    return [v0, v1];
+  }
+
+  // --- placement along the lane, edge → internet -----------------------------
+  let u = HZ ? labelW + 30 : tagAlong + 24;
+  const laneStartU = HZ ? labelW + 10 : tagAlong + 8;
+  const hasLoose = rails.some(r => r.hosts > 0);
+  const looseU = u;
+  if (hasLoose) u += chipAlong + colGap + 6;
+  const wifiU = u;
+  if (wifi) u += slabAlong(wifi) + colGap;
+  // multi-homed hosts share a column (lanes) or row (rails) when their
+  // spans don't overlap — the server's interval coloring — unless a box
+  // would be wider than the rail pitch and crash into its neighbor
+  const hosts = rg.hosts;
+  const shareRows = HZ || hosts.every(h => hostW(h) <= pitch - 10);
+  const hostRow = hosts.map((h, i) => shareRows ? h.row : i);
+  const rowAlong = [];
+  hosts.forEach((h, i) =>
+    rowAlong[hostRow[i]] = Math.max(rowAlong[hostRow[i]] || 0, hostAlong(h)));
+  const rowU = [];
+  rowAlong.forEach((a, i) => { rowU[i] = u; u += a + colGap; });
+  const hostU = hosts.map((h, i) => rowU[hostRow[i]]);
+  const virtU = virt ? u : 0;
+  if (virt) u += slabAlong(virt) + (routerInside ? 0 : colGap);
+  u += 26;
+  // the routing tier: one column per builder-assigned `col`, each as wide
+  // as its widest router; a lane runs to the furthest router claiming it
+  const routerW = rt => Math.max(130, rt.name.length * 7.4 + 60);
+  const showParent = rt => !!(rt.parent && !routerInside);
+  const nCols = routers.length ? Math.max(...routers.map(rt => rt.col || 0)) + 1 : 0;
+  const colAlong = [], colU = [];
+  for (let c = 0; c < nCols; c++) {
+    const members = routers.filter(rt => (rt.col || 0) === c);
+    colAlong[c] = HZ ? Math.max(...members.map(routerW))
+                     : (members.some(showParent) ? 70 : 58);
+    colU[c] = u;
+    u += colAlong[c] + (c < nCols - 1 ? 22 : 0);
+  }
+  const routerU = nCols ? colU[0] : u;      // the tier's near edge
+  const farEdge = rt => colU[rt.col || 0] + colAlong[rt.col || 0];
+  // inside the virtualization box the tier sits at the internet end; on
+  // rails that is the box's top, where its name row needs headroom
+  if (routerInside) u += HZ ? 14 : 40;
+  const routerEnd = u;
+  // each router spans every lane it routes, with headroom for its label;
+  // rV0/rV1 is the whole tier's extent (the virt box and clouds use it)
+  const rSpan = rt => {
+    const ls = rt.rails.filter(k => k in pos).map(k => pos[k]);
+    let v0 = ls.length
+      ? laneV(Math.min(...ls)) - (HZ ? 52 + (showParent(rt) ? 12 : 0) : 24) : across0;
+    let v1 = ls.length ? laneV(Math.max(...ls)) + (HZ ? 30 : 24) : across0 + nR * pitch;
+    if (!HZ) v1 = Math.max(v1, v0 + routerW(rt));
+    return [v0, v1];
+  };
+  const spans = routers.map(rSpan);
+  const rV0 = spans.length ? Math.min(...spans.map(sp => sp[0])) : across0;
+  const rV1 = spans.length ? Math.max(...spans.map(sp => sp[1])) : across0 + nR * pitch;
+  const cloudRx = 96, cloudRy = 30, tunRx = 86, tunRy = 27;
+  const cloudU = routerEnd + (HZ ? 150 : 84);
+  flip = HZ ? 0 : cloudU + cloudRy + 8;
+  const cloudEdge = HZ ? cloudRx : cloudRy;    // the ellipse's half-extent along
+  const tunEdge = HZ ? tunRx : tunRy;
+  const tuns = rg.tunnels || [];
+
+  // --- lanes, tags, loose chips ----------------------------------------------
+  rails.forEach((r, i) => {
+    const v = laneV(i);
+    const ev = r.evidence || [];
+    const cls = "rail" + (r.routed ? "" : " unrouted") + (r.wan ? " wan" : "")
+              + (ev.length ? " ev-" + ev[0] : "") + famCls(r);
+    // the lane reaches the furthest router that claims it — or, for a
+    // WAN lane nobody holds an address on, the default route's holder
+    const reach = routers.filter(rt => (r.routers || []).includes(rt.name)
+      || defaults.some(d => d.rail === r.key && d.device === rt.name));
+    const endU = reach.length ? Math.max(...reach.map(rt => colU[rt.col || 0]))
+               : routerU - 18;
+    const line = lineEl(root, laneStartU, v, endU, v, { class: cls });
+    // a dual-stack lane carries an amber dash over its teal (protocol view)
+    if ((r.families || []).length === 2)
+      track(lineEl(root, laneStartU, v, endU, v, { class: "rail6" + famCls(r) }), [r.key]);
+    const viaTun = (r.via_tunnel || []).length;
+    // a bare MAC in a switch table is not a host — usually a bond member
+    // or kernel port of one already drawn — so it's a count here, not a name
+    const unnamed = r.unnamed
+      ? `+${r.unnamed} MAC${r.unnamed > 1 ? "s" : ""} seen only in a switch table, no address known`
+      : "";
+    const tip = [`${r.name || "?"}${r.vid != null ? " · VLAN " + r.vid : ""}`,
+                 r.wan ? `internet uplink (${rg.wan_names[0] || "wan"})` : "",
+                 viaTun ? `via tunnel ${r.via_tunnel.join(", ")}` : "",
+                 ...(r.subnets.length ? r.subnets : ["no subnet recorded"]),
+                 ...((r.gateways || []).length > 1
+                   ? r.gateways.map(g => `gateway ${g.ip} (${g.router})`)
+                   : [r.gateway ? `gateway ${r.gateway}`
+                                : (r.routed || r.wan || viaTun ? "" : "not routed")]),
+                 r.gateway6 ? `gateway ${r.gateway6}` : "",
+                 `sources: ${r.sources.join(", ")}`,
+                 ev.length ? `evidence: ${ev.join(" > ")}` : "",
+                 unnamed].filter(Boolean).join("\n");
+    const label = (r.name || (r.vid != null ? "vlan" : r.key)).slice(0, 14)
+                  + ((r.name || "").length > 14 ? "…" : "");
+    const text = r.vid != null ? `${label} ${r.vid}` : label;
+    const sub = (r.subnets[0] || "")
+              + (r.subnets.length > 1 ? " +" + (r.subnets.length - 1) : "");
+    const tag = el("g", { class: "vtag" + (ev.length ? " ev-" + ev[0] : "") + famCls(r) });
+    // evidence badges: one square per reporter, strongest first, tucked in
+    // the tag's top-right corner (evidence view only, see CSS)
+    const badges = (right, top) => ev.forEach((c, i) =>
+      el("rect", { x: right - 10 - i * 11, y: top, width: 8, height: 8, rx: 1.5,
+                   class: "evbadge ev-" + c }, tag));
+    if (HZ) {
+      el("rect", { x: 10, y: v - 14, width: labelW - 16, height: 28, rx: 4 }, tag);
+      el("text", { x: 20, y: v - 1 }, tag, text);
+      el("text", { x: 20, y: v + 11, class: "gwlabel" }, tag, sub);
+      badges(labelW - 6, v - 11);
+    } else {
+      // a tag as wide as the rail pitch allows, text clipped to fit
+      const tw = Math.min(pitch - 6, 164), maxCh = Math.floor((tw - 12) / 6.1);
+      const vid = r.vid != null ? ` ${r.vid}` : "";   // the id survives the clip
+      const nm = clip(r.name || (r.vid != null ? "vlan" : r.key),
+                      Math.max(3, maxCh - vid.length));
+      const ty = flip - tagAlong;
+      el("rect", { x: v - tw / 2, y: ty, width: tw, height: tagAlong - 6, rx: 4 }, tag);
+      el("text", { x: v - tw / 2 + 6, y: ty + 15 }, tag, nm + vid);
+      // badges share the subnet row, which gives up the room they need
+      el("text", { x: v - tw / 2 + 6, y: ty + 29, class: "gwlabel" }, tag,
+         clip(sub, maxCh - Math.ceil(ev.length * 11 / 6.1)));
+      badges(v + tw / 2, ty + tagAlong - 16);
+    }
+    title(tag, tip); title(line, tip);
+    [line, tag].forEach(e => { track(e, [r.key]); wireHover(e, [r.key]); });
+    act(tag, r.key, [r.key], vlanUrl(r.vid));
+    // loose single-homed hosts: a ×N chip riding the lane at the edge
+    if (r.hosts > 0) {
+      const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted") + famCls(r),
+                          "data-kind": "group" });
+      const c = P(looseU + chipAlong / 2, v);
+      el("rect", { x: c.x - chipW / 2, y: c.y - chipH / 2, width: chipW,
+                   height: chipH, rx: 8 }, g);
+      el("text", { x: c.x, y: c.y + 4, "text-anchor": "middle" }, g, `×${r.hosts}`);
+      title(g, `${r.hosts} single-homed host${r.hosts > 1 ? "s" : ""} on `
+               + `${r.name || r.key}\n` + nameList(r.host_names)
+               + (unnamed ? `\n${unnamed}` : ""));
+      track(g, [r.key]); wireHover(g, [r.key]);
+      act(g, r.key, [r.key], vlanUrl(r.vid));
+    }
+  });
+
+  // --- boxes ------------------------------------------------------------------
+  function laneChip(parent, u0, v, names, r, noun) {
+    const g = el("g", { class: "gbox" + (r.routed ? "" : " unrouted") + famCls(r),
+                        "data-kind": "group" }, parent);
+    const c = P(u0, v);
+    el("rect", { x: c.x - chipW / 2, y: c.y - chipH / 2, width: chipW,
+                 height: chipH, rx: 8 }, g);
+    el("text", { x: c.x, y: c.y + 4, "text-anchor": "middle" }, g, `×${names.length}`);
+    title(g, `${names.length} ${noun}${names.length > 1 ? "s" : ""} on `
+             + `${r.name || r.key}\n` + nameList(names));
+    track(g, [r.key]); wireHover(g, [r.key]);
+    act(g, r.key, [r.key], vlanUrl(r.vid));
+  }
+  // a named box on its home lane; a stem reaches across to its other lanes
+  function laneHost(parent, h, u0) {
+    const bw = hostW(h), along = hostAlong(h), across = HZ ? hostH : bw;
+    const home = pos[h.home], vh = laneV(home);
+    const cu = u0 + along / 2;
+    const grp = el("g", { class: "host", "data-kind": "host" }, parent);
+    const keys = h.legs.map(l => l.rail);
+    const vs = h.legs.map(l => laneV(pos[l.rail]));
+    if (vs.length > 1)
+      track(lineEl(tapLayer, cu, Math.min(...vs), cu, Math.max(...vs),
+                   { class: "tap" }), keys);
+    const R = box(u0, vh - across / 2, along, across);
+    const rect = rectEl(grp, R, { rx: 8 });
+    if (RCOLOR[h.role]) rect.setAttribute("style", `stroke: ${RCOLOR[h.role]}`);
+    el("text", { x: R.x + R.w / 2 - 9, y: R.y + R.h / 2 + 4,
+                 "text-anchor": "middle" }, grp, h.name);
+    roleIcon(grp, h.role || "host", R.x + R.w - 24, R.y + R.h / 2 - 9);
+    // a leg lists every address it carries on that network (bond + trunk
+    // sub-interface both on mgmt, say)
+    title(grp, `${h.name}\n` + h.legs.map(l =>
+      `${l.iface}${(l.ips || (l.ip ? [l.ip] : [])).map(i => " " + i).join("")} → `
+      + `${(rails[pos[l.rail]] || {}).name || l.rail}`).join("\n"));
+    h.legs.forEach(l => {
+      const r = rails[pos[l.rail]];
+      // the box rides its home lane, so that attachment dot moves to the
+      // box edge instead of landing on the name
+      const c = pos[l.rail] === home ? P(u0, vh) : P(cu, laneV(pos[l.rail]));
+      const d = el("circle", { cx: c.x, cy: c.y, r: 4.2,
+                               class: "rim" + (r.routed ? "" : " unrouted")
+                                      + legCls(l.ips || [l.ip]) }, grp);
+      track(d, [l.rail]);
+    });
+    track(grp, keys); wireHover(grp, keys);
+    act(grp, h.name, keys, devUrl(h.name));
+  }
+  // wireless / virtualization container: a slab across its lanes. opts can
+  // stretch it along and across — the virtualization box does both to take
+  // the router slab inside.
+  function laneSlab(b, u0, cls, noun, opts = {}) {
+    const content = slabAlong(b);
+    const along = opts.along || content;
+    let [v0, v1] = slabAcross(b);
+    if (opts.v0 != null) v0 = Math.min(v0, opts.v0);
+    if (opts.v1 != null) v1 = Math.max(v1, opts.v1);
+    const down = b.status && b.status !== "up";
+    const grp = el("g", { class: "spanbox " + cls + (down ? " down" : "") });
+    const R = box(u0, v0, along, v1 - v0);
+    rectEl(grp, R, { rx: 10 });
+    const subText = b.sub || ((b.role === "ap" ? "" : b.role)
+                              + (down ? ` · ${b.status}` : ""));
+    // the name row sits on a card-colored pill: on vertical rails the
+    // networks run straight through the box, and text over a rail is mud
+    rectEl(grp, { x: R.x + 5, y: R.y + 5,
+                  w: 18 + b.name.length * 7.4 + subText.length * 6, h: 17 },
+           { rx: 3, class: "lpill" });
+    el("text", { x: R.x + 10, y: R.y + 17, class: "rlabel" }, grp, b.name);
+    el("text", { x: R.x + 14 + b.name.length * 7.4, y: R.y + 17, class: "gwlabel" },
+       grp, subText);
+    roleIcon(grp, b.role, R.x + R.w - 26, R.y + 5);
+    b.legs.forEach(l => {
+      if (!(l.rail in pos)) return;
+      const r = rails[pos[l.rail]];
+      const c = P(u0, laneV(pos[l.rail]));
+      const d = el("circle", { cx: c.x, cy: c.y, r: 4.2,
+                               class: "rim" + (r.routed ? "" : " unrouted")
+                                      + legCls(l.ips || [l.ip]) }, grp);
+      title(d, `${l.ap ? l.ap + " " : ""}${l.iface}`
+               + (l.ips || (l.ip ? [l.ip] : [])).map(a => " " + a).join("")
+               + ` → ${r.name || l.rail}`);
+      track(d, [l.rail]);
+    });
+    // chips ride the content column (lanes) or a row under the name row
+    // (rails, measured down from the content's screen top — high u)
+    const chipU = u0 + (HZ ? content / 2 : content - 45);
+    Object.entries(b.groups).forEach(([k, names]) => {
+      if (k in pos) laneChip(grp, chipU, laneV(pos[k]), names, rails[pos[k]], noun);
+    });
+    let gu = HZ ? u0 + 8
+                : u0 + content - 30 - (hasGroups(b) ? 40 : 0) - 6 - hostH;
+    (b.guests || []).forEach(v => {
+      laneHost(grp, v, gu);
+      gu += HZ ? hostAlong(v) + 10 : -(hostAlong(v) + 10);
+    });
+    title(grp, `${b.name}`
+      + (b.aps ? `\nAPs: ${b.aps.join(", ")}`
+         : b.members ? `\n${b.members.join("\n")}` : ` · ${b.role}`));
+    track(grp, b.rails); wireHover(grp, b.rails);
+    act(grp, b.name, b.rails,
+        !b.noclick && (!b.aps || b.aps.length === 1)
+          ? devUrl(b.aps ? b.aps[0] : b.name) : null);
+  }
+
+  if (wifi) laneSlab(wifi, wifiU, "ap", "client");
+  hosts.forEach((h, i) => laneHost(root, h, hostU[i]));
+  // the virtualization box draws before the router so the router's slab
+  // paints on top of it; a guest router stretches the box around itself
+  if (virt) laneSlab(virt, virtU, "hyp", "VM", routerInside
+    ? { along: routerEnd - virtU, v0: rV0 - (HZ ? 26 : 12), v1: rV1 + 12 }
+    : {});
+
+  // --- the routing tier, internet, tunnels ---------------------------------
+  routers.forEach((rt, ri) => {
+    const ru = colU[rt.col || 0], along = colAlong[rt.col || 0];
+    const [v0, v1] = spans[ri];
+    const R = box(ru, v0, along, v1 - v0);
+    const rgrp = el("g", { class: "router" + (rt.role === "router" ? " isrouter" : "") });
+    rectEl(rgrp, R, { rx: 8 });
+    // the name row on a pill: a lane bound for a further column passes
+    // under this box, and text over a lane is mud
+    const rows = 2 + (showParent(rt) ? 1 : 0);
+    rectEl(rgrp, { x: R.x + 6, y: R.y + 5, w: R.w - 12, h: 8 + rows * 14 },
+           { rx: 4, class: "lpill" });
+    const cx = R.x + R.w / 2 - 8;
+    el("text", { x: cx, y: R.y + 18, "text-anchor": "middle",
+                 class: "routerlabel" }, rgrp, rt.name);
+    el("text", { x: cx, y: R.y + 33, "text-anchor": "middle", class: "gwlabel" },
+       rgrp, `${rt.rails.length} networks`);
+    // a router that is itself a guest says so — common enough at home. When
+    // the virtualization box already encloses it, the enclosure says it and
+    // the physical host stays a tooltip detail (this view is logical).
+    if (showParent(rt))
+      el("text", { x: cx, y: R.y + 46, "text-anchor": "middle", class: "gwlabel" },
+         rgrp, `on ${rt.parent}`);
+    roleIcon(rgrp, rt.role === "router" ? "router" : "firewall", R.x + R.w - 26, R.y + 6);
+    title(rgrp, `${rt.name} · routes ${rt.rails.length} networks`
+                + (rt.default ? "\nholds the default route" : "")
+                + (rt.parent ? `\nruns as a VM on ${rt.parent}` : ""));
+    rt.rails.forEach(k => {
+      if (!(k in pos)) return;
+      const c = P(ru, laneV(pos[k]));
+      const r = rails[pos[k]];
+      const gw = (rt.gateways || {})[k] || {};
+      const d = el("circle", { cx: c.x, cy: c.y, r: 4.2,
+                               class: "rim" + legCls([gw.ip, gw.ip6]) }, rgrp);
+      title(d, [gw.ip ? `gateway ${gw.ip}` : "", gw.ip6 ? `gateway ${gw.ip6}` : ""]
+               .filter(Boolean).join("\n") || (r.name || k));
+      track(d, [k]);
+    });
+    track(rgrp, rt.rails); wireHover(rgrp, rt.rails);
+    act(rgrp, rt.name, rt.rails, devUrl(rt.name));
+    // load view: a heat segment where each lane meets the router, tinted by
+    // that interface's utilization, the number beside it (applyRouted paints)
+    rt.rails.forEach(k => {
+      if (!(k in pos)) return;
+      const ld = (rt.load || {})[k] || {};
+      const v = laneV(pos[k]);
+      const seg = lineEl(root, ru - 46, v, ru - 3, v, { class: "legseg" });
+      const t = P(ru - 24, v);
+      const lab = el("text", HZ ? { x: t.x, y: t.y - 8, "text-anchor": "middle" }
+                               : { x: t.x + 9, y: t.y + 4 }, root);
+      lab.setAttribute("class", "legload");
+      title(seg, `${rt.name} ${ld.iface || ""} on ${rails[pos[k]].name || k}`);
+      loadSegs.push({ seg, lab, util: ld.util, peak: ld.peak });
+      track(seg, [k]); track(lab, [k]);
+    });
+  });
+
+  // one cloud per default route, hung off the router that holds it; a
+  // second cloud on the same lane stacks beside the first
+  const clouds = [];
+  defaults.forEach((d, di) => {
+    const holder = routers.find(rt => rt.name === d.device);
+    if (!holder) return;
+    const [hv0, hv1] = spans[routers.indexOf(holder)];
+    const wanRail = d.rail ? rails.find(r => r.key === d.rail) : null;
+    let cloudV = wanRail ? laneV(pos[wanRail.key]) : (hv0 + hv1) / 2;
+    const gap = HZ ? cloudRy * 2 + 12 : cloudRx * 2 + 16;
+    while (clouds.some(c => Math.abs(c.v - cloudV) < gap)) cloudV += gap;
+    const hu = farEdge(holder);
+    const C = P(cloudU, cloudV);
+    const cloud = el("g", {});
+    const drop = lineEl(root, hu, cloudV, cloudU - cloudEdge - 4, cloudV,
+                        { class: "defroute" });
+    if (wanRail) track(drop, [wanRail.key]);
+    // the drop takes the WAN interface's load: the way out, measured
+    const m = P((hu + cloudU - cloudEdge) / 2, cloudV);
+    const lab = el("text", HZ ? { x: m.x, y: m.y + 14, "text-anchor": "middle" }
+                             : { x: m.x + 9, y: m.y + 18 }, root);   // under the "via" label
+    lab.setAttribute("class", "legload");
+    loadSegs.push({ seg: drop, lab, util: d.util, peak: d.peak });
+    el("ellipse", { cx: C.x, cy: C.y, rx: cloudRx, ry: cloudRy, class: "cloud" }, cloud);
+    el("text", { x: C.x, y: C.y - 3, "text-anchor": "middle", class: "rlabel" },
+       cloud, rg.wan_names[di] || rg.wan_names[0] || "internet");
+    const gw = rg.gateways[di] || (di === 0 ? rg.gateways[0] : null);
+    if (gw) el("text", { x: C.x, y: C.y + 12, "text-anchor": "middle",
+                         class: "gwlabel" }, cloud, `${gw.name} ${gw.status || ""}`.trim());
+    if (wanRail) {
+      el("text", HZ ? { x: hu + 12, y: m.y - 8 } : { x: m.x + 8, y: m.y + 4 },
+         cloud, wanRail.vid != null ? `via VLAN ${wanRail.vid}` : `via ${wanRail.name}`)
+        .setAttribute("class", "gwlabel");
+      track(cloud, [wanRail.key]); wireHover(cloud, [wanRail.key]);
+    }
+    title(cloud, `${holder.name}: default${d.gateway ? ` via ${d.gateway}` : ""}`);
+    clouds.push({ v: cloudV, holder, hv0, hv1, n: 0 });
+  });
+
+  // tunnels sit beside the cloud of the router that terminates them, on
+  // whichever side has more room inside that router's span, so the
+  // encrypted transport leaves the router straight from its edge instead
+  // of diving past its end. A lane reached through a tunnel connects to
+  // the tunnel, not the cloud. A tunnel with no cloud to sit beside (no
+  // default route known) takes its router's middle.
+  const step = HZ ? tunRy * 2 + 10 : tunRx * 2 + 16;
+  const first = HZ ? cloudRy + tunRy + 12 : cloudRx + tunRx + 16;
+  tuns.forEach(t => {
+    let home = clouds.find(c => c.holder.name === t.device) || clouds[0];
+    if (!home) {
+      const holder = routers.find(rt => rt.name === t.device) || routers[0];
+      if (!holder) return;
+      const [hv0, hv1] = spans[routers.indexOf(holder)];
+      home = { v: (hv0 + hv1) / 2 - first, holder, hv0, hv1, n: 0, bare: true };
+      clouds.push(home);
+    }
+    const dir = (home.v - home.hv0) >= (home.hv1 - home.v) ? -1 : 1;
+    const tv = home.bare ? home.v + first + home.n * step
+                         : home.v + dir * (first + home.n * step);
+    home.n += 1;
+    // the transport leaves the router that terminates the tunnel, even when
+    // it sits beside another router's cloud (an HA secondary, say)
+    const term = routers.find(rt => rt.name === t.device) || home.holder;
+    const [tv0, tv1] = spans[routers.indexOf(term)];
+    const hu = farEdge(term);
+    const g = el("g", { class: "tunnel" });
+    const leave = Math.min(Math.max(tv, tv0 + 14), tv1 - 14);
+    track(lineEl(root, hu, leave, cloudU - tunEdge, tv, { class: "tunpath" }), t.rails);
+    t.rails.forEach(k => {
+      if (!(k in pos)) return;
+      track(lineEl(root, routerU - 18, laneV(pos[k]), cloudU - tunEdge, tv,
+                   { class: "tundrop" }), [k]);
+    });
+    const T = P(cloudU, tv);
+    el("ellipse", { cx: T.x, cy: T.y, rx: tunRx, ry: tunRy, class: "tuncloud" }, g);
+    el("text", { x: T.x, y: T.y - 3, "text-anchor": "middle", class: "rlabel" },
+       g, t.name);
+    el("text", { x: T.x, y: T.y + 12, "text-anchor": "middle",
+                 class: "gwlabel tunstat " + (t.status || "") }, g,
+       t.label + (t.status ? " · " + t.status : ""));
+    title(g, [`${t.label} tunnel · ${t.name}`,
+              t.peer ? `peer ${t.peer}` : "", t.detail || "",
+              (t.local_nets || []).length
+                ? `local side: ${t.local_nets.join(", ")}` : "",
+              `status ${t.status || "unknown"}`].filter(Boolean).join("\n"));
+    if (t.rails.length) { track(g, t.rails); wireHover(g, t.rails); }
+  });
+
+  // faint alternating bands make the rows scannable at a distance; sized
+  // to the finished drawing and slipped underneath it
+  const bb = root.getBBox();
+  rails.forEach((r, i) => {
+    if (i % 2) return;
+    const R = HZ ? { x: bb.x - 8, y: laneV(i) - pitch / 2, w: bb.width + 16, h: pitch }
+                 : { x: laneV(i) - pitch / 2, y: bb.y - 8, w: pitch, h: bb.height + 16 };
+    const band = el("rect", { x: R.x, y: R.y, width: R.w, height: R.h,
+                              class: "laneband" });
+    root.insertBefore(band, root.firstChild);
+  });
+  // the viewBox hugs the content, so "fit" means the whole map
+  const bb2 = root.getBBox();
+  svg.setAttribute("viewBox",
+    `${bb2.x - 12} ${bb2.y - 12} ${bb2.width + 24} ${bb2.height + 24}`);
+}
+
+// (re)draw from scratch: the axis toggle and nothing else calls it twice
+function redraw() {
+  root.innerHTML = "";
+  members.length = 0;
+  loadSegs = [];
+  for (const k of Object.keys(focusSets)) delete focusSets[k];
+  view = { x: 0, y: 0, k: 1 }; applyView();
+  tapLayer = el("g", {});
+  if (nR) draw();
+  else {
+    svg.setAttribute("viewBox", "0 0 600 80");
+    el("text", { x: 20, y: 44, class: "band" }, root,
+       "NO NETWORKS YET — a collector that reports VLANs or subnets fills this view");
+  }
+}
+
+// --- chips, focus, zoom/pan/fit --------------------------------------------
+function applyRouted() {
+  document.querySelectorAll('[data-kind="host"]').forEach(e =>
+    e.style.display = rstate.hosts ? "" : "none");
+  document.querySelectorAll('[data-kind="group"]').forEach(e =>
+    e.style.display = rstate.groups ? "" : "none");
+  document.getElementById("routedwrap").parentNode
+    .querySelectorAll(".tap").forEach(e =>
+      e.style.display = rstate.hosts ? "" : "none");
+  const setChip = (id, on) => {
+    const el = document.getElementById(id);
+    el.classList.toggle("on", on); el.setAttribute("aria-pressed", String(on));
+  };
+  setChip("r-hosts", rstate.hosts);
+  setChip("r-groups", rstate.groups);
+  setChip("r-axis", rstate.axis === "v");
+  svg.classList.toggle("evidence", rstate.view === "evidence");
+  svg.classList.toggle("protocol", rstate.view === "protocol");
+  const loadMode = rstate.view === "load";
+  svg.classList.toggle("load", loadMode);
+  document.getElementById("rloadgrp").hidden = !loadMode;
+  document.getElementById("rload").value = rstate.load;
+  if (!rg.peak_ready) document.getElementById("rload-peak").textContent = "24h peak — no samples";
+  document.getElementById("rleg-peak").style.display = rstate.load === "peak" ? "" : "none";
+  loadSegs.forEach(({ seg, lab, util, peak }) => {
+    const u = rstate.load === "peak" ? peak : util;
+    seg.style.stroke = loadMode ? heat(u) : "";
+    lab.textContent = u == null ? "–" : `${u}%${rstate.load === "peak" ? " pk" : ""}`;
+  });
+  svg.dataset.proto = rstate.proto;
+  document.getElementById("rprotogrp").hidden = rstate.view !== "protocol";
+  document.getElementById("rproto").value = rstate.proto;
+  const radio = document.getElementById(`rview-${rstate.view}`);
+  if (radio) radio.checked = true;
+  // legend items name the modes they belong to
+  document.querySelectorAll("#rlegend > .item[data-modes]").forEach(e =>
+    e.style.display = e.dataset.modes.split(" ").includes(rstate.view) ? "" : "none");
+  // a focus naming nothing drawn (filtered documentation-only VLAN, a
+  // renamed host) is ignored — dimming everything would leave a dead map
+  if (rstate.focus && !focusSets[rstate.focus]) { rstate.focus = null; rwrite(); }
+  applyFocus();
+}
+document.querySelectorAll('input[name="rview"]').forEach(i =>
+  i.addEventListener("change", () => {
+    if (i.checked) { rstate.view = i.value; rwrite(); applyRouted(); } }));
+document.getElementById("rload").addEventListener("change", ev => {
+  rstate.load = ev.target.value; rwrite(); applyRouted(); });
+document.getElementById("rproto").addEventListener("change", ev => {
+  rstate.proto = ev.target.value; rwrite(); applyRouted(); });
+document.getElementById("r-hosts").addEventListener("click", () => {
+  rstate.hosts = !rstate.hosts; rwrite(); applyRouted(); });
+document.getElementById("r-groups").addEventListener("click", () => {
+  rstate.groups = !rstate.groups; rwrite(); applyRouted(); });
+document.getElementById("r-axis").addEventListener("click", () => {
+  rstate.axis = rstate.axis === "v" ? "lanes" : "v";
+  rwrite(); redraw(); applyRouted();
+});
+
+let view = { x: 0, y: 0, k: 1 };
+function applyView() {
+  root.setAttribute("transform",
+    `translate(${view.x},${view.y}) scale(${view.k})`);
+}
+rwrite();      // sanitize the URL and remember it, as the topology does on arrival
+redraw();
+applyRouted();
+const wrap = document.getElementById("routedwrap");
+wrap.addEventListener("wheel", ev => {
+  ev.preventDefault();
+  const k = Math.min(6, Math.max(0.3, view.k * (ev.deltaY < 0 ? 1.12 : 0.89)));
+  const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+  const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+  view.x = p.x - (p.x - view.x) * (k / view.k);
+  view.y = p.y - (p.y - view.y) * (k / view.k);
+  view.k = k; applyView();
+}, { passive: false });
+let drag = null, moved = false;
+wrap.addEventListener("pointerdown", ev => {
+  moved = false;
+  if (ev.target.closest(".host, .gbox, .vtag, .router, .spanbox")) return;
+  drag = { x: ev.clientX, y: ev.clientY, vx: view.x, vy: view.y };
+  wrap.setPointerCapture(ev.pointerId);
+});
+wrap.addEventListener("pointermove", ev => {
+  if (!drag) return;
+  if (Math.abs(ev.clientX - drag.x) + Math.abs(ev.clientY - drag.y) > 3) moved = true;
+  const ctm = svg.getScreenCTM();
+  view.x = drag.vx + (ev.clientX - drag.x) / ctm.a;
+  view.y = drag.vy + (ev.clientY - drag.y) / ctm.d;
+  applyView();
+});
+wrap.addEventListener("pointerup", () => drag = null);
+wrap.addEventListener("click", ev => {
+  if (moved || ev.target.closest(".host, .gbox, .vtag, .router, .spanbox")) return;
+  if (rstate.focus) { rstate.focus = null; rwrite(); applyFocus(); }
+});
+document.getElementById("r-fit").addEventListener("click", () => {
+  view = { x: 0, y: 0, k: 1 }; applyView();
+});
+})();
 </script>
 
 <h2 id="devices">Devices (16)</h2>
@@ -1611,7 +3070,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
 <section class="dev" id="dev-hyp1">
   <div class="card hypervisor" style="max-width: 560px">
     <div class="name"><span class="dot up"></span>hyp1</div>
-    <div class="sub">hypervisor · Supermicro X12SPi-TF</div>
+    <div class="sub">hypervisor · Supermicro X12SPi-TF · 16c · 128 GB</div>
     <div class="sub">esxi 8.0.3</div>
     <div class="sub mono">192.0.2.10</div>
   </div>
@@ -1666,7 +3125,7 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
 <section class="dev" id="dev-hyp2">
   <div class="card hypervisor" style="max-width: 560px">
     <div class="name"><span class="dot up"></span>hyp2</div>
-    <div class="sub">hypervisor · Supermicro X12SPi-TF</div>
+    <div class="sub">hypervisor · Supermicro X12SPi-TF · 24c · 192 GB</div>
     <div class="sub">esxi 8.0.3</div>
     <div class="sub mono">192.0.2.11</div>
   </div>
@@ -2096,22 +3555,22 @@ if (resetBtn) resetBtn.addEventListener("click", e => {
 <table>
   <tr><th>VID</th><th>Name</th><th>Devices carrying</th></tr>
   
-  <tr><td class="mono">1</td><td>mgmt</td>
+  <tr id="vlan-1"><td class="mono">1</td><td>mgmt</td>
       <td class="mono">0</td></tr>
   
-  <tr><td class="mono">20</td><td>servers</td>
+  <tr id="vlan-20"><td class="mono">20</td><td>servers</td>
       <td class="mono">0</td></tr>
   
-  <tr><td class="mono">30</td><td>iot</td>
+  <tr id="vlan-30"><td class="mono">30</td><td>iot</td>
       <td class="mono">0</td></tr>
   
-  <tr><td class="mono">40</td><td>wifi</td>
+  <tr id="vlan-40"><td class="mono">40</td><td>wifi</td>
       <td class="mono">0</td></tr>
   
-  <tr><td class="mono">103</td><td>iscsi</td>
+  <tr id="vlan-103"><td class="mono">103</td><td>iscsi</td>
       <td class="mono">0</td></tr>
   
-  <tr><td class="mono">199</td><td>uplink</td>
+  <tr id="vlan-199"><td class="mono">199</td><td>uplink</td>
       <td class="mono">0</td></tr>
   
 </table>
