@@ -771,3 +771,27 @@ def test_rails_and_legs_carry_address_families(conn):
                    for l in h["legs"] if l["rail"] == "v20")
     assert nas_leg["ip"] == "198.51.100.40"
     assert nas_leg["ips"] == ["198.51.100.40", "2001:db8:20::40"]
+
+
+def test_router_legs_carry_load(conn):
+    """The load view (#50) heat-tints the router's per-network legs from
+    its interface counters — busier direction over capacity, now and the
+    24h peak — and the default route's drop from the WAN interface. A
+    declared service capacity beats the port speed, as on the topology."""
+    seed_site(conn)
+    fw = conn.execute("SELECT id FROM devices WHERE name='fw1'").fetchone()[0]
+    iface(conn, fw, "vmx0", in_bps=500_000_000, out_bps=100_000_000)   # 5% of 10G
+    conn.execute("INSERT INTO rate_history (device, interface, ts, in_bps, out_bps) "
+                 "VALUES ('fw1', 'vmx1', ?, 2_000_000_000, 0)", (pdb.now() - 600,))
+    conn.execute("INSERT INTO routes (device, destination, gateway, interface, "
+                 "proto, flags, source, last_seen) VALUES ('fw1', '0.0.0.0/0', "
+                 "'192.0.2.254', 'vmx0', 'static', 'UGS', 'test', ?)", (pdb.now(),))
+    g = build_routed_graph(conn, _S())
+    load = g["routers"][0]["load"]
+    assert load["v1"] == {"iface": "vmx0", "util": 5.0, "peak": None}
+    assert load["v20"] == {"iface": "vmx1", "util": None, "peak": 20.0}
+    assert g["peak_ready"] is True
+    assert g["default"]["util"] == 5.0 and g["default"]["peak"] is None
+    s = _S()
+    s.capacities = {("fw1", "vmx0"): 1_000_000_000}      # a 1G circuit on a 10G port
+    assert build_routed_graph(conn, s)["routers"][0]["load"]["v1"]["util"] == 50.0

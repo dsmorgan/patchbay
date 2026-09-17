@@ -14,6 +14,8 @@ import ipaddress
 import sqlite3
 from typing import Any
 
+from . import db
+
 # rails are keyed by VLAN id where one is known ("v20"), else by the subnet
 # ("net:192.0.2.0/24") — a dual-stack VLAN is ONE rail, not two
 
@@ -251,6 +253,44 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         elif default["gateway"]:
             wan_rail = rails.rail_of_ip(default["gateway"])
         default["rail"] = wan_rail
+
+    # load (#50): the router's per-network legs are the only edges on this
+    # view with counters — its VLAN interfaces, when the firewall is a
+    # polled device. Utilization is the busier direction over capacity (a
+    # declared service capacity beats the port speed), now and as the 24h
+    # peak of poll samples: the topology's own arithmetic.
+    caps = getattr(settings, "capacities", None) or {}
+    cap_of: dict[tuple[str, str], int] = {}
+    util_of: dict[tuple[str, str], float] = {}
+    for r in conn.execute(
+            "SELECT d.name AS dev, i.name AS iface, i.speed_bps, i.in_bps, i.out_bps "
+            "FROM interfaces i JOIN devices d ON d.id = i.device_id "
+            "WHERE i.speed_bps > 0"):
+        key = (r["dev"], r["iface"])
+        cap_of[key] = caps.get(key) or r["speed_bps"]
+        vals = [v for v in (r["in_bps"], r["out_bps"]) if v is not None]
+        if vals:
+            util_of[key] = round(max(vals) / cap_of[key] * 100, 1)
+    peak_of: dict[tuple[str, str], float] = {}
+    for r in conn.execute(
+            "SELECT device, interface, "
+            "MAX(MAX(COALESCE(in_bps, 0), COALESCE(out_bps, 0))) AS pk "
+            "FROM rate_history WHERE ts > ? GROUP BY device, interface",
+            (db.now() - 86400,)):
+        key = (r["device"], r["interface"])
+        if key in cap_of:
+            peak_of[key] = round(r["pk"] / cap_of[key] * 100, 1)
+    for rt in routers:
+        rt["load"] = {}
+        for leg in legs.get(rt["name"], {}).values():
+            key = (rt["name"], leg["iface"])
+            rt["load"][leg["rail"]] = {"iface": leg["iface"],
+                                       "util": util_of.get(key),
+                                       "peak": peak_of.get(key)}
+    if default:
+        key = (default["device"], default["interface"] or "")
+        default["util"] = util_of.get(key)
+        default["peak"] = peak_of.get(key)
 
     # VPN tunnels (#42): egress objects beside the internet cloud. A rail
     # reached *through* a tunnel (a route whose exit interface is the
@@ -620,6 +660,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
         "virt_name": virt_name,
         "aps": aps,
         "tunnels": tunnels,
+        "peak_ready": bool(peak_of),
         "wan_names": list(getattr(settings, "wan_names", ()) or ()),
     }
 

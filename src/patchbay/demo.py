@@ -278,6 +278,9 @@ def seed(conn: sqlite3.Connection, *, rnd: random.Random | None = None) -> str:
     # 24h of samples for every live link end: the load view's peak column.
     # A sine day (quiet at night, busy evenings) + jitter reads believably.
     live_ports = [(l[0], l[1]) for l in LLDP] + [(l[2], l[3]) for l in LLDP]
+    # the firewall's VLAN interfaces too: the routed view's load mode reads
+    # the router's per-network legs from them
+    live_ports += [("fw1", i) for i in ("vmx0", "vmx1", "vmx2", "vmx3")]
     conn.executemany(
         "INSERT INTO rate_history (device, interface, ts, in_bps, out_bps) "
         "VALUES (?, ?, ?, ?, ?)",

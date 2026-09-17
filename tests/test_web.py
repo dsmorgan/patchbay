@@ -1147,6 +1147,11 @@ def test_routed_page_renders_graph(clean_env, tmp_path, client):
     assert r3.status_code == 200
     assert 'id="rview-protocol"' in r3.text and 'id="rproto"' in r3.text
     assert '"families": [4]' in r3.text
+    # load mode (#50): the radio, its now/peak select, and the peak flag
+    r4 = client.get("/routed?view=load&load=peak")
+    assert r4.status_code == 200
+    assert 'id="rview-load"' in r4.text and 'id="rload"' in r4.text
+    assert '"peak_ready": false' in r4.text
 
 
 # --- /configs canonical display names ---------------------------------------

@@ -256,3 +256,10 @@ The decisions that replaced it, recorded here rather than rewritten above:
   rather than Decision 3's `4`: the first look should show the dual-stack
   picture (teal, amber, teal-with-amber-dash), and narrowing to one family
   is the second question, not the first.
+- **Load** is what Decision 3 said, translated to the lanes: the router
+  fan is gone, so the heat lands on a short segment where each lane meets
+  the router (the interface on that network) and on the default route's
+  drop (the WAN interface). Same ramp, same `now` / `24h peak` select, same
+  arithmetic as the topology (`util_of` / `peak_of`, capacity overrides
+  honored). Needs the firewall in the SNMP poller's inventory; without
+  counters every leg is grey and says so.

@@ -178,6 +178,18 @@
   #routed.protocol .ricon, #routed.protocol .cloud, #routed.protocol .tuncloud,
   #routed.protocol .tunnel text, #routed.protocol .tap, #routed.protocol .defroute,
   #routed.protocol .tunpath, #routed.protocol .tundrop { opacity: 0.4; }
+  /* load view: the router's per-network legs — its VLAN interfaces are the
+     only edges here with counters — heat-tinted like the topology's edges,
+     with the number beside each; the default route's drop takes the WAN
+     interface's. Lanes and attachments go quiet. Grey = no measurement. */
+  #routed .legseg, #routed .legload { display: none; }
+  #routed.load .legseg { display: initial; stroke-width: 7; stroke-linecap: round; }
+  #routed.load .legload { display: initial; font: 600 10px var(--font-mono);
+                          fill: var(--ink); }
+  #routed.load .rail { opacity: 0.3; }
+  #routed.load .host, #routed.load .gbox, #routed.load .spanbox, #routed.load .vtag,
+  #routed.load .tunnel, #routed.load .cloud, #routed.load .tap, #routed.load .tunpath,
+  #routed.load .tundrop, #routed.load .rim { opacity: 0.28; }
   #routed .routerlabel { font: 600 11.5px var(--font-ui); fill: var(--ink); }
   #routed .gwlabel { font: 10px var(--font-mono); fill: var(--muted); }
 </style>
@@ -186,10 +198,18 @@
   <span class="grp modes" role="radiogroup" aria-label="View">
     <input type="radio" name="rview" id="rview-routes" value="routes" checked>
     <label for="rview-routes">Routes</label>
+    <input type="radio" name="rview" id="rview-load" value="load">
+    <label for="rview-load">Load</label>
     <input type="radio" name="rview" id="rview-protocol" value="protocol">
     <label for="rview-protocol">Protocol</label>
     <input type="radio" name="rview" id="rview-evidence" value="evidence">
     <label for="rview-evidence">Evidence</label>
+  </span>
+  <span class="grp" id="rloadgrp" hidden>
+    <select id="rload" aria-label="load window">
+      <option value="now">now</option>
+      <option value="peak" id="rload-peak">24h peak</option>
+    </select>
   </span>
   <span class="grp" id="rprotogrp" hidden>
     <select id="rproto" aria-label="address family">
@@ -218,6 +238,16 @@
   <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-ipam)" stroke-width="2" stroke-dasharray="4 3"/></svg> IPAM only (documented, nothing carries it)</span>
   <span class="item" data-modes="evidence"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--ev-route)" stroke-width="2" stroke-dasharray="4 3"/></svg> learned through a tunnel</span>
   <span class="item" data-modes="evidence" style="color: var(--muted)">lane = strongest reporter · tag badges = every reporter, in that order</span>
+  <span class="item" data-modes="load">router legs:
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--line)"></span>no data
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #5b84a8"></span>idle
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #4a9d6e"></span>&lt;5%
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #8fc45f"></span>&lt;15%
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: #c9cf56"></span>&lt;30%
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--warn)"></span>&lt;60%
+    <span class="swatch" style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--crit)"></span>60%+
+    <span id="rleg-peak">· pk = 24h peak</span></span>
+  <span class="item" data-modes="load" style="color: var(--muted)">each leg = the router's interface on that network, busier direction over capacity · lanes carry no counters</span>
   <span class="item" data-modes="protocol"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p4)" stroke-width="2"/></svg> IPv4 network</span>
   <span class="item" data-modes="protocol"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p6)" stroke-width="2"/></svg> IPv6 network</span>
   <span class="item" data-modes="protocol"><svg width="10" height="16"><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p4)" stroke-width="2.6"/><line x1="5" y1="0" x2="5" y2="16" stroke="var(--p6)" stroke-width="2" stroke-dasharray="3 3"/></svg> dual-stack</span>
@@ -251,15 +281,16 @@ const vlanUrl = vid => vid == null ? null : SNAPSHOT ? `#vlan-${vid}` : `/vlans#
 // --- state in the URL (ADR-0001 rules: only non-defaults serialize). The
 // snapshot's URL belongs to the topology map on the same page, so there the
 // state lives in memory only: it starts from the defaults and never writes.
-const R_VIEWS = ["routes", "protocol", "evidence"];
+const R_VIEWS = ["routes", "load", "protocol", "evidence"];
 const R_PROTOS = ["all", "4", "6"];
-const R_DEFAULTS = { view: "routes", proto: "all", hosts: true, groups: true,
+const R_DEFAULTS = { view: "routes", load: "now", proto: "all", hosts: true, groups: true,
                      focus: null, axis: "lanes" };
 const rstate = { ...R_DEFAULTS };
 if (!SNAPSHOT) {
   const p = new URLSearchParams(location.search);
   if (R_VIEWS.includes(p.get("view"))) rstate.view = p.get("view");
   if (R_PROTOS.includes(p.get("proto"))) rstate.proto = p.get("proto");
+  if (p.get("load") === "peak") rstate.load = "peak";
   if (p.get("hosts") === "0") rstate.hosts = false;
   if (p.get("groups") === "0") rstate.groups = false;
   if (p.get("focus")) rstate.focus = p.get("focus");
@@ -268,8 +299,9 @@ if (!SNAPSHOT) {
 function rwrite() {
   if (SNAPSHOT) return;
   const p = new URLSearchParams(location.search);
-  ["view", "proto", "hosts", "groups", "focus", "axis"].forEach(k => p.delete(k));
+  ["view", "load", "proto", "hosts", "groups", "focus", "axis"].forEach(k => p.delete(k));
   if (rstate.view !== R_DEFAULTS.view) p.set("view", rstate.view);
+  if (rstate.load !== R_DEFAULTS.load) p.set("load", rstate.load);
   if (rstate.proto !== R_DEFAULTS.proto) p.set("proto", rstate.proto);
   if (!rstate.hosts) p.set("hosts", "0");
   if (!rstate.groups) p.set("groups", "0");
@@ -372,6 +404,19 @@ const legCls = ips => [...new Set((ips || []).filter(Boolean)
 const router = rg.routers[0] || null;
 // taps draw first so they pass underneath rails and boxes
 let tapLayer = null;
+// the load view's heat segments, painted by applyRouted (see draw)
+let loadSegs = [];
+// the topology's heat ramp: fine steps at the low end, brighter and
+// warmer with load so intensity reads on a dark ground
+function heat(u) {
+  if (u == null) return "var(--line)";
+  if (u < 0.1) return "#5b84a8";
+  if (u < 5) return "#4a9d6e";
+  if (u < 15) return "#8fc45f";
+  if (u < 30) return "#c9cf56";
+  if (u < 60) return "var(--warn)";
+  return "var(--crit)";
+}
 
 // networks-as-lanes is the default; axis=v (the `vertical rails` chip)
 // turns the same drawing on its side — vertical rails, edge at the bottom,
@@ -767,6 +812,21 @@ function draw() {
     });
     track(rgrp, router.rails); wireHover(rgrp, router.rails);
     act(rgrp, router.name, router.rails, devUrl(router.name));
+    // load view: a heat segment where each lane meets the router, tinted by
+    // that interface's utilization, the number beside it (applyRouted paints)
+    router.rails.forEach(k => {
+      if (!(k in pos)) return;
+      const ld = (router.load || {})[k] || {};
+      const v = laneV(pos[k]);
+      const seg = lineEl(root, routerU - 46, v, routerU - 3, v, { class: "legseg" });
+      const t = P(routerU - 24, v);
+      const lab = el("text", HZ ? { x: t.x, y: t.y - 8, "text-anchor": "middle" }
+                               : { x: t.x + 9, y: t.y + 4 }, root);
+      lab.setAttribute("class", "legload");
+      title(seg, `${router.name} ${ld.iface || ""} on ${rails[pos[k]].name || k}`);
+      loadSegs.push({ seg, lab, util: ld.util, peak: ld.peak });
+      track(seg, [k]); track(lab, [k]);
+    });
 
     const wanRail = rg.default && rg.default.rail
       ? rails.find(r => r.key === rg.default.rail) : null;
@@ -777,6 +837,12 @@ function draw() {
       const drop = lineEl(root, routerEnd, cloudV, cloudU - cloudEdge - 4, cloudV,
                           { class: "defroute" });
       if (wanRail) track(drop, [wanRail.key]);
+      // the drop takes the WAN interface's load: the way out, measured
+      const m = P((routerEnd + cloudU - cloudEdge) / 2, cloudV);
+      const lab = el("text", HZ ? { x: m.x, y: m.y + 14, "text-anchor": "middle" }
+                               : { x: m.x + 9, y: m.y + 18 }, root);   // under the "via" label
+      lab.setAttribute("class", "legload");
+      loadSegs.push({ seg: drop, lab, util: rg.default.util, peak: rg.default.peak });
     }
     el("ellipse", { cx: C.x, cy: C.y, rx: cloudRx, ry: cloudRy, class: "cloud" }, cloud);
     el("text", { x: C.x, y: C.y - 3, "text-anchor": "middle", class: "rlabel" },
@@ -849,6 +915,7 @@ function draw() {
 function redraw() {
   root.innerHTML = "";
   members.length = 0;
+  loadSegs = [];
   for (const k of Object.keys(focusSets)) delete focusSets[k];
   view = { x: 0, y: 0, k: 1 }; applyView();
   tapLayer = el("g", {});
@@ -878,6 +945,17 @@ function applyRouted() {
   setChip("r-axis", rstate.axis === "v");
   svg.classList.toggle("evidence", rstate.view === "evidence");
   svg.classList.toggle("protocol", rstate.view === "protocol");
+  const loadMode = rstate.view === "load";
+  svg.classList.toggle("load", loadMode);
+  document.getElementById("rloadgrp").hidden = !loadMode;
+  document.getElementById("rload").value = rstate.load;
+  if (!rg.peak_ready) document.getElementById("rload-peak").textContent = "24h peak — no samples";
+  document.getElementById("rleg-peak").style.display = rstate.load === "peak" ? "" : "none";
+  loadSegs.forEach(({ seg, lab, util, peak }) => {
+    const u = rstate.load === "peak" ? peak : util;
+    seg.style.stroke = loadMode ? heat(u) : "";
+    lab.textContent = u == null ? "–" : `${u}%${rstate.load === "peak" ? " pk" : ""}`;
+  });
   svg.dataset.proto = rstate.proto;
   document.getElementById("rprotogrp").hidden = rstate.view !== "protocol";
   document.getElementById("rproto").value = rstate.proto;
@@ -894,6 +972,8 @@ function applyRouted() {
 document.querySelectorAll('input[name="rview"]').forEach(i =>
   i.addEventListener("change", () => {
     if (i.checked) { rstate.view = i.value; rwrite(); applyRouted(); } }));
+document.getElementById("rload").addEventListener("change", ev => {
+  rstate.load = ev.target.value; rwrite(); applyRouted(); });
 document.getElementById("rproto").addEventListener("change", ev => {
   rstate.proto = ev.target.value; rwrite(); applyRouted(); });
 document.getElementById("r-hosts").addEventListener("click", () => {

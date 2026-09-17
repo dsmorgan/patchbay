@@ -10,6 +10,17 @@ put.
 
 ### Added
 
+- **Routed view: Load mode** (#50, ADR-0002 Decision 3). The router's
+  per-network legs are the only edges on this view with counters — its
+  VLAN interfaces, when the firewall is a polled device — so Load
+  heat-tints a segment where each lane meets the router, the number
+  beside it, and the default route's drop from the WAN interface, on the
+  topology's palette with the same `now` / `24h peak` select
+  (`load=peak`). Busier direction over capacity; a declared service
+  capacity beats the port speed. Lanes and attachments go quiet; grey
+  means no measurement. The demo seeds firewall counters so the public
+  snapshot shows it.
+
 - **Routed view: Protocol mode** (#50, ADR-0002 Decision 3). The third
   radio paints address families: IPv4 lanes teal, IPv6 lanes amber, a
   dual-stack lane teal with an amber dash riding it, and every attachment
