@@ -112,7 +112,7 @@
   <div class="card hypervisor">
     {{ ui.ricon("hypervisor") }}
     <div class="name"><span class="dot {{ d.status }}"></span><a href="/device/{{ d.name | urlencode }}">{{ d.name }}</a></div>
-    <div class="sub">{{ d | hw or d.role }} · {{ d.mgmt_ip or '?' }}</div>
+    <div class="sub">{{ d | hw or d.role }} · {{ d.mgmt_ip or '?' }}{% if d | specs %} · {{ d | specs }}{% endif %}</div>
     <details>
       <summary class="sub">{{ up | length }}/{{ guests | length }} VMs running</summary>
       {% if guests %}

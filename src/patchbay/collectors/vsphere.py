@@ -105,10 +105,17 @@ class VsphereCollector:
                 for pg in ((host.config.network.portgroup or []) if host.config else []):
                     if pg.spec:
                         pg_vlan[(host.name, pg.spec.name)] = pg.spec.vlanId
+                # cores and RAM ride along as identity (#44): a card's
+                # "8c · 32 GB" line, stable facts vCenter caches even for
+                # a host that isn't answering
+                hw = host.hardware
+                cpu_info = getattr(hw, "cpuInfo", None) if hw else None
                 dev_id = db.upsert_device(
                     conn, name=host.name, source=NAME, role="hypervisor",
-                    vendor=host.hardware.systemInfo.vendor if host.hardware else None,
-                    model=host.hardware.systemInfo.model if host.hardware else None,
+                    vendor=hw.systemInfo.vendor if hw else None,
+                    model=hw.systemInfo.model if hw else None,
+                    cpus=getattr(cpu_info, "numCpuCores", None) if cpu_info else None,
+                    mem_bytes=getattr(hw, "memorySize", None) if hw else None,
                     os=f"esxi {host.config.product.version}" if host.config else "esxi",
                     mgmt_ip=(vnics[0].spec.ip.ipAddress if vnics else None),
                     status=status,

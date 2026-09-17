@@ -58,20 +58,26 @@
   .portlab.monitor { fill: var(--r-firewall); font-weight: 600; }
   .edge.monitor { opacity: 0.4; }
 
-  .node rect { fill: var(--card); stroke: var(--line); stroke-width: 1.4; }
-  .node.switch rect { stroke: var(--r-switch); }
-  .node.router rect { stroke: var(--r-router); }
-  .node.firewall rect { stroke: var(--r-firewall); }
-  .node.hypervisor rect { stroke: var(--r-hyp); }
-  .node.ap rect { stroke: var(--r-ap); }
-  .node:hover rect, .node:hover ellipse { stroke-width: 2.6; }
-  .node.pinned rect { stroke-width: 2; }
-  .node.focused rect, .node.focused ellipse {
+  /* node cards (#44): the box is role-stroked; inside it a rounded-square
+     icon chip anchors the left edge, the status LED pins the top-right
+     corner, and hypervisors get a third line of hardware mini-specs. Role
+     color = the stroke and the glyph, status = the LED, never a glow. */
+  .node rect.box { fill: var(--card); stroke: var(--line); stroke-width: 1.4; }
+  .node.switch rect.box { stroke: var(--r-switch); }
+  .node.router rect.box { stroke: var(--r-router); }
+  .node.firewall rect.box { stroke: var(--r-firewall); }
+  .node.hypervisor rect.box { stroke: var(--r-hyp); }
+  .node.ap rect.box { stroke: var(--r-ap); }
+  .node:hover rect.box, .node:hover ellipse { stroke-width: 2.6; }
+  .node.pinned rect.box { stroke-width: 2; }
+  .node.focused rect.box, .node.focused ellipse {
     filter: drop-shadow(0 0 0 2px var(--accent)) drop-shadow(0 0 6px var(--accent));
   }
+  .node rect.ichip { fill: var(--hover); stroke: var(--line); stroke-width: 1; }
   .node text.nm { font: 600 12.5px var(--font-ui); fill: var(--ink); }
   .node text.sub { font: 10.5px var(--font-ui); fill: var(--muted); }
-  .node.unmanaged-switch rect { stroke-dasharray: 5 4; stroke: var(--muted); }
+  .node text.specs { font: 10px var(--font-mono); fill: var(--muted); }
+  .node.unmanaged-switch rect.box { stroke-dasharray: 5 4; stroke: var(--muted); }
   /* VPN tunnels: cloud-shaped but dashed and firewall-purple — an egress,
      never mistakable for the provider cloud */
   .node.tunnel ellipse { stroke-dasharray: 6 4; stroke: var(--r-firewall) !important; }
@@ -404,21 +410,37 @@ const ICONS = {{ ICONS | tojson }};
 
 const node = gContent.append("g").selectAll("g").data(graph.nodes).join("g")
     .attr("class", d => `node ${d.role}` + (d.px != null ? " pinned" : ""));
-node.filter(d => d.role !== "cloud" && d.role !== "tunnel").append("rect")
-    .attr("x", d => -d.w / 2).attr("y", -24).attr("width", d => d.w).attr("height", 48)
-    .attr("rx", 8);
-node.filter(d => d.role === "cloud" || d.role === "tunnel").append("ellipse")
+// card nodes (rects) get the #44 layout: icon chip left, LED top-right,
+// name / sub / specs rows. Ovals (cloud, tunnel) keep dot-left, icon-right.
+const isCard = d => d.role !== "cloud" && d.role !== "tunnel";
+const nodeH = d => isCard(d) && d.specs ? 60 : 48;
+const card = node.filter(isCard), oval = node.filter(d => !isCard(d));
+card.append("rect").attr("class", "box")
+    .attr("x", d => -d.w / 2).attr("y", d => -nodeH(d) / 2)
+    .attr("width", d => d.w).attr("height", nodeH).attr("rx", 8);
+oval.append("ellipse")
     .attr("rx", d => d.w / 2 + 8).attr("ry", 30)
     .attr("fill", "var(--card)").attr("stroke", "var(--line)");
-node.filter(d => ICONS[d.role]).append("path")
+card.filter(d => ICONS[d.role]).append("rect").attr("class", "ichip")
+    .attr("x", d => -d.w / 2 + 8).attr("y", -12).attr("width", 24).attr("height", 24).attr("rx", 6);
+card.filter(d => ICONS[d.role]).append("path")
+    .attr("class", "ricon").attr("d", d => ICONS[d.role])
+    .attr("transform", d => `translate(${-d.w / 2 + 11}, -9)`);
+oval.filter(d => ICONS[d.role]).append("path")
     .attr("class", "ricon").attr("d", d => ICONS[d.role])
     .attr("transform", d => `translate(${d.w / 2 - 26}, -9)`);
-node.append("circle").attr("class", d => `sdot ${d.status}`)
+card.append("circle").attr("class", d => `sdot ${d.status}`)
+    .attr("cx", d => d.w / 2 - 10).attr("cy", d => -nodeH(d) / 2 + 10).attr("r", 4);
+oval.append("circle").attr("class", d => `sdot ${d.status}`)
     .attr("cx", d => -d.w / 2 + 14).attr("cy", -6).attr("r", 4.5);
-node.append("text").attr("class", "nm").attr("x", d => -d.w / 2 + 24).attr("y", -2)
+const textX = d => isCard(d) ? -d.w / 2 + 40 : -d.w / 2 + 24;
+const nameY = d => -nodeH(d) / 2 + 22;
+node.append("text").attr("class", "nm").attr("x", textX).attr("y", nameY)
     .text(d => d.label ?? d.name);
-node.append("text").attr("class", "sub").attr("x", d => -d.w / 2 + 24).attr("y", 14)
+node.append("text").attr("class", "sub").attr("x", textX).attr("y", d => nameY(d) + 16)
     .text(d => d.sub);
+card.filter(d => d.specs).append("text").attr("class", "specs")
+    .attr("x", textX).attr("y", d => nameY(d) + 30).text(d => d.specs);
 node.append("title").text(d => d.title ?? d.name);
 gAlab.raise(); gBlab.raise();   // port names paint above every node
 // hover reveals port names (#48): an edge shows its two ends, a device
@@ -462,7 +484,7 @@ function ends(d) {
 function exitDist(n, dx, dy, len) {
   const ux = Math.abs(dx / len), uy = Math.abs(dy / len);
   return Math.min(ux > 1e-6 ? (n.w / 2) / ux : Infinity,
-                  uy > 1e-6 ? 24 / uy : Infinity);
+                  uy > 1e-6 ? (nodeH(n) / 2) / uy : Infinity);
 }
 function placePortLabel(sel, d, from, dx, dy) {
   const len = Math.hypot(dx, dy) || 1;

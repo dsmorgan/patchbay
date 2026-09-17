@@ -10,6 +10,25 @@ put.
 
 ### Added
 
+- **Topology: node card refresh** (#44). Every card node now shares one
+  anatomy: a rounded-square icon chip anchors the left edge, the status
+  LED pins the top-right corner, and the name and subtitle read from a
+  fixed inset — so a mixed row of switches, hypervisors, APs, and hosts
+  scans as one kind of thing. Hypervisors gain a third line of hardware
+  mini-specs (`24c · 192 GB`), recorded by the vSphere collector from
+  vCenter's hardware summary into two new `devices` columns (`cpus`,
+  `mem_bytes`, migrated on start) and printed on the device page and
+  Overview card too; the line only appears when the data does. Role color
+  stays the stroke and the glyph, status stays the LED — no glow channel.
+
+### Fixed
+
+- **Device merge dropped the new specs columns.** A hypervisor that
+  LibreNMS also polls folds its vSphere row into the SNMP-owned primary,
+  and the merge's identity field list must name every column or the
+  specs vanish on every poll (the way `ip6` once did). Named, with a
+  regression test.
+
 - **Topology: speed and VLAN chips on edges** (#43). The bare mid-edge
   speed text is now a pill on the edge, and under it a second pill names
   the link's VLANs when there are three or fewer — an access link says

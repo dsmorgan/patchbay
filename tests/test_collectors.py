@@ -1256,7 +1256,8 @@ def _vs_host(name, state="connected", portgroups=()):
     return _ns(
         name=name,
         runtime=_ns(connectionState=state),
-        hardware=_ns(systemInfo=_ns(vendor="ACME", model="Rack1")),
+        hardware=_ns(systemInfo=_ns(vendor="ACME", model="Rack1"),
+                     cpuInfo=_ns(numCpuCores=8), memorySize=32 * 2 ** 30),
         config=_ns(
             product=_ns(version="8.0.2"),
             network=_ns(
@@ -1900,3 +1901,19 @@ def test_unifi_clears_stale_ap_attribution(conn, clean_env, monkeypatch):
                        "WHERE mac='00:00:5e:00:53:77'").fetchone()
     assert row is not None
     assert row["device"] is None and row["interface"] is None
+
+
+def test_vsphere_records_hypervisor_specs(conn, clean_env, monkeypatch):
+    """Cores and RAM are identity (#44): recorded from vCenter's cached
+    hardware summary even for a host that isn't answering, and rendered as
+    the card's mini-specs line."""
+    from patchbay.collectors.vsphere import VsphereCollector
+    from patchbay.web import specs
+    _vs_stub(monkeypatch, [_vs_host("hyp1"), _vs_host("hyp2", state="notResponding")], [])
+    VsphereCollector().collect(_vs_settings(clean_env), conn)
+    rows = {r["name"]: r for r in conn.execute("SELECT * FROM devices")}
+    assert rows["hyp1"]["cpus"] == 8 and rows["hyp1"]["mem_bytes"] == 32 * 2 ** 30
+    assert rows["hyp2"]["cpus"] == 8                 # cached identity still lands
+    assert specs(rows["hyp1"]) == "8c · 32 GB"
+    assert specs({"cpus": None, "mem_bytes": None}) == ""
+    assert specs({"cpus": 4, "mem_bytes": 0}) == "4c"

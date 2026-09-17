@@ -43,7 +43,7 @@ network.{% endif %}</p>
 <section class="dev" id="dev-{{ d.name }}">
   <div class="card {{ d.role }}" style="max-width: 560px">
     <div class="name"><span class="dot {{ d.status }}"></span>{{ d.name }}</div>
-    <div class="sub">{{ d.role or '?' }}{% if d | hw %} · {{ d | hw }}{% endif %}</div>
+    <div class="sub">{{ d.role or '?' }}{% if d | hw %} · {{ d | hw }}{% endif %}{% if d | specs %} · {{ d | specs }}{% endif %}</div>
     <div class="sub">{{ d.os or '' }}{% if d.serial %} · s/n {{ d.serial }}{% endif %}</div>
     <div class="sub mono">{{ d.mgmt_ip or '' }}{% if d.parent %} · on {{ d.parent }}{% endif %}</div>
   </div>

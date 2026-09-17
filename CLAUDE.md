@@ -72,8 +72,9 @@ site-specific leaked into code, tests, or docs.
 - **Merge rules in `normalize._merge_group`** encode "fresh beats stale, real beats
   placeholder": junk values (`generic`, `amd64`, …) count as absent; versioned OS
   beats a bare fingerprint; status comes from the row with the freshest `last_seen`;
-  the interface fold list must name every column (forgetting one silently drops data —
-  this bit us with `ip6`). Colliding port rows on a duplicate fold by the same
+  the device and interface fold lists must name every column (forgetting one
+  silently drops data — this bit us with `ip6`, then again with the #44
+  `cpus`/`mem_bytes` specs). Colliding port rows on a duplicate fold by the same
   doctrine: identity fields (ip, ip6, mac, description, ifindex) fill the
   primary's gaps whatever their age, liveness fields only when the duplicate
   is fresher — a device LibreNMS re-creates by FQDN every poll would otherwise

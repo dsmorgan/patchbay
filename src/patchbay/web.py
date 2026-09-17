@@ -120,6 +120,25 @@ def hardware(d) -> str:
 
 templates.env.filters["hw"] = hardware
 
+
+def specs(d) -> str:
+    """The hardware mini-specs line (#44): "8c · 32 GB" when both the core
+    count and memory are known, else whichever is, else "". Hypervisors are
+    the only devices that report them so far."""
+    keys = d.keys() if hasattr(d, "keys") else ()
+    cpus = d["cpus"] if "cpus" in keys else None
+    mem = d["mem_bytes"] if "mem_bytes" in keys else None
+    parts = []
+    if cpus:
+        parts.append(f"{cpus}c")
+    if mem:
+        gb = mem / 2 ** 30
+        parts.append(f"{gb:.0f} GB" if gb >= 4 else f"{gb:.1f} GB")
+    return " · ".join(parts)
+
+
+templates.env.filters["specs"] = specs
+
 # role icons: the standard diagram vocabulary, drawn as 18x18 stroke paths
 # (opposing arrows = switch, the same arrows circled = router, bricks =
 #  firewall, layers = hypervisor, radio arcs = AP, RJ45 jack = wired host)
@@ -599,12 +618,14 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
         else:
             vl = dv.get(d["name"], set()) | vlans_of_ip(d["mgmt_ip"])
             vl |= fw_if_vlans.get(d["name"], set())
+        sp = specs(d) if d["role"] == "hypervisor" else ""
         return {
             "name": d["name"], "label": label,
-            # 24px left inset (status dot) + text + 26px icon clearance
-            # (the label shares its row with the role icon; the sub doesn't)
-            "w": max(len(label) * 7.6 + 26, len(subs[d["name"]]) * 6.6) + 48,
+            # card layout (#44): a 24px icon chip inset 8px on the left,
+            # text from x=40, and 18px on the right for the corner LED
+            "w": max(len(label) * 7.6, len(subs[d["name"]]) * 6.6, len(sp) * 6.2) + 58,
             "sub": subs[d["name"]], "status": d["status"] or "unknown",
+            "specs": sp,
             "role": d["role"], "rank": RANK[d["role"]],
             "title": (f"{d['name']} · {d['model']}" if d["role"] == "unmanaged-switch"
                       else d["name"]),

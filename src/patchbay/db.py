@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS devices (
     serial TEXT,               -- chassis serial (LLDP alias evidence)
     temperature REAL,          -- °C, device's own telemetry (liveness:
                                -- written only while up, omitted when stale)
+    cpus INTEGER,              -- hardware mini-specs (#44): cores and RAM,
+    mem_bytes INTEGER,         -- hypervisors only so far (vsphere reports them)
     source TEXT NOT NULL,      -- collector that owns this record
     last_seen REAL
 );
@@ -230,6 +232,9 @@ def init(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE devices ADD COLUMN serial TEXT")
     if "temperature" not in cols:  # #40: controller-reported thermals
         conn.execute("ALTER TABLE devices ADD COLUMN temperature REAL")
+    for col in ("cpus", "mem_bytes"):  # #44: hypervisor mini-specs
+        if col not in cols:
+            conn.execute(f"ALTER TABLE devices ADD COLUMN {col} INTEGER")
     icols = {r[1] for r in conn.execute("PRAGMA table_info(interfaces)")}
     for col in ("in_bps", "out_bps"):
         if col not in icols:

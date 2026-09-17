@@ -29,7 +29,7 @@ def seed(db_path):
     pdb.upsert_device(c, name="fw1", source="opnsense", role="firewall",
                       os="opnsense 26.1", mgmt_ip="192.0.2.1", status="up")
     hid = pdb.upsert_device(c, name="hyp1", source="vsphere", role="hypervisor",
-                            status="up")
+                            status="up", cpus=8, mem_bytes=32 * 2 ** 30)
     pdb.upsert_device(c, name="vm-a", source="vsphere", role="vm",
                       parent="hyp1", status="up")
     pdb.upsert_interface(c, device_id=sid, name="1/0/1", oper_status="up",
@@ -1330,3 +1330,25 @@ def test_topology_port_names_are_a_toggle(clean_env, tmp_path, client):
     assert 'class="hit"' in body or '"hit"' in body            # wide hover twin
     assert client.get("/topology?ports=1").status_code == 200
     assert _graph_at(client, "?ports=1") == _graph(client, tmp_path)   # paint, not data
+
+
+# --- topology: node cards (#44) -----------------------------------------------
+
+def test_topology_nodes_carry_hypervisor_specs(clean_env, tmp_path, client):
+    # the graph node carries the mini-specs line (hypervisors only, gated on
+    # data), the device and overview cards print the same string, and an
+    # older DB file grows the columns on init
+    seed(str(tmp_path / "test.db"))
+    g = _graph(client, tmp_path)
+    by = {n["name"]: n for n in g["nodes"]}
+    assert by["hyp1"]["specs"] == "8c · 32 GB"
+    assert by["sw1"]["specs"] == ""
+    assert "8c · 32 GB" in client.get("/device/hyp1").text
+    assert "8c · 32 GB" in client.get("/").text
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    c.row_factory = sqlite3.Row
+    c.execute("ALTER TABLE devices DROP COLUMN cpus")
+    c.execute("ALTER TABLE devices DROP COLUMN mem_bytes")
+    pdb.init(c)
+    assert {"cpus", "mem_bytes"} <= {r[1] for r in c.execute("PRAGMA table_info(devices)")}
+    c.close()

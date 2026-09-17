@@ -105,6 +105,20 @@ def test_merge_stale_duplicate_keeps_identity_facts(conn):
     assert conn.execute("SELECT COUNT(*) FROM interfaces WHERE name='vmx3'").fetchone()[0] == 1
 
 
+def test_merge_keeps_hypervisor_specs_from_the_duplicate(conn):
+    """Cores and RAM (#44) are identity facts only vSphere writes; a
+    hypervisor LibreNMS also polls merges into the SNMP-owned primary, and
+    the fold list must name the new columns or the specs silently vanish
+    on every poll — the exact way ip6 once did."""
+    prim = dev(conn, "hyp1", "librenms", last_seen=NOW, role="hypervisor")
+    dup = dev(conn, "hyp1.example.lan", "vsphere", last_seen=NOW - 60, role="hypervisor")
+    conn.execute("UPDATE devices SET cpus=24, mem_bytes=? WHERE id=?", (192 * 2 ** 30, dup))
+    normalize(conn)
+    row = conn.execute("SELECT cpus, mem_bytes FROM devices WHERE name='hyp1'").fetchone()
+    assert (row["cpus"], row["mem_bytes"]) == (24, 192 * 2 ** 30)
+    assert conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0] == 1
+
+
 def test_rename_rewrites_fdb(conn):
     # fdb rows keyed by a raw sysName used to survive the rename and poison
     # inference (phantom unmanaged switches, alias<->canonical self-links)

@@ -62,8 +62,9 @@ def _merge_group(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
     if _is_raw_model_code(merged.get("model")):
         merged["model"] = None
     for r in rest:
-        for field in ("mgmt_ip", "vendor", "model", "os", "parent", "serial", "status"):
-            if (r[field] or "").lower() in JUNK.get(field, set()):
+        for field in ("mgmt_ip", "vendor", "model", "os", "parent", "serial", "status",
+                      "cpus", "mem_bytes"):
+            if str(r[field] or "").lower() in JUNK.get(field, set()):
                 continue
             if field == "model" and _is_raw_model_code(r[field]):
                 continue
@@ -129,11 +130,12 @@ def _merge_group(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
         conn.execute("DELETE FROM devices WHERE id=?", (r["id"],))
     conn.execute(
         "UPDATE devices SET name=?, mgmt_ip=?, vendor=?, model=?, os=?, role=?, "
-        "status=?, parent=?, serial=?, "
+        "status=?, parent=?, serial=?, cpus=?, mem_bytes=?, "
         "temperature=COALESCE(?, temperature), last_seen=? WHERE id=?",
         (canon, merged.get("mgmt_ip"), merged.get("vendor"), merged.get("model"),
          merged.get("os"), merged.get("role"), merged.get("status"),
-         merged.get("parent"), merged.get("serial"), merged.get("temperature"),
+         merged.get("parent"), merged.get("serial"), merged.get("cpus"),
+         merged.get("mem_bytes"), merged.get("temperature"),
          max((r["last_seen"] or 0) for r in rows), primary["id"]),
     )
     for r in [primary, *rest]:
