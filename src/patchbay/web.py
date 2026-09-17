@@ -619,8 +619,12 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
             vl = dv.get(d["name"], set()) | vlans_of_ip(d["mgmt_ip"])
             vl |= fw_if_vlans.get(d["name"], set())
         sp = specs(d) if d["role"] == "hypervisor" else ""
+        seen = (round((db.now() - d["last_seen"]) / 60) if d["last_seen"] else None)
         return {
             "name": d["name"], "label": label,
+            # the detail panel (#45) reads these; the map itself doesn't
+            "mgmt": d["mgmt_ip"], "hw": hardware(d), "os": d["os"],
+            "parent": d["parent"], "seen": seen,
             # card layout (#44): a 24px icon chip inset 8px on the left,
             # text from x=40, and 18px on the right for the corner LED
             "w": max(len(label) * 7.6, len(subs[d["name"]]) * 6.6, len(sp) * 6.2) + 58,

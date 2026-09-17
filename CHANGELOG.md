@@ -10,6 +10,17 @@ put.
 
 ### Added
 
+- **Topology: node detail panel** (#45). Clicking a node no longer
+  leaves the map: a panel floats over the map's right edge with the
+  node's role, status and how long ago it was seen, address, hardware,
+  OS, specs, host, VLANs, and every link with the port at each end, the
+  speed, utilization, and who reported it. A peer's name in the list
+  selects that node; Escape or × closes; the selection rides the URL as
+  `sel=`. The device page is the secondary action — double-click, or
+  ⌘/Ctrl-click for a new tab — the routed view's contract. The panel
+  reads the graph JSON, so the snapshot has it too (its link jumps to
+  the device's section). Read-only by design: edits belong on /ops.
+
 - **Topology: node card refresh** (#44). Every card node now shares one
   anatomy: a rounded-square icon chip anchors the left edge, the status
   LED pins the top-right corner, and the name and subtitle read from a

@@ -73,6 +73,39 @@
   .node.focused rect.box, .node.focused ellipse {
     filter: drop-shadow(0 0 0 2px var(--accent)) drop-shadow(0 0 6px var(--accent));
   }
+  /* the node whose panel is open (#45): a heavier stroke and a soft ink
+     halo — distinct from the accent halo of a URL focus */
+  .node.selected rect.box, .node.selected ellipse {
+    stroke-width: 2.4; filter: drop-shadow(0 0 5px var(--ink2)); }
+  /* the detail panel floats over the map's right edge rather than beside
+     it, so opening it never resizes (and re-fits) the map */
+  .mapwrap { position: relative; }
+  #npanel { position: absolute; top: 10px; right: 10px; bottom: 10px; width: 290px;
+            overflow: auto; background: var(--card); border: 1px solid var(--line);
+            border-radius: 8px; padding: 0.75rem 0.9rem 0.9rem; font-size: 0.8rem;
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
+  #npanel .ph { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.15rem; }
+  #npanel .ph svg { width: 18px; height: 18px; flex: none; }
+  #npanel .ph .nm { font-weight: 650; font-size: 0.95rem; flex: 1 1 auto; min-width: 0;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #npanel .pclose { background: none; border: 0; color: var(--muted); font-size: 1.1rem;
+                    line-height: 1; cursor: pointer; padding: 0 0.2rem; }
+  #npanel .pclose:hover { color: var(--ink); }
+  #npanel .pstate { color: var(--muted); margin-bottom: 0.6rem; }
+  #npanel dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.7rem;
+               margin: 0 0 0.7rem; }
+  #npanel dt { color: var(--muted); font-size: 0.72rem; text-transform: uppercase;
+               letter-spacing: 0.08em; padding-top: 0.1rem; }
+  #npanel dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  #npanel h3 { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em;
+               color: var(--muted); margin: 0.6rem 0 0.3rem; }
+  #npanel ul { list-style: none; margin: 0; padding: 0; }
+  #npanel li { padding: 0.22rem 0; border-top: 1px solid var(--grid); line-height: 1.35; }
+  #npanel li .peer { color: var(--accent); cursor: pointer; font-weight: 600; }
+  #npanel li .peer:hover { text-decoration: underline; }
+  #npanel li .via { color: var(--muted); font-size: 0.74rem; }
+  #npanel .pfoot { margin-top: 0.8rem; }
+  #npanel .pfoot a { font-weight: 600; }
   .node rect.ichip { fill: var(--hover); stroke: var(--line); stroke-width: 1; }
   .node text.nm { font: 600 12.5px var(--font-ui); fill: var(--ink); }
   .node text.sub { font: 10.5px var(--font-ui); fill: var(--muted); }
@@ -204,7 +237,14 @@
   </span>
 </div>
 
+<div class="mapwrap">
 <svg id="topo"></svg>
+{# node detail panel (#45): what the graph already knows about a node,
+   without leaving the map — name, role, status and age, addresses, links
+   with their ports. Read-only; the device page is one link away. Works
+   from the embedded JSON, so the snapshot has it too. #}
+<aside id="npanel" hidden aria-label="Node detail"></aside>
+</div>
 
 <p class="legend" id="legend">
   <span class="item" data-modes="wiring load vlan evidence"><svg width="30" height="10"><line x1="0" y1="7" x2="12" y2="7" stroke="var(--muted)" stroke-width="1.4"/><line x1="16" y1="5" x2="30" y2="5" stroke="var(--muted)" stroke-width="5"/></svg> thicker = faster</span>
@@ -240,7 +280,7 @@
     <span class="swatch" style="background: var(--crit)"></span>60%+
     <span id="leg-peak">· pk = 24h peak</span></span>
   <span class="item" id="leg-vlan" data-modes="wiring load vlan evidence" style="color: var(--ink)"></span>
-  <span class="hint">drag pins a node{% if not snapshot %} (persists) · shift-click unpins · reset layout clears all pins{% endif %} · scroll zooms · background pans · hover an edge for its port names, speed, load &amp; VLANs, a device for the names on every link · click a device for detail</span>
+  <span class="hint">drag pins a node{% if not snapshot %} (persists) · shift-click unpins · reset layout clears all pins{% endif %} · scroll zooms · background pans · hover an edge for its port names, speed, load &amp; VLANs, a device for the names on every link · click a device for its detail panel, double-click opens its page (⌘/Ctrl-click: new tab)</span>
 </p>
 
 {% if snapshot %}<script>{{ d3_js | safe }}</script>
@@ -456,9 +496,15 @@ hit.on("mouseenter", (e, d) => { hovLink = d; showPortNames(); })
    .on("mouseleave", () => { hovLink = null; showPortNames(); });
 node.on("mouseenter", (e, d) => { hovNode = d; showPortNames(); })
     .on("mouseleave", () => { hovNode = null; showPortNames(); });
+// a node's page: the live device page, or its section in the snapshot;
+// clouds, tunnels, and wired hosts have no page of their own
+const hasPage = d => d.role !== "cloud" && d.role !== "host" && d.role !== "tunnel";
+const pageUrl = d => SNAPSHOT ? "#dev-" + d.name : `/device/${encodeURIComponent(d.name)}`;
+// click opens the detail panel (#45); the page is the secondary action —
+// double-click, or ⌘/Ctrl-click for a new tab — the routed view's contract
 node.on("click", (e, d) => {
   if (e.defaultPrevented) return;      // this was the tail of a drag
-  if (e.shiftKey && !SNAPSHOT) {       // shift-click unpins (plain click navigates)
+  if (e.shiftKey && !SNAPSHOT) {       // shift-click unpins
     d.fx = null;                       // in tiers the band keeps owning Y
     if (!TIERS) d.fy = null;
     savePos(d.name, null, null);
@@ -466,10 +512,12 @@ node.on("click", (e, d) => {
     sim.alpha(0.3).restart();
     return;
   }
-  if (d.role !== "cloud" && d.role !== "host" && d.role !== "tunnel") {
-    if (SNAPSHOT) window.location.hash = "dev-" + d.name;
-    else window.location = `/device/${encodeURIComponent(d.name)}`;
-  }
+  if ((e.metaKey || e.ctrlKey) && hasPage(d)) { window.open(pageUrl(d), "_blank"); return; }
+  set({ sel: state.sel === d.name ? null : d.name });
+});
+node.on("dblclick", (e, d) => {
+  e.preventDefault(); e.stopPropagation();
+  if (hasPage(d)) window.location = pageUrl(d);
 });
 
 // offset endpoints for a link, shifted perpendicular for parallel runs
@@ -614,7 +662,7 @@ vlansel.append(new Option("all", ""));
 // See docs/adr/0001-page-shell-and-map-modes.md Decision 1 for the contract.
 const DEFAULTS = { view: "wiring", load: "now", vlan: null, focus: null, layout: "free",
                     hideoff: true, coreonly: false, hosts: false, unmhosts: false,
-                    ports: false, chips: true };
+                    ports: false, chips: true, sel: null };
 const VIEWS = ["wiring", "load", "vlan", "evidence"];
 const STATE_KEYS = Object.keys(DEFAULTS);
 
@@ -635,6 +683,7 @@ function readState() {
   s.vlan = (vnum != null && !Number.isNaN(vnum) &&
             (graph.vlans || []).some(v => v.vid === vnum)) ? vnum : null;
   s.focus = params.get("focus") || null;
+  s.sel = byName[params.get("sel")] ? params.get("sel") : null;
   s.layout = params.get("layout") === "tiers" ? "tiers" : "free";
   for (const k of ["hideoff", "coreonly", "hosts", "unmhosts", "ports", "chips"]) {
     const raw = params.get(k);
@@ -662,6 +711,7 @@ function buildParams() {
   if (state.unmhosts !== DEFAULTS.unmhosts) params.set("unmhosts", state.unmhosts ? "1" : "0");
   if (state.ports !== DEFAULTS.ports) params.set("ports", state.ports ? "1" : "0");
   if (state.chips !== DEFAULTS.chips) params.set("chips", state.chips ? "1" : "0");
+  if (state.sel) params.set("sel", state.sel);
   for (const k in (state._extra || {})) params.set(k, state._extra[k]);
   return params;
 }
@@ -677,6 +727,7 @@ function writeState() {
   try {
     const keep = buildParams();
     keep.delete("focus");
+    keep.delete("sel");      // a selection belongs to the visit, like focus
     for (const k in (state._extra || {})) keep.delete(k);
     localStorage.setItem("patchbay.topo", keep.toString());
   } catch (e) {}
@@ -723,6 +774,7 @@ function applyFilters() {
       vis.has(d.source.name ?? d.source) && vis.has(d.target.name ?? d.target);
   node.style("display", d => vis.has(d.name) ? null : "none");
   node.classed("focused", d => state.focus != null && d.name === state.focus);
+  node.classed("selected", d => state.sel != null && d.name === state.sel);
   link.style("display", d => linkVisible(d) ? null : "none");
   hit.style("display", d => linkVisible(d) ? null : "none");
   alab.style("display", d => linkVisible(d) ? null : "none");
@@ -878,12 +930,99 @@ function applyControls() {
   renderChips();
 }
 
+// --- the detail panel (#45): built from the node and its links ------------
+const SOURCE_LABEL = { lldp: "LLDP/CDP", declared: "declared", vspherehint: "hypervisor",
+  unifi: "controller", fdbuplink: "MAC table", fdbinference: "MAC table",
+  fdbhost: "MAC table", virtualized: "VM on host", wan: "WAN", tunnel: "tunnel",
+  oob: "out-of-band" };
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "onclick") e.addEventListener("click", v); else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) e.append(k);
+  return e;
+}
+function applyPanel() {
+  const panel = document.getElementById("npanel");
+  const d = state.sel ? byName[state.sel] : null;
+  if (!d) { panel.hidden = true; panel.innerHTML = ""; return; }
+  panel.innerHTML = "";
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("viewBox", "0 0 18 18");
+  if (ICONS[d.role]) {
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", ICONS[d.role]); p.setAttribute("fill", "none");
+    p.setAttribute("stroke", "currentColor"); p.setAttribute("stroke-width", "1.5");
+    p.setAttribute("stroke-linecap", "round"); p.setAttribute("stroke-linejoin", "round");
+    icon.append(p);
+  }
+  const roleColor = { switch: "var(--r-switch)", router: "var(--r-router)",
+    firewall: "var(--r-firewall)", hypervisor: "var(--r-hyp)", ap: "var(--r-ap)",
+    tunnel: "var(--r-firewall)" }[d.role] || "var(--muted)";
+  icon.style.color = roleColor;
+  panel.append(h("div", { class: "ph" }, icon,
+    h("span", { class: "nm", title: d.name }, d.label ?? d.name),
+    h("button", { type: "button", class: "pclose", "aria-label": "close",
+                  onclick: () => set({ sel: null }) }, "×")));
+  const dot = h("span", { class: `dot ${d.status}` });
+  const seen = d.seen == null ? "" : d.seen < 60 ? ` · seen ${d.seen} min ago`
+             : d.seen < 2880 ? ` · seen ${Math.round(d.seen / 60)} h ago`
+             : ` · seen ${Math.round(d.seen / 1440)} d ago`;
+  panel.append(h("div", { class: "pstate" }, dot,
+    `${d.role.replace("-", " ")} · ${d.status}${seen}`));
+  const dl = h("dl");
+  const row = (k, v) => { if (v) { dl.append(h("dt", {}, k), h("dd", {}, v)); } };
+  row("address", d.mgmt ? h("span", { class: "mono" }, d.mgmt) : null);
+  row("hardware", d.hw);
+  row("specs", d.specs);
+  row("os", d.os);
+  row("on", d.parent);
+  if (d.role === "cloud" || d.role === "tunnel" || d.role === "host") row("detail", d.sub);
+  if (d.vlans && d.vlans.length)
+    row("vlans", h("span", { class: "mono" }, d.vlans.length > 12
+      ? `${d.vlans.slice(0, 12).join(", ")} … (${d.vlans.length})` : d.vlans.join(", ")));
+  if (dl.children.length) panel.append(dl);
+  // links: every edge touching the node, this end's port first
+  const mine = graph.links.filter(l =>
+    (l.source.name ?? l.source) === d.name || (l.target.name ?? l.target) === d.name);
+  if (mine.length) {
+    panel.append(h("h3", {}, `${mine.length} link${mine.length > 1 ? "s" : ""}`));
+    const ul = h("ul");
+    mine.forEach(l => {
+      const src = l.source.name ?? l.source;
+      const here = src === d.name;
+      const peer = here ? (l.target.name ?? l.target) : src;
+      const myPort = here ? l.alab : l.blab, theirPort = here ? l.blab : l.alab;
+      const peerNode = byName[peer];
+      const facts = [l.speed, l.util != null ? `${l.util}%` : null,
+                     SOURCE_LABEL[edgeSourceCls(l)] || edgeSourceCls(l)].filter(Boolean);
+      ul.append(h("li", {},
+        myPort ? h("span", { class: "mono" }, myPort + " ") : null,
+        "→ ",
+        h("span", { class: "peer", onclick: () => set({ sel: peer }) },
+          peerNode ? (peerNode.label ?? peer) : peer),
+        theirPort ? h("span", { class: "mono" }, " " + theirPort) : null,
+        h("div", { class: "via" }, facts.join(" · "))));
+    });
+    panel.append(ul);
+  }
+  if (hasPage(d))
+    panel.append(h("div", { class: "pfoot" },
+      h("a", { href: pageUrl(d) }, SNAPSHOT ? "Jump to its section ↓" : "Open device page →")));
+  panel.hidden = false;
+}
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && state.sel) set({ sel: null });
+});
+
 function render() {
   applyControls();
   applyFilters();
   applyPaint();
   applyVlan();
   applyLegend();
+  applyPanel();
 }
 
 ["hideoff", "coreonly", "hosts", "unmhosts"].forEach(id => {

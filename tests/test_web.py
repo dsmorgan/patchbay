@@ -1352,3 +1352,22 @@ def test_topology_nodes_carry_hypervisor_specs(clean_env, tmp_path, client):
     pdb.init(c)
     assert {"cpus", "mem_bytes"} <= {r[1] for r in c.execute("PRAGMA table_info(devices)")}
     c.close()
+
+
+# --- topology: node detail panel (#45) ----------------------------------------
+
+def test_topology_panel_reads_from_the_graph(clean_env, tmp_path, client):
+    # the panel is plain markup beside the map, filled client-side from
+    # node fields the graph now carries (address, hardware, os, parent,
+    # age) — no per-click round trip, so the snapshot has it too. `sel`
+    # is state like any other: accepted, and never a server-side filter.
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/topology").text
+    assert 'id="npanel"' in body and 'class="mapwrap"' in body
+    g = _graph(client, tmp_path)
+    by = {n["name"]: n for n in g["nodes"]}
+    assert by["sw1"]["mgmt"] == "192.0.2.2"
+    assert by["sw1"]["hw"] == "ExampleSwitch 24"
+    assert by["fw1"]["os"] == "opnsense 26.1"
+    assert by["sw1"]["seen"] is not None and by["sw1"]["seen"] < 5
+    assert _graph_at(client, "?sel=sw1") == g
