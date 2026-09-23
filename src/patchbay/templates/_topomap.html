@@ -865,6 +865,14 @@ function applyFilters() {
     sim.stop().alpha(1);
     for (let i = 0; i < 300; ++i) sim.tick();
     ticked();
+    // freeze every node at its settled position so that subsequent filter
+    // toggles (hide-offline, cores-only, VLAN select, …) don't re-layout
+    // nodes the user hasn't explicitly dragged.  Drag still pins via fx/fy
+    // and shift-click unpins as before.
+    graph.nodes.forEach(n => {
+      if (n.fx == null) n.fx = n.x;
+      if (!TIERS && n.fy == null) n.fy = n.y;
+    });
   } else {
     sim.alpha(0.5).restart();
   }
