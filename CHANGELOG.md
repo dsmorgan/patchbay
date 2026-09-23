@@ -6,6 +6,17 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Fixed
+
+- **pfSense: a 404 note says which kind of absence it is** (#51, from
+  Sam / @slmingol). The OpenVPN and IPsec status endpoints also answer 404
+  when that feature is not configured on the firewall, pfrest installed
+  and current, and the old note sent operators after the package. Those
+  two calls are optional now and their note names the feature; a core
+  endpoint's 404 still means pfrest is missing or too old, and says so.
+
 ## [0.14.0] — 2026-09-17
 
 ### Added

@@ -73,15 +73,20 @@ class PfsenseCollector:
         }
         notes: list[str] = []
 
-        def get(path: str) -> Any | None:
+        def get(path: str, optional: bool = False) -> Any | None:
             r = client.get(f"{base}/{path}", headers=headers)
             if r.status_code == 403:
                 notes.append(f"{path}: 403")
                 return None
             if r.status_code == 404:
-                # absent endpoint usually means the pfrest package is missing
-                # or too old — say so instead of a healthy-looking zero
-                notes.append(f"{path}: 404 (pfrest package missing or outdated?)")
+                # a core endpoint that 404s means the pfrest package is
+                # missing or too old — say so instead of a healthy-looking
+                # zero. A VPN status endpoint also 404s when that feature is
+                # simply not configured on the firewall (#51), so those are
+                # optional and the note names the feature, not the package.
+                why = ("feature not configured, or pfrest too old?" if optional
+                       else "pfrest package missing or outdated?")
+                notes.append(f"{path}: 404 ({why})")
                 return None
             r.raise_for_status()
             data = r.json()
@@ -278,7 +283,7 @@ class PfsenseCollector:
                 db.save_tunnels(conn, device=dev_name, source=NAME,
                                 type_="wireguard", rows=wg_rows)
 
-            ovpn = get("api/v2/status/openvpn")
+            ovpn = get("api/v2/status/openvpn", optional=True)
             if ovpn is not None:
                 rows = []
                 for i, s in enumerate(ovpn if isinstance(ovpn, list) else []):
@@ -298,7 +303,7 @@ class PfsenseCollector:
                 db.save_tunnels(conn, device=dev_name, source=NAME,
                                 type_="openvpn", rows=rows)
 
-            ipsec = get("api/v2/status/ipsec")
+            ipsec = get("api/v2/status/ipsec", optional=True)
             if ipsec is not None:
                 rows = []
                 for i, sa in enumerate(ipsec if isinstance(ipsec, list) else []):

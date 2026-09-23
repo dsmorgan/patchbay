@@ -1794,9 +1794,31 @@ def test_pfsense_absent_vpn_status_endpoints_keep_rows(conn, clean_env, monkeypa
                  "last_seen) VALUES ('fw2', 'openvpn', 'site-a', 'up', "
                  "'pfsense', ?)", (pdb.now(),))
     monkeypatch.setattr(httpx, "Client", PfClient)
-    PfsenseCollector().collect(_pf_settings(clean_env), conn)
+    summary = PfsenseCollector().collect(_pf_settings(clean_env), conn)
     assert conn.execute("SELECT COUNT(*) FROM tunnels WHERE type='openvpn'"
                         ).fetchone()[0] == 1
+    # #51: a VPN status endpoint 404s on a firewall where that feature is
+    # not configured, pfrest installed and current — the note must not send
+    # the operator after the package
+    assert "status/openvpn: 404 (feature not configured, or pfrest too old?)" in summary
+    assert "status/ipsec: 404 (feature not configured" in summary
+    assert "pfrest package missing" not in summary
+
+
+def test_pfsense_core_404_names_the_package(conn, clean_env, monkeypatch):
+    """A core endpoint (not a VPN status one) that 404s is pfrest missing
+    or too old, and the note still says so."""
+    from patchbay.collectors.pfsense import PfsenseCollector
+
+    class NoDhcp(PfClient):
+        def get(self, url, **kw):
+            if url.endswith("services/dhcp_servers"):
+                return PfResponse(None, status=404)
+            return super().get(url, **kw)
+    monkeypatch.setattr(httpx, "Client", NoDhcp)
+    summary = PfsenseCollector().collect(_pf_settings(clean_env), conn)
+    assert "services/dhcp_servers: 404 (pfrest package missing or outdated?)" in summary
+    assert "2 interfaces" in summary              # the rest still polled
 
 
 class _IpamAddresses(ShrinkingClient):
