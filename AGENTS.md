@@ -1,7 +1,14 @@
-# CLAUDE.md — patchbay
+# AGENTS.md — patchbay
 
-Working notes for AI-assisted development. Read `docs/architecture.md` (spec + roadmap)
-and `docs/pluggability.md` (component model) first.
+Working notes for AI-assisted development, in the cross-tool `AGENTS.md`
+convention. Read `docs/architecture.md` (spec + roadmap) and
+`docs/pluggability.md` (component model) first.
+
+Personal notes belong in `CLAUDE.md` or `CLAUDE.local.md`, both gitignored,
+never here. Claude Code (2.1.277+) reads this file only when neither of
+those exists, so a personal file must start with `@AGENTS.md` to keep
+these notes in effect, or set the project-instructions setting to load
+both.
 
 ## The two-repo split (absolute rule)
 

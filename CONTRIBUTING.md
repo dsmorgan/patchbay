@@ -41,7 +41,7 @@ patchbay web                             # against your own site .env
 
 For background, read [docs/architecture.md](docs/architecture.md) for the spec
 and roadmap, [docs/pluggability.md](docs/pluggability.md) for the component
-model, and [CLAUDE.md](CLAUDE.md) for the invariants the code relies on — worth
+model, and [AGENTS.md](AGENTS.md) for the invariants the code relies on — worth
 reading even if you're not an AI.
 
 ### Testing degradation, and the bug class it catches

@@ -8,6 +8,13 @@ put.
 
 ## [Unreleased]
 
+### Changed
+
+- **Agent instructions live in `AGENTS.md`**, the convention shared across
+  AI coding tools, instead of `CLAUDE.md`. `CLAUDE.md` and
+  `CLAUDE.local.md` are gitignored for personal notes (Sam's suggestion
+  in #51). Claude Code 2.1.277 or later reads `AGENTS.md` natively.
+
 ### Fixed
 
 - **pfSense: a 404 note says which kind of absence it is** (#51, from
