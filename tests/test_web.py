@@ -1046,6 +1046,22 @@ def test_topology_layout_defaults_to_free(client, tmp_path):
     assert "if (!TIERS) d.fy = e.y" in body              # free pins both axes
 
 
+def test_topology_first_settle_holds_only_what_settled(client, tmp_path):
+    """#52 (Sam): a filter toggle restarts the simulation, which re-flowed
+    every unpinned node. After the first settle the settled nodes are held
+    where they landed — only those: a node hidden at settle time still sits
+    at its seed slot, and holding it there would drop it onto a neighbor
+    when a toggle reveals it."""
+    seed(str(tmp_path / "test.db"))
+    body = client.get("/topology").text
+    i = body.index("for (let i = 0; i < 300; ++i) sim.tick();")
+    block = body[i:i + 900]
+    assert "visNodes.forEach(n => {" in block            # the settled set
+    assert "graph.nodes.forEach(n => {" not in block     # never every node
+    assert "if (n.fx == null) n.fx = n.x;" in block
+    assert "if (!TIERS && n.fy == null) n.fy = n.y;" in block  # tiers keep Y
+
+
 def test_labeled_unmanaged_node_keeps_vlan_chips(clean_env, tmp_path, client):
     # a custom-labeled unmanaged node no longer encodes its feeding port in
     # its name; the VLAN chips must come from the declaration instead

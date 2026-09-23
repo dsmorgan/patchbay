@@ -131,6 +131,14 @@ debounced `ResizeObserver` for `#topo` (which also recomputes band centres and e
 button lives in the toolbar**, not in `{% block controls %}` — the snapshot has no controls block.
 `reset layout` stays where it is (live page only).
 
+**The first settle is the arrangement** (#52, added 0.15.0). Every `applyFilters()` restarts the
+simulation, which used to re-flow every node without a saved position. After the synchronous first
+settle, the nodes that took part in it are held at `fx`/`fy` (X only under tiers) for the rest of the
+visit; a node a toggle reveals later is not held, so it flows into the gaps between the held ones
+instead of landing on a neighbor at its seed slot. These holds are never saved and get no pinned
+outline — that outline still means "you placed this". Drag pins and saves, shift-click frees, a
+reload or `reset layout` re-settles. There is deliberately no toggle: reload is the re-flow.
+
 ## Decision 3 (C) — Overview leads with exceptions
 
 `/` route context changes: **add** `exceptions`, `checked`, `vms_by_host`, `orphan_vms`;

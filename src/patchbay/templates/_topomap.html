@@ -865,6 +865,17 @@ function applyFilters() {
     sim.stop().alpha(1);
     for (let i = 0; i < 300; ++i) sim.tick();
     ticked();
+    // the first settle is the arrangement (#52): hold every node that took
+    // part in it where it landed, so a later toggle (hide offline, core
+    // only, wired hosts, …) never re-flows what the operator is looking at.
+    // Only the settled nodes — a node hidden now still sits at its seed
+    // slot, and holding it there would drop it onto a neighbor when it is
+    // revealed; left free, it flows into the gaps between the held ones.
+    // Drag still pins (and saves), shift-click frees, a reload re-settles.
+    visNodes.forEach(n => {
+      if (n.fx == null) n.fx = n.x;
+      if (!TIERS && n.fy == null) n.fy = n.y;
+    });
   } else {
     sim.alpha(0.5).restart();
   }

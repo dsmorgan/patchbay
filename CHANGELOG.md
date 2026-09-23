@@ -17,6 +17,15 @@ put.
 
 ### Fixed
 
+- **Topology: a filter toggle no longer re-flows the map** (#52, from
+  Sam / @slmingol). Every toggle restarts the simulation, and on a map
+  without saved positions that moved every node the operator hadn't
+  dragged — by a hundred pixels or more for `core only`. Now the first
+  settle is the arrangement: the nodes that took part in it are held where
+  they landed, and a node a toggle reveals later flows into the gaps
+  between them. Drag still pins and saves, shift-click frees, reload
+  re-settles. A map whose nodes all carry saved positions is unchanged.
+
 - **pfSense: a 404 note says which kind of absence it is** (#51, from
   Sam / @slmingol). The OpenVPN and IPsec status endpoints also answer 404
   when that feature is not configured on the firewall, pfrest installed
