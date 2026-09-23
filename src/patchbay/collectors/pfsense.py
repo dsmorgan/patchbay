@@ -79,9 +79,9 @@ class PfsenseCollector:
                 notes.append(f"{path}: 403")
                 return None
             if r.status_code == 404:
-                # absent endpoint usually means the pfrest package is missing
-                # or too old — say so instead of a healthy-looking zero
-                notes.append(f"{path}: 404 (pfrest package missing or outdated?)")
+                # endpoint absent: pfrest not installed, too old, or the
+                # feature (OpenVPN, IPsec) is not configured on this firewall
+                notes.append(f"{path}: 404 (endpoint unavailable)")
                 return None
             r.raise_for_status()
             data = r.json()
