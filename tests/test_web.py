@@ -1466,3 +1466,16 @@ def test_load_view_shows_the_busier_end(conn, clean_env):
                 if {e["source"], e["target"]} == {"ap1", "sw1"})
     assert edge["util"] == 30.0         # the switch's 300M out, not the AP's 100M
     assert edge["putil"] == 90.0        # the AP's peak, not the switch's
+
+
+def test_topology_undo_restores_the_saved_state_and_redraws(client, tmp_path):
+    """Undo (#55) moves the drawn node, not only its fixed position — the
+    renderer draws x/y and a cooled simulation never copies fx into them —
+    and it restores what was saved rather than what was held: a settled
+    node's hold must not become a pin on undo (ADR-0001)."""
+    html = client.get("/topology").text
+    undo = html[html.index("const entry = undoStack.pop();"):][:1400]
+    assert "n.fx = prevFx; n.x = prevFx;" in undo
+    assert "savePos(name, prevPx, prevPy);" in undo
+    assert 'classed("pinned", prevPx != null)' in undo
+    assert "savePos(name, prevFx" not in undo

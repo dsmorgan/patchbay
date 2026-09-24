@@ -109,7 +109,7 @@ and renders one navigable picture:
   Node layout is interactive: drag a node to pin it (position persists
   across reloads), shift-click to unpin. Shift+drag on the background
   draws a lasso that selects a group; dragging any node in the group moves
-  all of them together as a rigid body. Ctrl/Cmd+Z steps back up to 10
+  all of them together, spacing kept. Ctrl/Cmd+Z steps back up to 10
   position changes, including group moves.
   Firewall VPN tunnels (WireGuard, OpenVPN, IPsec) draw as type-labeled
   egress nodes hung off their firewall — status and peer, never key material.

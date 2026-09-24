@@ -6,6 +6,19 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+
+- **Topology: undo and group moves** (#55, from Sam / @slmingol). Ctrl+Z
+  or Cmd+Z steps back up to ten node moves. Shift+drag on the background
+  draws a lasso; dragging any selected node moves the group together,
+  spacing kept, and one undo restores the whole group. Escape or a
+  shift-click on the background clears the selection. Landed with two
+  fixes: undo redraws the node even after the simulation has cooled, and
+  it restores the node's saved state instead of turning a settled node's
+  hold into a pin.
+
 ## [0.16.0] — 2026-09-24
 
 ### Added

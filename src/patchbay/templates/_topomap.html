@@ -297,7 +297,7 @@
     <span class="swatch" style="background: var(--crit)"></span>60%+
     <span id="leg-peak">· pk = 24h peak</span></span>
   <span class="item" id="leg-vlan" data-modes="wiring load vlan evidence" style="color: var(--ink)"></span>
-  <span class="hint">drag pins a node{% if not snapshot %} (persists) · shift-click unpins · reset layout clears all pins · <strong>shift+drag background</strong> selects a group · drag any selected node to move them together · <strong>Ctrl/Cmd+Z</strong> undoes last move (up to 10) · Escape clears selection{% endif %} · scroll zooms · background pans · hover an edge for its port names, speed, load &amp; VLANs, a device for the names on every link · click a device for its detail panel, double-click opens its page (⌘/Ctrl-click: new tab)</span>
+  <span class="hint">drag pins a node{% if not snapshot %} (persists) · shift-click unpins · reset layout clears all pins · shift+drag background selects a group · drag any selected node to move them together · Ctrl/Cmd+Z undoes last move (up to 10) · Escape clears selection{% endif %} · scroll zooms · background pans · hover an edge for its port names, speed, load &amp; VLANs, a device for the names on every link · click a device for its detail panel, double-click opens its page (⌘/Ctrl-click: new tab)</span>
 </p>
 
 {% if snapshot %}<script>{{ d3_js | safe }}</script>
@@ -386,7 +386,8 @@ const gContent = g.append("g").attr("class", "content"); // links, labels, nodes
 const zoom = d3.zoom().scaleExtent([0.2, 3]).on("zoom", e => g.attr("transform", e.transform));
 svg.call(zoom);
 // Shift+drag on background is reserved for lasso — exclude it from zoom/pan
-zoom.filter(e => e.type === "mousedown" ? (!e.shiftKey && !e.button) : (!e.ctrlKey || e.type === "wheel") && !e.button);
+zoom.filter(e => (!e.ctrlKey || e.type === "wheel") && !e.button
+                 && !(e.type === "mousedown" && e.shiftKey));
 
 // even slot targets per rank keep unpinned nodes spread instead of
 // center-crowded; recomputed whenever toggles change what's visible
@@ -527,6 +528,7 @@ node.on("click", (e, d) => {
   if (e.shiftKey && !SNAPSHOT) {       // shift-click unpins
     d.fx = null;                       // in tiers the band keeps owning Y
     if (!TIERS) d.fy = null;
+    d.px = d.py = null;
     savePos(d.name, null, null);
     d3.select(node.nodes()[graph.nodes.indexOf(d)]).classed("pinned", false);
     sim.alpha(0.3).restart();
@@ -1116,14 +1118,21 @@ document.addEventListener("keydown", e => {
     e.preventDefault();
     const entry = undoStack.pop();
     if (!entry) return;
-    entry.forEach(({ name, prevFx, prevFy }) => {
+    entry.forEach(({ name, prevFx, prevFy, prevPx, prevPy }) => {
       const n = graph.nodes.find(nd => nd.name === name);
       if (!n) return;
-      n.fx = prevFx ?? null;
-      if (!TIERS) n.fy = prevFy ?? null;
-      savePos(name, prevFx ?? null, prevFy ?? null);
+      // the renderer draws x/y, and only a simulation tick copies fx/fy
+      // into them; a few seconds after the drag the sim has cooled and
+      // no tick comes, so move the drawn position too
+      n.fx = prevFx; n.x = prevFx;
+      if (!TIERS) { n.fy = prevFy; n.y = prevFy; }
+      // undo restores what was SAVED, not what was held: a settled node
+      // has a hold at fx but no saved row, and re-posting the hold would
+      // turn it into a pin (ADR-0001: holds are never saved)
+      n.px = prevPx; n.py = prevPy;
+      savePos(name, prevPx, prevPy);           // null clears the row
       const el = node.nodes()[graph.nodes.indexOf(n)];
-      if (el) d3.select(el).classed("pinned", prevFx != null);
+      if (el) d3.select(el).classed("pinned", prevPx != null);
     });
     ticked();
   }
@@ -1204,6 +1213,7 @@ node.call(d3.drag()
     .on("start", (e, d) => {
       if (!e.active) sim.alphaTarget(0.25).restart();
       const prevFx = d.fx ?? d.x, prevFy = d.fy ?? d.y;
+      const prevPx = d.px ?? null, prevPy = d.py ?? null;  // what undo restores server-side
       d.fx = d.x; if (!TIERS) d.fy = d.y;
       const groupOffsets = [];
       if (multiSel.has(d.name) && multiSel.size > 1) {
@@ -1215,10 +1225,11 @@ node.call(d3.drag()
           if (!TIERS && gn.fy == null) gn.fy = gn.y;
           groupOffsets.push({ name, node: gn, dx: gn.fx - d.fx,
                               dy: (d.fy != null ? gn.fy - d.fy : 0),
-                              prevFx: gn.fx, prevFy: gn.fy });
+                              prevFx: gn.fx, prevFy: gn.fy,
+                              prevPx: gn.px ?? null, prevPy: gn.py ?? null });
         });
       }
-      dragPrev = { name: d.name, prevFx, prevFy, groupOffsets };
+      dragPrev = { name: d.name, prevFx, prevFy, prevPx, prevPy, groupOffsets };
     })
     .on("drag", (e, d) => {
       d.fx = e.x; if (!TIERS) d.fy = e.y;
@@ -1234,10 +1245,11 @@ node.call(d3.drag()
       if (!e.active) sim.alphaTarget(0);
       if (dragPrev) {
         const entry = [{ name: d.name, prevFx: dragPrev.prevFx, prevFy: dragPrev.prevFy,
-                         nextFx: d.fx, nextFy: d.fy }];
+                         prevPx: dragPrev.prevPx, prevPy: dragPrev.prevPy }];
         dragPrev.groupOffsets.forEach(g => {
           entry.push({ name: g.name, prevFx: g.prevFx, prevFy: g.prevFy,
-                       nextFx: g.node.fx, nextFy: g.node.fy });
+                       prevPx: g.prevPx, prevPy: g.prevPy });
+          g.node.px = g.node.fx; g.node.py = g.node.fy;
           savePos(g.name, g.node.fx, g.node.fy);
           const gEl = node.nodes()[graph.nodes.indexOf(g.node)];
           if (gEl) d3.select(gEl).classed("pinned", true);
@@ -1246,6 +1258,7 @@ node.call(d3.drag()
         if (undoStack.length > UNDO_LIMIT) undoStack.shift();
         dragPrev = null;
       }
+      d.px = d.fx; d.py = d.fy;
       savePos(d.name, d.fx, d.fy);
       d3.select(node.nodes()[graph.nodes.indexOf(d)]).classed("pinned", true);
     }));

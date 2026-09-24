@@ -139,6 +139,12 @@ instead of landing on a neighbor at its seed slot. These holds are never saved a
 outline — that outline still means "you placed this". Drag pins and saves, shift-click frees, a
 reload or `reset layout` re-settles. There is deliberately no toggle: reload is the re-flow.
 
+**Undo and group moves** (#55, added 0.17.0). Ctrl+Z steps back up to ten moves. Shift+drag on the
+background lassos a group; dragging any member moves them together (X only under tiers), and one
+undo restores the whole group. Undo restores the drawn position and the *saved* state: a node that
+was merely held goes back to held, its server row cleared, so undo never manufactures a pin. The
+selection is transient — not a state key, not remembered.
+
 ## Decision 3 (C) — Overview leads with exceptions
 
 `/` route context changes: **add** `exceptions`, `checked`, `vms_by_host`, `orphan_vms`;
