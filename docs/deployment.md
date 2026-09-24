@@ -165,6 +165,58 @@ discover (cables to dumb devices, patch panels, WAN ports) in `data/.env` as
 you go; the [README](../README.md#operator-declarations) lists the
 declarations.
 
+## 7. Verify snapshot delivery
+
+A snapshot earns its keep only when it sits somewhere the tool host's
+failure can't reach. Setting `PATCHBAY_SNAPSHOT_DELIVER_DIR` is half of that.
+The other half is proving that the copy arrives and that you can open it with
+the stack down. Do this once at install and again after any change to the
+share or the sync.
+
+1. Mount the off-host share into **both** patchbay services (the nightly
+   snapshot runs in the poller, the on-demand one in the web UI), then name
+   it in `data/.env` by the path the container sees:
+
+   ```yaml
+   volumes:
+     - ./data:/data
+     - /mnt/offsite:/offsite       # NAS share, cloud-synced folder, …
+   ```
+
+   ```
+   PATCHBAY_SNAPSHOT_AT=03:30
+   PATCHBAY_SNAPSHOT_DELIVER_DIR=/offsite/patchbay
+   ```
+
+   Restart `patchbay` so the web UI rereads the file.
+
+2. Trigger a snapshot now instead of waiting for the nightly run: click
+   **snapshot now** on `/snapshots`, or run
+   `docker compose -f docker-compose.stack.yml exec patchbay patchbay snapshot`.
+   Success ends with `delivered to <dir>` (the CLI prints `-> <dir>`). A
+   `written locally, delivery failed` line names the cause, usually a mount
+   that isn't there or a directory the container can't write. The local
+   snapshot exists either way.
+
+3. Look at the share from another machine, not from inside the container.
+   Expect `patchbay-latest.html` and a timestamped copy, and no `.part`
+   file: each copy lands under a temporary name and is renamed, so a
+   lingering `.part` is an interrupted copy.
+
+4. If a sync client carries the share onward, wait for it to report the
+   file and confirm the cloud copy too. Sync is the step this check exists
+   for: a share that received the file is not yet a copy that survives the
+   site.
+
+5. Prove the done-when. Stop the stack with
+   `docker compose -f docker-compose.stack.yml down`, open the off-host
+   `patchbay-latest.html` in a browser, and check that the map, a device
+   page, and a port's detail all render. Then `up -d`.
+
+Repeat step 3 the morning after the first scheduled run. The nightly path
+is the poller's, with its own mount and its own `TZ`, so a working
+on-demand snapshot doesn't prove it.
+
 ## Where the state lives
 
 | Data | Where | Survives `compose down`? |

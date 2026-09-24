@@ -27,6 +27,14 @@ put.
   separately. A burst one poller caught no longer hides behind the
   other's average.
 
+### Changed
+
+- **Deployment guide: verify snapshot delivery before you need it** (#25).
+  A new step walks through mounting the off-host share into both patchbay
+  services, triggering one snapshot, checking the share from another
+  machine for the renamed copy and no leftover `.part` file, waiting for
+  the sync, and opening the off-host copy with the stack down.
+
 ### Fixed
 
 - **Rate samples age out whatever the source.** The seven-day
