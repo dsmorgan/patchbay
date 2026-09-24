@@ -109,6 +109,10 @@ class UnifiCollector:
                         if idx is not None:
                             port_idx_map[idx] = port_name
                         speed = port.get("speed") or 0
+                        in_bps = (int(port["rx_bytes-r"] * 8)
+                                  if live and port.get("rx_bytes-r") is not None else None)
+                        out_bps = (int(port["tx_bytes-r"] * 8)
+                                   if live and port.get("tx_bytes-r") is not None else None)
                         db.upsert_interface(
                             conn, device_id=sw_id, name=port_name,
                             oper_status=("up" if port.get("up") else "down")
@@ -116,7 +120,15 @@ class UnifiCollector:
                             admin_status=("up" if port.get("enable") else "down")
                                          if live else None,
                             speed_bps=(speed * 1_000_000 or None) if live else None,
+                            in_bps=in_bps,
+                            out_bps=out_bps,
                         )
+                        if in_bps is not None or out_bps is not None:
+                            conn.execute(
+                                "INSERT INTO rate_history (device, interface, ts, in_bps, out_bps)"
+                                " VALUES (?, ?, ?, ?, ?)",
+                                (dev_name, port_name, db.now(), in_bps, out_bps),
+                            )
                     sw_port_names[dev_name] = port_idx_map
                     # Switch-to-switch uplink (same LLDP data as APs). The
                     # remote port name isn't knowable yet — the upstream

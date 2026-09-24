@@ -618,9 +618,12 @@ _USW = {
     "model": "US-8-150W", "version": "6.5.59", "state": 1,
     "general_temperature": 52, "has_temperature": True,
     "port_table": [
-        {"port_idx": 1, "name": "Port 1", "up": True,  "enable": True, "speed": 1000},
-        {"port_idx": 2, "name": "Port 2", "up": False, "enable": True, "speed": 0},
-        {"port_idx": 9, "name": "SFP",    "up": True,  "enable": True, "speed": 1000},
+        {"port_idx": 1, "name": "Port 1", "up": True,  "enable": True, "speed": 1000,
+         "rx_bytes-r": 125000.0, "tx_bytes-r": 62500.0, "bytes-r": 187500.0},
+        {"port_idx": 2, "name": "Port 2", "up": False, "enable": True, "speed": 0,
+         "rx_bytes-r": 0.0, "tx_bytes-r": 0.0, "bytes-r": 0.0},
+        {"port_idx": 9, "name": "SFP",    "up": True,  "enable": True, "speed": 1000,
+         "rx_bytes-r": 250000.0, "tx_bytes-r": 250000.0, "bytes-r": 500000.0},
     ],
     "uplink": {"uplink_device_name": "sw-core-01", "uplink_remote_port": 3, "port_idx": 9},
 }
@@ -1109,6 +1112,25 @@ def test_unifi_down_device_temperature_not_written(conn, clean_env, monkeypatch)
                        "WHERE name='sw-access-01'").fetchone()
     assert row["status"] != "up"
     assert row["temperature"] == 52.0        # last good reading stands
+
+
+def test_unifi_switch_port_rates_stored(conn, clean_env, monkeypatch):
+    """rx_bytes-r / tx_bytes-r from port_table land as in_bps / out_bps and
+    a rate_history row is written for connected ports."""
+    from patchbay.collectors.unifi import UnifiCollector
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    iface = conn.execute(
+        "SELECT i.in_bps, i.out_bps FROM interfaces i "
+        "JOIN devices d ON d.id=i.device_id "
+        "WHERE d.name='sw-access-01' AND i.name='Port 1'").fetchone()
+    assert iface is not None
+    assert iface["in_bps"] == 125000 * 8      # bytes/s → bps
+    assert iface["out_bps"] == 62500 * 8
+    hist = conn.execute(
+        "SELECT count(*) FROM rate_history "
+        "WHERE device='sw-access-01' AND interface='Port 1'").fetchone()[0]
+    assert hist >= 1
 
 
 def test_save_raw_strips_credential_fields(conn):
