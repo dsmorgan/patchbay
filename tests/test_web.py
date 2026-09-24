@@ -1439,3 +1439,30 @@ def test_topology_zones_derive_from_parents(clean_env, tmp_path, client):
     body = client.get("/topology").text
     assert 'id="zonesbox"' in body
     assert _graph_at(client, "?zones=0") == _graph(client, tmp_path)
+
+
+def test_load_view_shows_the_busier_end(conn, clean_env):
+    """Both ends of a cable read the same wire through different windows
+    (#53): when both report, the edge carries the busier reading, for the
+    current figure and the peak separately, whichever end sorts first."""
+    import json
+    from patchbay.config import load_settings
+    from patchbay.web import build_topology_graph
+    ap = pdb.upsert_device(conn, name="ap1", source="unifi", role="ap", status="up")
+    sw = pdb.upsert_device(conn, name="sw1", source="librenms", role="switch", status="up")
+    # ap1 sorts first, so it is the a-end: its current reading is the lower
+    # one and its peak the higher one, so each figure must be picked alone
+    pdb.upsert_interface(conn, device_id=ap, name="eth0", oper_status="up",
+                         speed_bps=1_000_000_000, in_bps=100_000_000, out_bps=50_000_000)
+    pdb.upsert_interface(conn, device_id=sw, name="Port 1", oper_status="up",
+                         speed_bps=1_000_000_000, in_bps=50_000_000, out_bps=300_000_000)
+    pdb.upsert_link(conn, a_device="ap1", a_interface="eth0",
+                    b_device="sw1", b_interface="Port 1", source="unifi")
+    for dev, iface, pk in (("ap1", "eth0", 900_000_000), ("sw1", "Port 1", 600_000_000)):
+        conn.execute("INSERT INTO rate_history (device, interface, ts, in_bps, out_bps) "
+                     "VALUES (?, ?, ?, ?, 0)", (dev, iface, pdb.now(), pk))
+    graph_json, _ = build_topology_graph(conn, load_settings())
+    edge = next(e for e in json.loads(graph_json)["links"]
+                if {e["source"], e["target"]} == {"ap1", "sw1"})
+    assert edge["util"] == 30.0         # the switch's 300M out, not the AP's 100M
+    assert edge["putil"] == 90.0        # the AP's peak, not the switch's

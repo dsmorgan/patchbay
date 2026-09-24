@@ -421,6 +421,12 @@ TUNNEL_TYPE_LABEL = {"wireguard": "WireGuard", "openvpn": "OpenVPN",
                      "ipsec": "IPsec", "vpn": "VPN"}
 
 
+def _busier(*readings: float | None) -> float | None:
+    """The larger of the readings that exist, or None when none does."""
+    have = [r for r in readings if r is not None]
+    return max(have) if have else None
+
+
 def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]:
     """Build the topology graph as script-safe JSON (plus whether any 24h
     peak samples exist). Shared by /topology and the snapshot generator."""
@@ -813,8 +819,12 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
         elif e["source"] == "oob":
             sw, slabel = 2.0, "oob"
         a_key, b_key = (e["a_device"], e["a_interface"]), (e["b_device"], e["b_interface"])
-        util = util_of.get(a_key) if a_key in util_of else util_of.get(b_key)
-        putil = peak_of.get(a_key) if a_key in peak_of else peak_of.get(b_key)
+        # both ends of a cable read the same wire through different windows
+        # (a UniFi rolling rate, a five-minute SNMP average), so when both
+        # report, the edge shows the busier reading: a burst one poller
+        # caught must not hide behind the other's average (#53)
+        util = _busier(util_of.get(a_key), util_of.get(b_key))
+        putil = _busier(peak_of.get(a_key), peak_of.get(b_key))
         if "vlans" in e:  # host edges carry their own per-port answer
             evlans = e["vlans"]
         else:
