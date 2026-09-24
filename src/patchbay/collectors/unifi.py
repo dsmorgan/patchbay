@@ -35,6 +35,27 @@ MODEL_NAMES: dict[str, str] = {
 }
 
 
+def _bps(entry: dict, key: str, live: bool) -> int | None:
+    """A UniFi `*-r` figure (bytes/s, rolling) as bits/s. Rates are
+    liveness like speed and status: from a non-up device the controller's
+    cached figure is not an observation, so it is omitted (#53)."""
+    v = entry.get(key)
+    return int(v * 8) if live and v is not None else None
+
+
+def _sample(conn: sqlite3.Connection, device: str, iface: str,
+            in_bps: int | None, out_bps: int | None) -> None:
+    """One rate_history row when there is a rate to record: it feeds the
+    load view's 24-hour peak, and the normalizer ages the table out."""
+    if in_bps is None and out_bps is None:
+        return
+    conn.execute(
+        "INSERT INTO rate_history (device, interface, ts, in_bps, out_bps) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (device, iface, db.now(), in_bps, out_bps),
+    )
+
+
 def _temperature(d: dict) -> float | None:
     """Controller-reported thermals (#40): `general_temperature` (°C) on
     devices with sensors — hardware LibreNMS can't see, since UniFi gear
@@ -109,10 +130,8 @@ class UnifiCollector:
                         if idx is not None:
                             port_idx_map[idx] = port_name
                         speed = port.get("speed") or 0
-                        in_bps = (int(port["rx_bytes-r"] * 8)
-                                  if live and port.get("rx_bytes-r") is not None else None)
-                        out_bps = (int(port["tx_bytes-r"] * 8)
-                                   if live and port.get("tx_bytes-r") is not None else None)
+                        in_bps = _bps(port, "rx_bytes-r", live)
+                        out_bps = _bps(port, "tx_bytes-r", live)
                         db.upsert_interface(
                             conn, device_id=sw_id, name=port_name,
                             oper_status=("up" if port.get("up") else "down")
@@ -123,12 +142,7 @@ class UnifiCollector:
                             in_bps=in_bps,
                             out_bps=out_bps,
                         )
-                        if in_bps is not None or out_bps is not None:
-                            conn.execute(
-                                "INSERT INTO rate_history (device, interface, ts, in_bps, out_bps)"
-                                " VALUES (?, ?, ?, ?, ?)",
-                                (dev_name, port_name, db.now(), in_bps, out_bps),
-                            )
+                        _sample(conn, dev_name, port_name, in_bps, out_bps)
                     sw_port_names[dev_name] = port_idx_map
                     # Switch-to-switch uplink (same LLDP data as APs). The
                     # remote port name isn't knowable yet — the upstream
@@ -158,6 +172,11 @@ class UnifiCollector:
                 )
                 uplink = d.get("uplink") or {}
                 iface_name = uplink.get("name") or uplink.get("ifname") or "eth0"
+                # the uplink carries the same rolling rates as a switch port;
+                # where the switch is polled too, the load view shows the
+                # busier of the two readings of that cable
+                ap_in = _bps(uplink, "rx_bytes-r", live)
+                ap_out = _bps(uplink, "tx_bytes-r", live)
                 db.upsert_interface(
                     conn, device_id=dev_id,
                     name=iface_name,
@@ -168,9 +187,11 @@ class UnifiCollector:
                                  ("down" if uplink else None)) if live else None,
                     speed_bps=((uplink.get("speed") or 0) * 1_000_000 or None)
                               if live else None,
+                    in_bps=ap_in, out_bps=ap_out,
                     mac=d.get("mac"),
                     description="uplink",
                 )
+                _sample(conn, dev_name, iface_name, ap_in, ap_out)
                 # Physical link to the upstream switch via LLDP-discovered
                 # port. Buffered like the switch uplinks so a renamed port
                 # on the upstream switch resolves to its stored name.

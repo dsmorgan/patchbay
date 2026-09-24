@@ -15,9 +15,17 @@ put.
   the same figure its own UI shows, and the collector now stores it as the
   port's in/out rate and as a `rate_history` sample. Switch-to-switch and
   switch-to-AP legs on UniFi-managed switches color in the load view and
-  get a 24-hour peak, where before only SNMP-polled ports did. A down
-  device keeps its last good reading, as it does for port status and
-  speed.
+  get a 24-hour peak, where before only SNMP-polled ports did. An AP's
+  uplink carries the same figures and is stored too. A down device keeps
+  its last good reading, as it does for port status and speed.
+
+- **Load view: the busier end of a cable wins.** Where both ends of a
+  link report a rate, the edge used to show whichever end sorted first by
+  name. The two ends read the same wire through different windows, a
+  UniFi rolling rate against a five-minute SNMP average, so the edge now
+  shows the higher reading, for the current figure and the 24-hour peak
+  separately. A burst one poller caught no longer hides behind the
+  other's average.
 
 ### Fixed
 

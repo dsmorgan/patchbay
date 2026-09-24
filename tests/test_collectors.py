@@ -635,6 +635,7 @@ _UAP = {
     "general_temperature": 0, "has_temperature": False,
     "uplink": {
         "name": "eth0", "ifname": "eth0", "up": True, "speed": 1000,
+        "rx_bytes-r": 50000.0, "tx_bytes-r": 25000.0,
         "uplink_device_name": "sw-access-01", "uplink_remote_port": 1,
     },
 }
@@ -1133,6 +1134,24 @@ def test_unifi_switch_port_rates_stored(conn, clean_env, monkeypatch):
     assert hist >= 1
 
 
+def test_unifi_ap_uplink_rates_stored(conn, clean_env, monkeypatch):
+    """An AP's uplink carries the same rx_bytes-r / tx_bytes-r as a switch
+    port (#53): stored on its uplink interface, sampled into rate_history."""
+    from patchbay.collectors.unifi import UnifiCollector
+    monkeypatch.setattr(httpx, "Client", _UnifiClient)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+    iface = conn.execute(
+        "SELECT i.in_bps, i.out_bps FROM interfaces i "
+        "JOIN devices d ON d.id=i.device_id "
+        "WHERE d.name='ap-floor1' AND i.name='eth0'").fetchone()
+    assert iface["in_bps"] == 50000 * 8
+    assert iface["out_bps"] == 25000 * 8
+    hist = conn.execute(
+        "SELECT count(*) FROM rate_history "
+        "WHERE device='ap-floor1' AND interface='eth0'").fetchone()[0]
+    assert hist >= 1
+
+
 def test_save_raw_strips_credential_fields(conn):
     """raw_payloads is a debugging aid, never a credential store: any key
     whose name smells like a secret has its value dropped before storage."""
@@ -1417,10 +1436,11 @@ def test_unifi_down_device_port_liveness_omitted(conn, clean_env, monkeypatch):
     assert port["speed_bps"] == 1_000_000_000
     assert port["in_bps"] == 125000 * 8     # rates are liveness too (#53)
     ap = conn.execute(
-        "SELECT i.oper_status, i.mac FROM interfaces i "
+        "SELECT i.oper_status, i.mac, i.in_bps FROM interfaces i "
         "JOIN devices d ON d.id=i.device_id "
         "WHERE d.name='ap-floor1' AND i.name='eth0'").fetchone()
     assert ap["oper_status"] == "up"        # cached uplink state not written
+    assert ap["in_bps"] == 50000 * 8        # nor its cached rate
     assert ap["mac"] == "02:00:00:00:03:01"  # identity still lands
 
 

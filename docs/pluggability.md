@@ -82,7 +82,7 @@ same object:
 | `vnic_vlans` | virtual NIC MAC → its port group VLAN, which the guest OS cannot see | hypervisor |
 | `ipam_addresses` | the IPAM address book verbatim (for drift comparison) | IPAM |
 | `gateways` | WAN/gateway state | firewall |
-| `rate_history` | per-port in/out samples (feeds the 24 h-peak load view) | NMS, wireless controller (its switches' ports) |
+| `rate_history` | per-port in/out samples (feeds the 24 h-peak load view) | NMS, wireless controller (switch ports, AP uplinks) |
 | `raw_payloads` | cached raw API responses, for debugging collectors | all |
 
 Rows carry their **evidence source**, and the normalizer resolves conflicts by
@@ -133,7 +133,7 @@ kind of evidence; the reference implementation is the one this site runs.
 | **IPAM** | phpIPAM | `subnets`, `ipam_addresses` (the "documented" side of drift); optional UI object ids for deep links from drift findings | **NetBox**, Nautobot, a CSV even | New collector; the UI already says "IPAM", not "phpIPAM"; a collector that stores no object ids gets no deep links |
 | **Firewall / router** | OPNsense | interface IPs (routed-VLAN evidence), gateways/WAN, DHCP leases, ARP/ND | pfSense (same API family), VyOS, RouterOS | New collector |
 | **Hypervisor** | vSphere (pyVmomi) | hosts, VMs as `devices` with `parent`, guest IPs, vNIC→physical-NIC hints | **XCP-ng/XenServer (XAPI)**, Proxmox VE (REST), libvirt | New collector |
-| **Wireless controller** | UniFi | APs, wireless clients as `endpoints` with SSID + VLAN; UniFi switches with port rates and uplinks | Omada, Ruckus Unleashed, standalone-AP SNMP | New collector |
+| **Wireless controller** | UniFi | APs and UniFi switches with uplinks and port rates, wireless clients as `endpoints` with SSID + VLAN | Omada, Ruckus Unleashed, standalone-AP SNMP | New collector |
 
 ### What about the switches themselves?
 
