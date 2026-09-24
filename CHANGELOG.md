@@ -19,6 +19,14 @@ put.
   device keeps its last good reading, as it does for port status and
   speed.
 
+### Fixed
+
+- **Rate samples age out whatever the source.** The seven-day
+  `rate_history` prune lived in the LibreNMS collector, so a site whose
+  rates came from another source would have kept every sample forever.
+  The normalizer's housekeeping pass prunes now, every cycle, beside the
+  raw-payload expiry.
+
 ## [0.15.0] — 2026-09-23
 
 ### Changed

@@ -848,3 +848,17 @@ def test_stale_endpoints_age_out(conn):
     normalize(conn)
     left = {r[0] for r in conn.execute("SELECT mac FROM endpoints")}
     assert left == {"02:00:00:00:1a:02"}
+
+
+def test_rate_history_ages_out_in_housekeeping(conn):
+    """The seven-day rate prune is the cycle's, not the LibreNMS
+    collector's (#53): a site whose rates come from UniFi alone must not
+    keep every sample forever."""
+    dev(conn, "sw1", "unifi", last_seen=NOW, role="switch")
+    conn.execute("INSERT INTO rate_history (device, interface, ts, in_bps, out_bps) "
+                 "VALUES ('sw1', 'Port 1', ?, 100, 200)", (NOW - 8 * 86400,))
+    conn.execute("INSERT INTO rate_history (device, interface, ts, in_bps, out_bps) "
+                 "VALUES ('sw1', 'Port 1', ?, 300, 400)", (NOW - 3600,))
+    normalize(conn)
+    left = [r[0] for r in conn.execute("SELECT in_bps FROM rate_history")]
+    assert left == [300]                    # the week-old sample is gone

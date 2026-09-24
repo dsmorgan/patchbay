@@ -153,7 +153,6 @@ class LibreNmsCollector:
                              int(p["ifInOctets_rate"] * 8) if p.get("ifInOctets_rate") is not None else None,
                              int(p["ifOutOctets_rate"] * 8) if p.get("ifOutOctets_rate") is not None else None),
                         )
-            conn.execute("DELETE FROM rate_history WHERE ts < ?", (db.now() - 7 * 86400,))
 
             # Retire devices removed from LibreNMS — they stayed on every page
             # with frozen status forever (disabled devices still appear in the
