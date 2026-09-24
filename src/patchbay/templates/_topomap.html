@@ -77,6 +77,11 @@
      halo — distinct from the accent halo of a URL focus */
   .node.selected rect.box, .node.selected ellipse {
     stroke-width: 2.4; filter: drop-shadow(0 0 5px var(--ink2)); }
+  /* area-selected nodes (lasso / group move) */
+  .node.multi-pinned rect.box, .node.multi-pinned ellipse {
+    stroke: var(--accent); stroke-width: 2.4; filter: drop-shadow(0 0 4px var(--accent)); }
+  #lasso-rect { fill: var(--accent); fill-opacity: 0.1; stroke: var(--accent);
+                stroke-width: 1.5; stroke-dasharray: 4 3; pointer-events: none; }
   /* the detail panel floats over the map's right edge rather than beside
      it, so opening it never resizes (and re-fits) the map */
   .mapwrap { position: relative; }
@@ -380,6 +385,8 @@ const gZones = g.append("g").attr("class", "zones");     // derived hulls (#47),
 const gContent = g.append("g").attr("class", "content"); // links, labels, nodes — fit() measures this
 const zoom = d3.zoom().scaleExtent([0.2, 3]).on("zoom", e => g.attr("transform", e.transform));
 svg.call(zoom);
+// Shift+drag on background is reserved for lasso — exclude it from zoom/pan
+zoom.filter(e => e.type === "mousedown" ? (!e.shiftKey && !e.button) : (!e.ctrlKey || e.type === "wheel") && !e.button);
 
 // even slot targets per rank keep unpinned nodes spread instead of
 // center-crowded; recomputed whenever toggles change what's visible
@@ -1101,7 +1108,25 @@ function applyPanel() {
   panel.hidden = false;
 }
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape" && state.sel) set({ sel: null });
+  if (e.key === "Escape") {
+    if (state.sel) set({ sel: null });
+    if (multiSel.size) { multiSel.clear(); node.classed("multi-pinned", false); }
+  }
+  if ((e.key === "z" || e.key === "Z") && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+    e.preventDefault();
+    const entry = undoStack.pop();
+    if (!entry) return;
+    entry.forEach(({ name, prevFx, prevFy }) => {
+      const n = graph.nodes.find(nd => nd.name === name);
+      if (!n) return;
+      n.fx = prevFx ?? null;
+      if (!TIERS) n.fy = prevFy ?? null;
+      savePos(name, prevFx ?? null, prevFy ?? null);
+      const el = node.nodes()[graph.nodes.indexOf(n)];
+      if (el) d3.select(el).classed("pinned", prevFx != null);
+    });
+    ticked();
+  }
 });
 
 function render() {
@@ -1165,17 +1190,110 @@ function savePos(name, x, y) {
     body: JSON.stringify({ name, x, y }) }).catch(() => {});
 }
 
+// Undo stack (up to 10 moves); each entry is an array of {name, prevFx, prevFy, nextFx, nextFy}
+const UNDO_LIMIT = 10;
+const undoStack = [];
+// Multi-selection: node names area-selected via lasso
+let multiSel = new Set();
+// Pre-drag positions captured at drag start
+let dragPrev = null;
+
 node.call(d3.drag()
     // Y is owned by the tier (d.fy is always its band centre and is never
     // touched here) — drag only ever sets d.fx, so a node slides along its lane
-    .on("start", (e, d) => { if (!e.active) sim.alphaTarget(0.25).restart();
-                             d.fx = d.x; if (!TIERS) d.fy = d.y; })
-    .on("drag", (e, d) => { d.fx = e.x; if (!TIERS) d.fy = e.y; })
+    .on("start", (e, d) => {
+      if (!e.active) sim.alphaTarget(0.25).restart();
+      const prevFx = d.fx ?? d.x, prevFy = d.fy ?? d.y;
+      d.fx = d.x; if (!TIERS) d.fy = d.y;
+      const groupOffsets = [];
+      if (multiSel.has(d.name) && multiSel.size > 1) {
+        multiSel.forEach(name => {
+          if (name === d.name) return;
+          const gn = graph.nodes.find(n => n.name === name);
+          if (!gn || !gn._vis) return;
+          if (gn.fx == null) gn.fx = gn.x;
+          if (!TIERS && gn.fy == null) gn.fy = gn.y;
+          groupOffsets.push({ name, node: gn, dx: gn.fx - d.fx,
+                              dy: (d.fy != null ? gn.fy - d.fy : 0),
+                              prevFx: gn.fx, prevFy: gn.fy });
+        });
+      }
+      dragPrev = { name: d.name, prevFx, prevFy, groupOffsets };
+    })
+    .on("drag", (e, d) => {
+      d.fx = e.x; if (!TIERS) d.fy = e.y;
+      if (dragPrev && dragPrev.groupOffsets.length) {
+        dragPrev.groupOffsets.forEach(g => {
+          g.node.fx = d.fx + g.dx;
+          if (!TIERS) g.node.fy = d.fy + g.dy;
+        });
+        ticked();
+      }
+    })
     .on("end", (e, d) => {
       if (!e.active) sim.alphaTarget(0);
+      if (dragPrev) {
+        const entry = [{ name: d.name, prevFx: dragPrev.prevFx, prevFy: dragPrev.prevFy,
+                         nextFx: d.fx, nextFy: d.fy }];
+        dragPrev.groupOffsets.forEach(g => {
+          entry.push({ name: g.name, prevFx: g.prevFx, prevFy: g.prevFy,
+                       nextFx: g.node.fx, nextFy: g.node.fy });
+          savePos(g.name, g.node.fx, g.node.fy);
+          const gEl = node.nodes()[graph.nodes.indexOf(g.node)];
+          if (gEl) d3.select(gEl).classed("pinned", true);
+        });
+        undoStack.push(entry);
+        if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+        dragPrev = null;
+      }
       savePos(d.name, d.fx, d.fy);
       d3.select(node.nodes()[graph.nodes.indexOf(d)]).classed("pinned", true);
     }));
+
+// Lasso selection: Shift+drag on SVG background selects a group of nodes.
+// Dragging any node in the group moves all of them together.
+// Shift+click on empty background clears the selection.
+const lassoRect = svg.append("rect").attr("id", "lasso-rect").attr("visibility", "hidden");
+let lassoStart = null;
+svg.on("mousedown.lasso", e => {
+  if (!e.shiftKey || e.button !== 0 || SNAPSHOT) return;
+  if (e.target.closest(".node")) return;  // let shift-click-on-node unpin it
+  e.preventDefault();
+  const [sx, sy] = d3.pointer(e, svg.node());
+  lassoStart = { sx, sy };
+  lassoRect.attr("x", sx).attr("y", sy).attr("width", 0).attr("height", 0)
+           .attr("visibility", "visible");
+});
+svg.on("mousemove.lasso", e => {
+  if (!lassoStart) return;
+  const [cx, cy] = d3.pointer(e, svg.node());
+  lassoRect.attr("x", Math.min(lassoStart.sx, cx))
+           .attr("y", Math.min(lassoStart.sy, cy))
+           .attr("width", Math.abs(cx - lassoStart.sx))
+           .attr("height", Math.abs(cy - lassoStart.sy));
+});
+svg.on("mouseup.lasso mouseleave.lasso", e => {
+  if (!lassoStart) return;
+  lassoRect.attr("visibility", "hidden");
+  const [ex, ey] = d3.pointer(e, svg.node());
+  const dist = Math.hypot(ex - lassoStart.sx, ey - lassoStart.sy);
+  if (dist < 6) {
+    multiSel.clear();
+    node.classed("multi-pinned", false);
+  } else {
+    const x0 = Math.min(lassoStart.sx, ex), x1 = Math.max(lassoStart.sx, ex);
+    const y0 = Math.min(lassoStart.sy, ey), y1 = Math.max(lassoStart.sy, ey);
+    const t = d3.zoomTransform(svg.node());
+    if (!e.ctrlKey && !e.metaKey) multiSel.clear();
+    graph.nodes.forEach(n => {
+      if (!n._vis) return;
+      const [px, py] = t.apply([n.x, n.y]);
+      if (px >= x0 && px <= x1 && py >= y0 && py <= y1) multiSel.add(n.name);
+    });
+    node.classed("multi-pinned", d => multiSel.has(d.name));
+  }
+  lassoStart = null;
+});
 // legend chips draw the same icons, tinted by role color
 document.querySelectorAll("svg.licon").forEach(s => {
   s.setAttribute("viewBox", "0 0 18 18");
