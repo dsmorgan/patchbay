@@ -6,6 +6,27 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+
+- **Load view: UniFi switch ports carry throughput** (#53, from Sam /
+  @slmingol). The controller reports a rolling byte rate per switch port,
+  the same figure its own UI shows, and the collector now stores it as the
+  port's in/out rate and as a `rate_history` sample. Switch-to-switch and
+  switch-to-AP legs on UniFi-managed switches color in the load view and
+  get a 24-hour peak, where before only SNMP-polled ports did. A down
+  device keeps its last good reading, as it does for port status and
+  speed.
+
+### Fixed
+
+- **Rate samples age out whatever the source.** The seven-day
+  `rate_history` prune lived in the LibreNMS collector, so a site whose
+  rates came from another source would have kept every sample forever.
+  The normalizer's housekeeping pass prunes now, every cycle, beside the
+  raw-payload expiry.
+
 ## [0.15.0] — 2026-09-23
 
 ### Changed

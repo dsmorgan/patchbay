@@ -895,6 +895,12 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
     # housekeeping: raw payloads are a debugging window, not an archive
     conn.execute("DELETE FROM raw_payloads WHERE fetched_at < ?",
                  (db.now() - 7 * 86400,))
+    # ...and rate samples keep a week (the load view's peak reads a day).
+    # This is the cycle's housekeeping, not one source's: the prune lived
+    # in the librenms collector until UniFi became a second rate writer
+    # (#53), and a site fed by UniFi alone would have kept every sample.
+    conn.execute("DELETE FROM rate_history WHERE ts < ?",
+                 (db.now() - 7 * 86400,))
     # ...and stale endpoint observations age out (see ENDPOINT_TTL): live
     # ones are re-upserted every poll by whichever source still sees them
     conn.execute("DELETE FROM endpoints WHERE COALESCE(last_seen, 0) < ?",

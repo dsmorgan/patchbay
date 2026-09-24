@@ -1410,11 +1410,12 @@ def test_unifi_down_device_port_liveness_omitted(conn, clean_env, monkeypatch):
                       ).fetchone()
     assert sw["status"] == "down"           # device liveness IS the report
     port = conn.execute(
-        "SELECT i.oper_status, i.speed_bps FROM interfaces i "
+        "SELECT i.oper_status, i.speed_bps, i.in_bps FROM interfaces i "
         "JOIN devices d ON d.id=i.device_id "
         "WHERE d.name='sw-access-01' AND i.name='Port 1'").fetchone()
     assert port["oper_status"] == "up"      # last good value stands
     assert port["speed_bps"] == 1_000_000_000
+    assert port["in_bps"] == 125000 * 8     # rates are liveness too (#53)
     ap = conn.execute(
         "SELECT i.oper_status, i.mac FROM interfaces i "
         "JOIN devices d ON d.id=i.device_id "
