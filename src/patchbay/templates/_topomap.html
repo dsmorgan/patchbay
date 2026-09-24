@@ -297,7 +297,7 @@
     <span class="swatch" style="background: var(--crit)"></span>60%+
     <span id="leg-peak">· pk = 24h peak</span></span>
   <span class="item" id="leg-vlan" data-modes="wiring load vlan evidence" style="color: var(--ink)"></span>
-  <span class="hint">drag pins a node{% if not snapshot %} (persists) · shift-click unpins · reset layout clears all pins{% endif %} · scroll zooms · background pans · hover an edge for its port names, speed, load &amp; VLANs, a device for the names on every link · click a device for its detail panel, double-click opens its page (⌘/Ctrl-click: new tab)</span>
+  <span class="hint">drag pins a node{% if not snapshot %} (persists) · shift-click unpins · reset layout clears all pins · <strong>shift+drag background</strong> selects a group · drag any selected node to move them together · <strong>Ctrl/Cmd+Z</strong> undoes last move (up to 10) · Escape clears selection{% endif %} · scroll zooms · background pans · hover an edge for its port names, speed, load &amp; VLANs, a device for the names on every link · click a device for its detail panel, double-click opens its page (⌘/Ctrl-click: new tab)</span>
 </p>
 
 {% if snapshot %}<script>{{ d3_js | safe }}</script>
