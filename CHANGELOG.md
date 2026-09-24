@@ -27,6 +27,13 @@ put.
   The normalizer's housekeeping pass prunes now, every cycle, beside the
   raw-payload expiry.
 
+- **The test suite passes under bare `pytest`** (#54, from Sam / @slmingol).
+  Two test modules import helpers from a sibling through the `tests`
+  package, which resolves only with the repository root on the path.
+  `python -m pytest` puts the working directory there and plain `pytest`
+  does not, so the same tree passed on one machine and failed eight tests
+  on another. The pytest config adds the root now.
+
 ## [0.15.0] — 2026-09-23
 
 ### Changed
