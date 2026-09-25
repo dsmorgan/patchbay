@@ -670,6 +670,26 @@ def _drop_superseded_inference(conn: sqlite3.Connection) -> None:
     # than a hypervisor's intermittent CDP hint, weaker than the device-level
     # protocol (when LibreNMS hears the same cable over LLDP, one cable wins)
     drop_where("unifi", port_set(("lldp",)))
+
+    # Secondary device-pair pass: when a controller stores verbose port names
+    # (e.g. "SFP1 - us-8-150w-02 (uplink)") the port-set check above misses
+    # because the interface name differs from what LibreNMS reads via SNMP
+    # (e.g. "0/9"). If lldp has at least as many links for a device pair as
+    # unifi does, every unifi link for that pair is a duplicate — drop them.
+    lldp_pair: dict[tuple, int] = {}
+    for r in conn.execute("SELECT a_device, b_device FROM links WHERE source='lldp'"):
+        p = (r["a_device"], r["b_device"])
+        lldp_pair[p] = lldp_pair.get(p, 0) + 1
+    unifi_by_pair: dict[tuple, list] = {}
+    for r in conn.execute(
+            "SELECT id, a_device, b_device FROM links WHERE source='unifi'").fetchall():
+        p = (r["a_device"], r["b_device"])
+        unifi_by_pair.setdefault(p, []).append(r["id"])
+    for pair, ids in unifi_by_pair.items():
+        if lldp_pair.get(pair, 0) >= len(ids):
+            for lid in ids:
+                conn.execute("DELETE FROM links WHERE id=?", (lid,))
+
     drop_where("vsphere-hint", port_set(("lldp", "unifi")))
     drop_where("fdb-uplink", port_set(("lldp", "unifi", "vsphere-hint", "declared")))
 
