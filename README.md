@@ -173,7 +173,9 @@ devices ──► LibreNMS  (SNMP metrics, LLDP links, graphs, alerting)
 The normalizer holds the correlation logic: it merges devices across sources
 (the freshest status wins, a versioned OS beats a bare fingerprint, and
 placeholder values never overwrite real data), applies link-evidence precedence
-(LLDP, then hypervisor hint, then MAC-table inference, one cable per port),
+(LLDP, then hypervisor hint, then MAC-table inference, one cable per port,
+and one cable per switch pair when a controller and LLDP label the same
+port differently),
 guards against CDP floods, and removes anything a source stops reporting, so a
 deleted VM or an undeclared link leaves the map.
 

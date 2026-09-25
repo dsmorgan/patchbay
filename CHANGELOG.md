@@ -6,6 +6,17 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Fixed
+- A switch-to-switch cable that both LibreNMS (LLDP) and the UniFi
+  controller report drew twice when the controller stored the operator's
+  port label where SNMP reported the ifName. The normalizer now also
+  matches unifi links to lldp links by device pair, keeping genuine
+  parallel cables (#56, Sam). The pair pass runs after the weaker-source
+  passes, so a retired unifi row still claims its port against MAC-table
+  inference and ghost switches.
+
 ## [0.17.0] — 2026-09-24
 
 ### Added

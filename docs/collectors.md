@@ -61,8 +61,11 @@ Use the `db` helpers — they upsert by natural key so repeated polls converge:
 
 Link `source` values carry meaning in the UI (color = who reported, dash =
 stated vs inferred) and in supersede logic (`lldp` > `unifi` >
-`vsphere-hint` > `fdb-uplink`; `declared` is operator truth). A new discovery
-protocol should reuse an existing tier or discuss a new one.
+`vsphere-hint` > `fdb-uplink`; `declared` is operator truth). Supersede
+matches on port; `unifi` rows are also matched to `lldp` rows by device
+pair, because a controller reports the operator's port label where SNMP
+reports the ifName. A new discovery protocol should reuse an existing
+tier or discuss a new one.
 
 The `fdb` table carries a `source` column: each collector that writes MAC-table
 rows owns them and refreshes with `DELETE FROM fdb WHERE source = '<name>'`

@@ -747,6 +747,91 @@ def test_unifi_link_supersedes_fdb_uplink(conn):
     assert srcs == {"unifi"}
 
 
+def _sources(conn):
+    return sorted(r["source"] for r in conn.execute("SELECT source FROM links"))
+
+
+def test_lldp_supersedes_unifi_link_when_the_port_names_differ(conn):
+    # the controller stores the operator's port label, LibreNMS the SNMP
+    # ifName: the per-port check can't pair them, the device-pair pass
+    # can — one cable, not two (#56)
+    dev(conn, "sw-a", "librenms", last_seen=NOW, role="switch")
+    dev(conn, "sw-b", "unifi", last_seen=NOW, role="switch")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="SFP1 - sw-b (uplink)",
+                    b_device="sw-b", b_interface="Port 1", source="unifi")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="0/9",
+                    b_device="sw-b", b_interface="0/1", source="lldp")
+    normalize(conn)
+    assert _sources(conn) == ["lldp"]
+
+
+def test_unifi_link_without_an_lldp_twin_is_kept(conn):
+    dev(conn, "sw-a", "unifi", last_seen=NOW, role="switch")
+    dev(conn, "sw-b", "unifi", last_seen=NOW, role="switch")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="SFP1 - sw-b (uplink)",
+                    b_device="sw-b", b_interface="Port 1", source="unifi")
+    normalize(conn)
+    assert _sources(conn) == ["unifi"]
+
+
+def test_parallel_cables_seen_by_both_sources_stay_two(conn):
+    dev(conn, "sw-a", "librenms", last_seen=NOW, role="switch")
+    dev(conn, "sw-b", "unifi", last_seen=NOW, role="switch")
+    for i in (1, 2):
+        pdb.upsert_link(conn, a_device="sw-a", a_interface=f"SFP{i} - sw-b",
+                        b_device="sw-b", b_interface=f"Port {i}", source="unifi")
+        pdb.upsert_link(conn, a_device="sw-a", a_interface=f"0/{i}",
+                        b_device="sw-b", b_interface=f"0/{i}", source="lldp")
+    normalize(conn)
+    assert _sources(conn) == ["lldp", "lldp"]
+
+
+def test_unifi_cables_are_kept_when_lldp_sees_fewer(conn):
+    # the count guard: lldp can't vouch for a cable it doesn't report
+    dev(conn, "sw-a", "librenms", last_seen=NOW, role="switch")
+    dev(conn, "sw-b", "unifi", last_seen=NOW, role="switch")
+    for i in (1, 2):
+        pdb.upsert_link(conn, a_device="sw-a", a_interface=f"SFP{i} - sw-b",
+                        b_device="sw-b", b_interface=f"Port {i}", source="unifi")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="0/1",
+                    b_device="sw-b", b_interface="0/1", source="lldp")
+    normalize(conn)
+    assert _sources(conn) == ["lldp", "unifi", "unifi"]
+
+
+def test_retired_unifi_link_still_claims_its_port_against_fdb_uplink(conn):
+    # the pair pass runs last: the controller's labeled port is still a
+    # stated link when MAC-table inference is judged, so an fdb-uplink on
+    # that label can't outlive the unifi row it was hiding behind
+    dev(conn, "sw-a", "librenms", last_seen=NOW, role="switch")
+    dev(conn, "sw-b", "unifi", last_seen=NOW, role="switch")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="SFP1 - sw-b (uplink)",
+                    b_device="sw-b", b_interface="?", source="fdb-uplink")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="SFP1 - sw-b (uplink)",
+                    b_device="sw-b", b_interface="Port 1", source="unifi")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="0/9",
+                    b_device="sw-b", b_interface="0/1", source="lldp")
+    normalize(conn)
+    assert _sources(conn) == ["lldp"]
+
+
+def test_retired_unifi_link_still_retires_the_ghost_switch_on_its_port(conn):
+    dev(conn, "sw-a", "librenms", last_seen=NOW, role="switch")
+    dev(conn, "sw-b", "unifi", last_seen=NOW, role="switch")
+    ghost = "unmanaged@sw-a:SFP1 - sw-b (uplink)"
+    dev(conn, ghost, "inference", last_seen=NOW, role="unmanaged-switch")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="SFP1 - sw-b (uplink)",
+                    b_device=ghost, b_interface="?", source="fdb-inference")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="SFP1 - sw-b (uplink)",
+                    b_device="sw-b", b_interface="Port 1", source="unifi")
+    pdb.upsert_link(conn, a_device="sw-a", a_interface="0/9",
+                    b_device="sw-b", b_interface="0/1", source="lldp")
+    normalize(conn)
+    assert _sources(conn) == ["lldp"]
+    assert conn.execute("SELECT COUNT(*) FROM devices WHERE source = 'inference'"
+                        ).fetchone()[0] == 0
+
+
 def test_orientation_restore_keeps_fresher_timestamp_on_collision(conn):
     # a source that names a device by its alias re-reports the link every
     # poll; the rename flips it out of sorted order and it collides with

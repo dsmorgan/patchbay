@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import Counter
 
 from . import db
 
@@ -671,25 +672,6 @@ def _drop_superseded_inference(conn: sqlite3.Connection) -> None:
     # protocol (when LibreNMS hears the same cable over LLDP, one cable wins)
     drop_where("unifi", port_set(("lldp",)))
 
-    # Secondary device-pair pass: when a controller stores verbose port names
-    # (e.g. "SFP1 - us-8-150w-02 (uplink)") the port-set check above misses
-    # because the interface name differs from what LibreNMS reads via SNMP
-    # (e.g. "0/9"). If lldp has at least as many links for a device pair as
-    # unifi does, every unifi link for that pair is a duplicate — drop them.
-    lldp_pair: dict[tuple, int] = {}
-    for r in conn.execute("SELECT a_device, b_device FROM links WHERE source='lldp'"):
-        p = (r["a_device"], r["b_device"])
-        lldp_pair[p] = lldp_pair.get(p, 0) + 1
-    unifi_by_pair: dict[tuple, list] = {}
-    for r in conn.execute(
-            "SELECT id, a_device, b_device FROM links WHERE source='unifi'").fetchall():
-        p = (r["a_device"], r["b_device"])
-        unifi_by_pair.setdefault(p, []).append(r["id"])
-    for pair, ids in unifi_by_pair.items():
-        if lldp_pair.get(pair, 0) >= len(ids):
-            for lid in ids:
-                conn.execute("DELETE FROM links WHERE id=?", (lid,))
-
     drop_where("vsphere-hint", port_set(("lldp", "unifi")))
     drop_where("fdb-uplink", port_set(("lldp", "unifi", "vsphere-hint", "declared")))
 
@@ -714,6 +696,26 @@ def _drop_superseded_inference(conn: sqlite3.Connection) -> None:
             conn.execute("DELETE FROM links WHERE id = ?", (r["id"],))
             conn.execute("DELETE FROM devices WHERE name = ?", (ghost,))
             conn.execute("DELETE FROM endpoints WHERE device = ?", (ghost,))
+
+    # Second pass, by device pair rather than by port, and last on purpose.
+    # A controller stores the operator's port label ("SFP1 - core (uplink)")
+    # where LibreNMS reads the SNMP ifName ("0/9"), so the port-set check
+    # above can't tell that the two rows are one cable. When lldp reports at
+    # least as many links between a pair as unifi does, the unifi rows are
+    # that cable seen twice and go; two lldp plus two unifi is two real
+    # cables seen by both, and stays two. This runs after the weaker-source
+    # passes so the unifi row still claims its labeled port against
+    # fdb-uplink inference and ghost switches before it is retired (#56).
+    lldp_pairs = Counter(
+        (r["a_device"], r["b_device"]) for r in conn.execute(
+            "SELECT a_device, b_device FROM links WHERE source = 'lldp'"))
+    unifi_by_pair: dict[tuple[str, str], list[int]] = {}
+    for r in conn.execute(
+            "SELECT id, a_device, b_device FROM links WHERE source = 'unifi'"):
+        unifi_by_pair.setdefault((r["a_device"], r["b_device"]), []).append(r["id"])
+    for pair, ids in unifi_by_pair.items():
+        if lldp_pairs[pair] >= len(ids):
+            conn.executemany("DELETE FROM links WHERE id = ?", [(i,) for i in ids])
 
 
 EVIDENCE_TTL = 2 * 3600  # ~24 missed 5-minute polls
