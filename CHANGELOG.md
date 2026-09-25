@@ -6,7 +6,7 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.17.1] — 2026-09-24
 
 ### Fixed
 - A switch-to-switch cable that both LibreNMS (LLDP) and the UniFi
