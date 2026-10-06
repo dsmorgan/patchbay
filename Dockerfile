@@ -7,7 +7,7 @@
 # the only way a library version changes. --locked refuses a lockfile that
 # has drifted from pyproject.toml, so a dependency edit that skipped
 # `uv lock` fails the build instead of quietly floating.
-FROM ghcr.io/astral-sh/uv:0.9.16 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.23 AS uv
 FROM python:3.13-slim
 
 COPY --from=uv /uv /bin/uv
