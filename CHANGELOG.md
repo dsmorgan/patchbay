@@ -6,7 +6,7 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.18.0] — 2026-10-05
 
 ### Added
 - Dependabot opens one grouped PR a week per ecosystem: Python dependencies
@@ -17,6 +17,8 @@ put.
   with `uv sync --locked`, so a commit builds the same image every time and
   a library version only changes through a lockfile change. A dependency
   edit in `pyproject.toml` without a refreshed lock fails the build.
+- The container build uses uv 0.12 and the current majors of the GitHub
+  Actions it runs on (#57, #58, both from Dependabot).
 
 ## [0.17.1] — 2026-09-24
 
