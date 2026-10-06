@@ -20,7 +20,9 @@ site-specific leaked into code, tests, or docs.
 
 ## Dev workflow
 
-- Editable install in `.venv`; use `uv pip install -e '.[web]' --python .venv/bin/python`
+- Editable install in `.venv` from `uv.lock`; `uv sync --locked --all-extras`. After editing
+  dependencies in `pyproject.toml`, run `uv lock` and commit `uv.lock`: the image builds
+  with `--locked` and refuses a stale lock
   (uv, not pip — the venv may not have pip bootstrapped).
 - Run the live instance:
   `PATCHBAY_ENV=../patchbay-site/.env PATCHBAY_DB=../patchbay-site/data/patchbay.db .venv/bin/patchbay web --host 127.0.0.1 --port 8080`

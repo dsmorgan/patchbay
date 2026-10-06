@@ -34,10 +34,14 @@ This usually means one of three things:
 ## Development
 
 ```sh
-uv venv && uv pip install -e '.[web,dev]'
+uv sync --locked --all-extras
 pytest                                   # unit + page-smoke tests, no network
 patchbay web                             # against your own site .env
 ```
+
+If you add or change a dependency in `pyproject.toml`, run `uv lock` and commit
+`uv.lock` with it. The container build installs with `--locked` and refuses a
+stale lock.
 
 For background, read [docs/architecture.md](docs/architecture.md) for the spec
 and roadmap, [docs/pluggability.md](docs/pluggability.md) for the component

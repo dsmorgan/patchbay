@@ -33,7 +33,7 @@ checkout present.
 Or run from a checkout, which gives you the CLI and an editable install:
 
 ```sh
-uv venv && uv pip install -e '.[web]'
+uv sync --locked --extra web
 cp .env.example .env                          # fill in the tools you already run
 patchbay poll                                 # run every configured collector
 patchbay show devices|links|subnets|vlans|endpoints

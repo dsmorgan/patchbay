@@ -1,22 +1,33 @@
 # patchbay web UI + poller image (one image, two services — see
 # docker-compose.example.yml). Config via env file mounted at /data/.env,
 # SQLite model at /data/patchbay.db.
+#
+# Dependencies come from uv.lock, never resolved at build time: a commit
+# builds the same image next month as today, and a merged Dependabot PR is
+# the only way a library version changes. --locked refuses a lockfile that
+# has drifted from pyproject.toml, so a dependency edit that skipped
+# `uv lock` fails the build instead of quietly floating.
+FROM ghcr.io/astral-sh/uv:0.9.16 AS uv
 FROM python:3.13-slim
 
+COPY --from=uv /uv /bin/uv
 WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
 # Dependencies first, in their own layer, so an edit under src/ rebuilds in
 # seconds instead of re-downloading fastapi, uvicorn, and pyvmomi every
-# time. hatchling needs a package to build, so a stub stands in for src
-# (and empty README/LICENSE satisfy the metadata) until the real tree lands.
-# The stub carries a placeholder __version__ because hatchling reads the
-# real version from this file; the force-reinstall below replaces it.
-COPY pyproject.toml ./
-RUN mkdir -p src/patchbay && echo '__version__ = "0"' > src/patchbay/__init__.py \
- && touch README.md LICENSE \
- && pip install --no-cache-dir '.[web]'
+# time. --no-install-project leaves patchbay itself out, so this layer
+# depends on the lockfile alone.
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --extra web --no-install-project
 COPY README.md LICENSE ./
 COPY src ./src
-RUN pip install --no-cache-dir --no-deps --force-reinstall .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --extra web --no-editable
+ENV PATH="/app/.venv/bin:$PATH"
 
 # bake the build identity in (shown in the UI header): pass
 # --build-arg GIT_SHA=$(git rev-parse --short HEAD) at build time
