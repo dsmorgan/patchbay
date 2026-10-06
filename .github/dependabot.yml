@@ -1,0 +1,30 @@
+# Weekly, one grouped PR per ecosystem. The image installs from uv.lock
+# with --locked, so the uv group is the only path by which a library
+# version reaches the container; the docker group covers the Python base
+# image and the uv binary stage; the actions group covers container.yml.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      images:
+        patterns: ["*"]

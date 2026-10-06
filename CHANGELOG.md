@@ -8,6 +8,10 @@ put.
 
 ## [Unreleased]
 
+### Added
+- Dependabot opens one grouped PR a week per ecosystem: Python dependencies
+  in `uv.lock`, GitHub Actions, and the container's base images.
+
 ### Changed
 - The container image installs dependencies from a committed `uv.lock`
   with `uv sync --locked`, so a commit builds the same image every time and
