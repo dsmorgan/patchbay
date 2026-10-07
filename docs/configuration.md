@@ -99,7 +99,7 @@ bundle path) in any OIDC deployment.
 | Variable | Default | Meaning |
 |---|---|---|
 | `PATCHBAY_SNAPSHOT_DIR` | `snapshots/` beside the DB | Where `patchbay snapshot` and the `/snapshots` page write the self-contained HTML files (timestamped + a stable `patchbay-latest.html`) |
-| `PATCHBAY_SNAPSHOT_KEEP` | `30` | Timestamped snapshots to retain (`0` = keep everything). Also editable on `/ops` when the env file doesn't set it |
+| `PATCHBAY_SNAPSHOT_KEEP` | `30,12m,3y,first` | Retention tiers for timestamped snapshots; see [Snapshot retention](#snapshot-retention). Also editable on `/ops` when the env file doesn't set it |
 | `PATCHBAY_SNAPSHOT_AT` | — | `HH:MM` local time to write one snapshot a day (the poller does it). Unset = on-demand only. Also editable on `/ops` when the env file doesn't set it |
 | `PATCHBAY_SNAPSHOT_DELIVER_DIR` | — | Second destination each finished snapshot is copied to (a mounted off-site share). Kept separate from the local directory so a delivery failure never costs you the snapshot; copies land under a temporary name and are renamed, so a sync client never picks up a half-written file |
 
@@ -110,6 +110,46 @@ redacted. It needs no network to open. Point your off-host sync at the
 snapshot directory; `patchbay-latest.html` is the stable name to serve or
 ship. Configs are scrubbed, but the file still describes a real network —
 treat it as sensitive.
+
+#### Snapshot retention
+
+`PATCHBAY_SNAPSHOT_KEEP` is a comma-separated list of tiers. A timestamped
+snapshot survives pruning if any tier claims it:
+
+| Term | Tier | Keeps |
+|---|---|---|
+| `<n>` or `<n>d` | daily | The newest `n` snapshots |
+| `<n>w` | weekly | The earliest snapshot of each of the last `n` weeks (Monday to Sunday) |
+| `<n>m` | monthly | The earliest snapshot of each of the last `n` calendar months |
+| `<n>y` | yearly | The earliest snapshot of each of the last `n` calendar years |
+| `first` | first | The oldest snapshot ever taken |
+
+- `0` in a tier means unlimited for that tier: `0m` keeps the first of
+  every month. A bare `0` keeps every snapshot.
+- A tier you leave out keeps nothing. The newest snapshot is always kept,
+  even by a spec with no daily term.
+- A bare integer keeps its earlier meaning: `30` keeps the newest 30 and
+  nothing else.
+- Periods count back from the newest snapshot, in calendar periods: with
+  `12m`, a month with no snapshot is still one of the 12.
+- Keepers are the earliest snapshot of each period, so a keeper is known
+  the day it is taken. Pruning never removes a keeper inside its window, so
+  the earliest file left in a month is that month's true first snapshot.
+
+The default, `30,12m,3y,first`, keeps about 46 files: 30 nightlies, the
+first of each of the last 12 months, the first of each of the last 3 years,
+and the first ever. At 5 MB a snapshot that is roughly 230 MB.
+
+Pruning runs after each snapshot, on the local directory and the delivery
+directory alike, and judges each by its own file names. It governs only
+`patchbay-YYYYMMDD-HHMMSS.html` files: `patchbay-latest.html` and
+alert-triggered copies (`…-alert.html`) are never pruned by the tiers.
+
+If the spec fails to parse, patchbay prunes nothing until you fix it, and
+`/ops` and `/snapshots` show the parse warning. A typo in a retention
+setting never deletes history. `/snapshots` lists the tier that keeps each
+file; a file that no tier claims (after you tighten the spec) goes with the
+next snapshot.
 
 ## Data sources
 
