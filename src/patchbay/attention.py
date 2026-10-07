@@ -341,9 +341,27 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
     items += _config_changed(conn, settings, now)
     items += _snapshot_failed(conn, now)
 
+    items = _apply_rule_settings(conn, items)
     order = {"crit": 0, "warn": 1}
     items.sort(key=lambda i: order.get(i["severity"], 2))  # crit first, order kept
     return items, checked
+
+
+def _apply_rule_settings(conn, items: list[dict]) -> list[dict]:
+    """The site's Rules-tab edits, applied here so every surface agrees: a
+    disabled rule shows nowhere, and a severity override is the severity
+    the attention list, /alerts, and the alert channel all see."""
+    rules = {r["name"]: r for r in conn.execute(
+        "SELECT name, enabled, severity FROM alert_rules")}
+    out = []
+    for it in items:
+        r = rules.get(it.get("rule"))
+        if r is not None and not r["enabled"]:
+            continue
+        if r is not None and r["severity"]:
+            it["severity"] = r["severity"]
+        out.append(it)
+    return out
 
 
 def _device_down(conn, settings, now: float) -> list[dict]:
