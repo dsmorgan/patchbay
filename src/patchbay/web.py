@@ -1187,6 +1187,13 @@ def _json_state(conn, key: str):
         return None
 
 
+def _config_keep_text(s) -> str:
+    """Effective per-device config revision keep, with where it came from."""
+    value = "unlimited" if s.config_keep == 0 else str(s.config_keep)
+    src = s.declaration_sources.get("PATCHBAY_CONFIG_KEEP") or "default"
+    return f"{value} per device · {src}"
+
+
 def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
     """The running config as patchbay understood it — values redacted where
     secret, declarations shown parsed (what the code will act on, not what
@@ -1238,6 +1245,7 @@ def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
                 f"{port(p)}={human_speed(c)}" for p, c in s.capacities.items()) or "—"),
             ("PATCHBAY_PANELS", ", ".join(
                 f"{n} (size {sz or 'auto'}, /{rx}/)" for n, sz, rx in s.panels) or "—"),
+            ("PATCHBAY_CONFIG_KEEP", _config_keep_text(s)),
         ]),
     ]
 
@@ -1971,6 +1979,7 @@ def configs(request: Request):
     return templates.TemplateResponse(request, "configs.html", {
         "nodes": nodes, "error": error, "oxidized_url": settings.oxidized_url,
         "entries": entries, "problems": problems, "truncated": truncated,
+        "keep_text": _config_keep_text(settings),
     })
 
 

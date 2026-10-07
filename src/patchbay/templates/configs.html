@@ -35,6 +35,9 @@ docker-compose.</p>
 <p class="muted">Could not read history for: {{ problems | join(", ") }}</p>
 {% endif %}
 
+<p class="muted">Firewall config history keeps {{ keep_text }}. Change it on
+<a href="/ops">Ops</a> (<span class="mono">PATCHBAY_CONFIG_KEEP</span>).</p>
+
 <h2>Devices and their last backup</h2>
 <div class="scroll"><table>
   {# "address" not "ip": API-sourced rows carry the configured management
