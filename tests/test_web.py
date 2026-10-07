@@ -1601,6 +1601,8 @@ def test_confignode_row_links_keep_page(clean_env, tmp_path, client):
     assert "&amp;page=3" in p3 or "&page=3" in p3
     assert 'page=3">view' in p3
     assert "page=" not in client.get("/configs/fw1").text.split("Versions")[1].split("</table>")[0]
+
+
 def _unreadable(monkeypatch):
     from patchbay import config as cfg
 
