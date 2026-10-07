@@ -470,6 +470,14 @@ def load_settings() -> Settings:
         warnings.append(f"PATCHBAY_SNAPSHOT_AT: {snapshot_at!r} is not HH:MM — "
                         "the daily snapshot is off until it is")
         snapshot_at = None
+    # #65 replaces this parse with a tier spec; until then a bad stored value
+    # must not make load_settings raise (it would 500 /ops, the only fix)
+    try:
+        snapshot_keep = int(env("PATCHBAY_SNAPSHOT_KEEP", "30") or 30)
+    except ValueError:
+        snapshot_keep = 30
+        warnings.append(f"PATCHBAY_SNAPSHOT_KEEP: {env('PATCHBAY_SNAPSHOT_KEEP')!r} "
+                        "is not a whole number — using 30")
     config_keep = CONFIG_KEEP_DEFAULT
     raw_keep = (env("PATCHBAY_CONFIG_KEEP") or "").strip()
     if raw_keep:
@@ -543,7 +551,7 @@ def load_settings() -> Settings:
         snapshot_dir=(env("PATCHBAY_SNAPSHOT_DIR")
                       or os.path.join(os.path.dirname(env("PATCHBAY_DB", "patchbay.db"))
                                       or ".", "snapshots")),
-        snapshot_keep=int(env("PATCHBAY_SNAPSHOT_KEEP", "30") or 30),
+        snapshot_keep=snapshot_keep,
         snapshot_deliver_dir=env("PATCHBAY_SNAPSHOT_DELIVER_DIR") or None,
         snapshot_at=snapshot_at,
         config_keep=config_keep,

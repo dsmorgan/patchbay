@@ -1497,3 +1497,11 @@ def test_ops_lists_config_keep(clean_env, client):
     body = client.get("/ops").text
     assert "PATCHBAY_CONFIG_KEEP" in body and "200 per device" in body
     assert "PATCHBAY_SNAPSHOT_KEEP" in body
+
+
+def test_configs_keep_line_shows_when_oxidized_unreachable(clean_env, client):
+    clean_env.setenv("OXIDIZED_URL", "http://ox.invalid")
+    r = client.get("/configs")
+    assert r.status_code == 200
+    assert "unreachable" in r.text
+    assert "Firewall config history keeps 50 per device" in r.text
