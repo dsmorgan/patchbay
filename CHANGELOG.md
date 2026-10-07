@@ -6,7 +6,7 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.19.0] — 2026-10-07
 
 ### Added
 - Alert notifications (#61). The **Transports** tab on `/alerts` adds webhook
