@@ -35,6 +35,7 @@
   </tr>
   {% endfor %}
 </table></div>
+{% include "_pager.html" %}
 {% if db_held %}
 <form method="post" action="/configs/{{ node | urlencode }}/delete"
   onsubmit="return confirm('Delete ALL stored revisions for {{ label or node }}? The next poll starts history fresh.')">

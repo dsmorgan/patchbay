@@ -1,0 +1,6 @@
+{% if pager.pages > 1 %}
+<p class="muted" style="font-size: 0.85rem">page {{ pager.page }} of {{ pager.pages }}
+· {{ pager.total }} total ·
+{% if pager.newer %}<a href="{{ pager_base }}page={{ pager.newer }}">newer</a>{% else %}<span>newer</span>{% endif %} ·
+{% if pager.older %}<a href="{{ pager_base }}page={{ pager.older }}">older</a>{% else %}<span>older</span>{% endif %}</p>
+{% endif %}
