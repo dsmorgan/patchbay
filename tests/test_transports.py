@@ -561,3 +561,32 @@ def test_kuma_test_button_pushes_down_while_held_down(dbp):
     assert ok
     assert rec.seen[-1].url.params["status"] == "down"
     assert rec.seen[-1].url.params["msg"].startswith("patchbay test: 1 alert")
+
+
+@pytest.mark.parametrize("default", ["1:crit", "1"])
+def test_delete_clears_routes_default_and_outbox(clean_env, tmp_path, default):
+    import patchbay.web as web
+
+    client = TestClient(web.app)
+    client.get("/alerts")
+    dbp = str(tmp_path / "test.db")
+    tid = _add(dbp, "hook", "generic", HOOK)
+    _route(dbp, "ipam-drift", str(tid))                  # a bare-id route
+    _poll(dbp, [_item("source:stale")], T0, Recorder(status=503))
+    c = _c(dbp)
+    pdb.set_state(c, transports.DEFAULT_ROUTE_KEY, default)
+    assert json.loads(pdb.get_state(c, transports.OUTBOX_KEY))
+    c.commit(); c.close()
+
+    assert client.post(f"/alerts/transports/{tid}/delete",
+                       follow_redirects=False).status_code == 303
+    c = _c(dbp)
+    assert c.execute("SELECT route FROM alert_rules WHERE name='ipam-drift'").fetchone()[0] is None
+    assert pdb.get_state(c, transports.DEFAULT_ROUTE_KEY) is None
+    assert json.loads(pdb.get_state(c, transports.OUTBOX_KEY)) == []
+    c.close()
+    # SQLite hands the freed id to the next transport, which starts clean
+    assert _add(dbp, "new", "generic", HOOK) == tid
+    rec = Recorder()
+    _poll(dbp, [_item("source:stale")], T0 + 300, rec)
+    assert rec.seen == []

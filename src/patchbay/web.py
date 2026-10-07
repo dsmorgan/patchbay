@@ -575,14 +575,19 @@ def transport_delete(tid: int):
     try:
         db.init(conn)
         conn.execute("DELETE FROM alert_transports WHERE id = ?", (tid,))
-        # routes that named it fall back to the default rather than
-        # pointing at nothing; its queued retries drop next cycle
+        # routes that named it, as `id:sev` or a bare `id`, fall back to the
+        # default rather than pointing at nothing
         prefix = f"{tid}:"
-        conn.execute("UPDATE alert_rules SET route = NULL WHERE substr(route, 1, ?) = ?",
-                     (len(prefix), prefix))
+        conn.execute("UPDATE alert_rules SET route = NULL "
+                     "WHERE route = ? OR substr(route, 1, ?) = ?",
+                     (str(tid), len(prefix), prefix))
         raw = db.get_state(conn, transports.DEFAULT_ROUTE_KEY) or ""
-        if raw.startswith(prefix):
+        if raw == str(tid) or raw.startswith(prefix):
             conn.execute("DELETE FROM app_state WHERE key = ?", (transports.DEFAULT_ROUTE_KEY,))
+        # SQLite reuses the highest INTEGER PRIMARY KEY once it is deleted,
+        # so the next transport could take this id: its queued retries go
+        # now, in the same transaction, or that transport would inherit them
+        transports.drop_outbox(conn, tid)
         conn.commit()
     finally:
         conn.close()
