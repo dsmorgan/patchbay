@@ -2,20 +2,20 @@
 
 This module is the one place the attention rules live — the Overview's
 attention list, the /alerts page, and /drift all render what it computes,
-and the phase-6 alerting engine (#22) is meant to grow out of it rather
-than beside it. It deliberately imports no web framework, so the poller
-can call `record_first_seen` without dragging FastAPI in.
+and the alert engine (`alerting.py`, ADR-0003) evaluates the same items
+rather than a rule set of its own. It deliberately imports no web
+framework, so the poller can run the rules without dragging FastAPI in.
 
-Every item carries a stable `key` (its identity across polls), a
-`category`, a `severity`, and — once the poll path has seen it —
-`first_seen`. First-seen is recorded at poll time, not page-view time:
-"when did patchbay first notice" is a fact about the polling, and a page
-that nobody looked at for a week must not reset it.
+Every item carries a stable `key` (its identity across polls), the `rule`
+that raised it (a row in `alerting.RULES`), a `category`, a `severity`,
+and — once the poll path has seen it — `first_seen`. First-seen is the
+alert's `raised_at`, recorded at poll time, not page-view time: "when did
+patchbay first notice" is a fact about the polling, and a page that nobody
+looked at for a week must not reset it.
 """
 from __future__ import annotations
 
 import ipaddress
-import json
 import sqlite3
 
 from . import db
@@ -24,8 +24,6 @@ STALE_MIN = 15  # same rule the top bar uses
 
 # category -> the short label the summary strip and filters show
 CATEGORIES = {"link": "slow links", "ipam": "IPAM", "source": "sources"}
-
-_FIRST_SEEN_KEY = "alert_first_seen"
 
 
 def human_speed(bps) -> str:
@@ -235,6 +233,7 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
             if names & settings.expected:
                 continue
             items.append({
+                "rule": "slow-link",
                 "key": f"link:{l['a_device']}:{l['a_interface']}:"
                        f"{l['b_device']}:{l['b_interface']}",
                 "category": "link",
@@ -252,6 +251,7 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
         n = len(report["conflicts"])
         if n:
             items.append({
+                "rule": "ipam-drift",
                 "key": "ipam:conflicts",
                 "category": "ipam",
                 "severity": "warn",
@@ -270,6 +270,7 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
         if stale:
             named = ", ".join(f"{s} ({human_age(m)})" for s, m in stale)
             items.append({
+                "rule": "stale-source",
                 "key": "source:stale",
                 "category": "source",
                 "severity": "warn",
@@ -281,32 +282,13 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
     return items, checked
 
 
-def _stored_first_seen(conn: sqlite3.Connection) -> dict[str, float]:
-    raw = db.get_state(conn, _FIRST_SEEN_KEY)
-    if not raw:
-        return {}
-    try:
-        seen = json.loads(raw)
-        return seen if isinstance(seen, dict) else {}
-    except ValueError:
-        return {}
-
-
 def stamp_first_seen(conn: sqlite3.Connection, items: list[dict]) -> None:
-    """Read-only: annotate items with the poll-recorded first-seen time.
-    An item the poll has not recorded yet reads as just-noticed (None)."""
-    seen = _stored_first_seen(conn)
+    """Read-only: annotate items with their open alert's raised_at and state
+    (pending or active). An item the poll has not recorded yet reads as
+    just-noticed: first_seen None, state None."""
+    open_ = {r["key"]: r for r in conn.execute(
+        "SELECT key, raised_at, state FROM alerts WHERE state != 'cleared'")}
     for it in items:
-        it["first_seen"] = seen.get(it["key"])
-
-
-def record_first_seen(conn: sqlite3.Connection, settings) -> None:
-    """Poll-path bookkeeping: a new item gets first_seen = now, a still-firing
-    one keeps its timestamp, and a cleared one is forgotten — so a condition
-    that clears and returns reads as new, which it is. The caller owns the
-    transaction, same contract as the collectors."""
-    items, _ = attention_items(conn, settings)
-    seen = _stored_first_seen(conn)
-    now = db.now()
-    seen = {it["key"]: seen.get(it["key"], now) for it in items}
-    db.set_state(conn, _FIRST_SEEN_KEY, json.dumps(seen))
+        row = open_.get(it["key"])
+        it["first_seen"] = row["raised_at"] if row else None
+        it["alert_state"] = row["state"] if row else None

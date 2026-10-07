@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import db
+from . import alerting, db
 from . import routed
 from .attention import (CATEGORIES, STALE_MIN, attention_items, device_totals, drift_report,
                         human_age, human_speed, ip_sort_key, ipam_link,
@@ -1544,19 +1544,21 @@ def ops_poll(source: str | None = None):
         except Exception as e:
             conn.rollback()
             lines.append(f"[fail] normalize: {e}")
-        # first-seen bookkeeping for the attention items (issue #28) — the
-        # poll is when patchbay notices, so the poll timestamps it
+        # the alert lifecycle (ADR-0003), same place the poller runs it
+        notes = []
         try:
-            from .attention import record_first_seen
-
-            record_first_seen(conn, settings)
+            notes = alerting.run(conn, settings)
         except Exception as e:
-            lines.append(f"[warn] attention bookkeeping: {e}")
+            lines.append(f"[warn] alerting: {e}")
         db.save_last_poll(conn, lines)
         conn.commit()
     finally:
         conn.close()
         _ops_lock.release()
+    try:  # after commit: a receiver never holds the database or the lock
+        alerting.dispatch(notes)
+    except Exception as e:
+        lines.append(f"[warn] alert dispatch: {e}")
     return {"lines": lines}
 
 

@@ -765,12 +765,11 @@ def test_alerts_page_degrades(clean_env, tmp_path, client):
 
 
 def test_first_seen_recorded_at_poll_time(clean_env, tmp_path):
-    # issue #28 tie-in with #22: an item's first_seen is written by the poll
-    # path, kept while it fires, and forgotten when it clears — so a
-    # condition that clears and returns reads as new, which it is
-    from patchbay import db as pdb2
-    from patchbay.attention import (attention_items, record_first_seen,
-                                    stamp_first_seen)
+    # issue #28 tie-in with #22: an item's first_seen is its alert's
+    # raised_at, written by the poll path, kept while it fires, and gone
+    # when it clears — so a condition that clears and returns reads as new
+    from patchbay import alerting
+    from patchbay.attention import attention_items, stamp_first_seen
     from patchbay.config import load_settings
 
     dbp = _slow_link_db(tmp_path)
@@ -784,18 +783,18 @@ def test_first_seen_recorded_at_poll_time(clean_env, tmp_path):
     stamp_first_seen(c, items)
     assert items[0]["first_seen"] is None            # nothing recorded yet
 
-    record_first_seen(c, settings)
+    alerting.run(c, settings)
     stamp_first_seen(c, items)
     first = items[0]["first_seen"]
     assert first is not None
-    record_first_seen(c, settings)                   # still firing: kept
+    alerting.run(c, settings)                        # still firing: kept
     stamp_first_seen(c, items)
     assert items[0]["first_seen"] == first
 
-    # the condition clears -> the key is forgotten
+    # the condition clears -> no open alert, so nothing to stamp
     c.execute("UPDATE interfaces SET speed_bps = 10000000000")
     c.commit()
-    record_first_seen(c, settings)
+    alerting.run(c, settings)
     stamp_first_seen(c, items)
     assert items[0]["first_seen"] is None
     c.close()
