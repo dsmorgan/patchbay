@@ -9,6 +9,8 @@ put.
 ## [Unreleased]
 
 ### Added
+- `/snapshots` and the revision list on `/configs/{node}` page at 25 rows,
+  so a large keep count or an unlimited one stays readable (#68).
 - Tiered snapshot retention (#65). `PATCHBAY_SNAPSHOT_KEEP` takes a spec such
   as the new default `30,12m,3y,first`: the first snapshot of each of the last
   30 days, 12 months, and 3 years, plus the first ever. The newest snapshot
