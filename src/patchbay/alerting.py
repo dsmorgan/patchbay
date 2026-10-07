@@ -379,12 +379,18 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             continue
         conn.execute("UPDATE alerts SET state='cleared', cleared_at=? WHERE id=?",
                      (now, row["id"]))
-        # a pending alert that never went active was never announced, so
-        # its clear is history only, not news
-        _event(conn, row["id"], now, "cleared", row,
-               None if row["state"] == "active" else "never active")
-        if row["state"] == "active":
-            rule = _rule_for(row["rule"], catalog, config)
+        rule = _rule_for(row["rule"], catalog, config)
+        # a disabled rule says nothing about the condition, which may still
+        # hold; a "clear" would tell the receiver it is fixed. Likewise a
+        # pending alert was never announced: its clear is history, not news.
+        if not rule["enabled"]:
+            detail = "rule disabled"
+        elif row["state"] != "active":
+            detail = "never active"
+        else:
+            detail = None
+        _event(conn, row["id"], now, "cleared", row, detail)
+        if detail is None:
             notes.append(_note("clear", row, row["raised_at"], rule["route"]))
 
     if legacy:
