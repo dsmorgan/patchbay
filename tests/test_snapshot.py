@@ -107,13 +107,16 @@ def test_snapshot_retention(clean_env, tmp_path):
     clean_env.setenv("PATCHBAY_SNAPSHOT_KEEP", "2")
     d = tmp_path / "snaps"
     d.mkdir()
-    for name in ("patchbay-20250101-000000.html", "patchbay-20250102-000000.html",
-                 "patchbay-20250103-000000.html"):
+    # nightlies on the three days before today: a bare 2 is the first of
+    # each of the last 2 calendar days, so yesterday's survives with today's
+    from datetime import datetime, timedelta
+    old = [(datetime.now() - timedelta(days=n)).strftime("patchbay-%Y%m%d-000000.html")
+           for n in (3, 2, 1)]
+    for name in old:
         (d / name).write_text("old")
-    snap.write_snapshot(load_settings())
+    path = snap.write_snapshot(load_settings())
     kept = sorted(p.name for p in d.glob("patchbay-2*.html"))
-    assert len(kept) == 2 and kept[-1].startswith("patchbay-2")
-    assert "patchbay-20250101-000000.html" not in kept
+    assert kept == [old[-1], path.name]
 
 
 def test_last_poll_recorded(conn):
