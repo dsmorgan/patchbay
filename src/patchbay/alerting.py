@@ -99,7 +99,7 @@ _LEGACY_FIRST_SEEN = "alert_first_seen"
 
 @dataclass(frozen=True)
 class Notification:
-    kind: str                  # raise | remind | clear | event
+    kind: str                  # raise | escalate | remind | clear | event
     key: str
     rule: str
     severity: str
@@ -132,6 +132,7 @@ def seed_rules(conn: sqlite3.Connection, catalog: dict[str, Rule] = RULES) -> No
 
 
 SEVERITIES = ("crit", "warn", "info")
+_RANK = {"info": 1, "warn": 2, "crit": 3}
 
 
 def rule_settings(conn: sqlite3.Connection,
@@ -355,6 +356,14 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             state, active_at, notified = "active", now, now
             _event(conn, row["id"], now, "active", a)
             notes.append(_note("raise", a, row["raised_at"], rule["route"]))
+        elif (state == "active"
+              and _RANK.get(a["severity"], 0) > _RANK.get(row["severity"], 0)):
+            # a rise (a lossy gateway going down) is news the receiver has
+            # not had; a drop is not, and waits for the clear
+            notified = now
+            _event(conn, row["id"], now, "escalated", a,
+                   f"{row['severity']} -> {a['severity']}")
+            notes.append(_note("escalate", a, row["raised_at"], rule["route"]))
         elif (state == "active" and rule["remind"]
               and now - (notified or active_at or now) >= float(rule["remind"])):
             notified = now

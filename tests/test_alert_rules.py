@@ -200,9 +200,19 @@ def test_gateway_loss_threshold_and_severity_rise(conn, settings):
     now = pdb.now()
     alerting.evaluate(conn, _items(conn, settings, "gateway-degraded"), now=now)
     _gw(conn, "WAN_GW", "Offline", "100 %")
-    alerting.evaluate(conn, _items(conn, settings, "gateway-degraded"), now=now + 300)
+    notes = alerting.evaluate(conn, _items(conn, settings, "gateway-degraded"),
+                              now=now + 300)
+    # the rise is news: exactly one notification, at the new severity
+    assert [(n.kind, n.severity) for n in notes] == [("escalate", "crit")]
     [a] = conn.execute("SELECT * FROM alerts").fetchall()   # one alert, risen
     assert (a["key"], a["severity"], a["state"]) == ("gateway:WAN_GW", "crit", "active")
+    assert a["last_notified_at"] == now + 300
+
+    # a drop back to lossy is not: it waits for the clear
+    _gw(conn, "WAN_GW", "Online", "8 %")
+    assert alerting.evaluate(conn, _items(conn, settings, "gateway-degraded"),
+                             now=now + 600) == []
+    assert conn.execute("SELECT severity FROM alerts").fetchone()[0] == "warn"
 
 
 # --- config changed (event) ---------------------------------------------------
@@ -387,3 +397,4 @@ def test_rules_tab_gateway_loss_and_unknown_rule(clean_env, tmp_path):
         assert json.loads(c.execute("SELECT params FROM alert_rules WHERE "
                                     "name = 'gateway-degraded'").fetchone()[0])["loss"] == 12.5
     assert client.post("/alerts/rules/no-such-rule", data={}).status_code == 404
+
