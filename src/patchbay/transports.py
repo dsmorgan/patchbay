@@ -51,8 +51,13 @@ SEVERITIES = ("info", "warn", "crit")
 _RANK = {s: i for i, s in enumerate(SEVERITIES)}
 
 # Per request: a receiver on the LAN answers in milliseconds, so five
-# seconds is a dead receiver, not a slow one.
-TIMEOUT = httpx.Timeout(5.0)
+# seconds is a dead receiver, not a slow one. REQUEST_S is a wall-clock
+# limit on the whole exchange (see _request); TIMEOUT bounds each phase.
+REQUEST_S = 5.0
+TIMEOUT = httpx.Timeout(REQUEST_S)
+# a receiver's reply is read for its status and a short snippet only; a
+# receiver that answers with megabytes must not fill the poller's memory
+BODY_MAX = 4096
 # Per cycle: the poll runs every few minutes, so the transports together
 # may delay its exit by at most this much. What did not fit waits for the
 # next cycle (generic) or is simply pushed next cycle (kuma).
@@ -157,27 +162,71 @@ def mask_url(url: str) -> str:
         return "…"
 
 
-def _redact(text: str, url: str) -> str:
-    """Remove every piece of `url` that could carry a credential from a
+# Kuma's own parameters: patchbay overwrites them on every push, so their
+# values ("up", "OK") are not secrets, and redacting them would mangle
+# ordinary words in an error message
+_KUMA_PARAMS = {"status", "msg", "ping"}
+
+
+def _secret_pieces(url: str, *, kind: str | None = None) -> set[str]:
+    """Every substring of `url` that could carry a credential, raw and
+    percent-decoded: the whole URL, the URL without its query, each query
+    value, the username and password, and every path segment longer than
+    one character."""
+    from urllib.parse import unquote
+
+    pieces = {url, unquote(url)}
+    try:
+        u = httpx.URL(url)
+    except Exception:
+        return {p for p in pieces if p}
+    pieces |= {str(u), str(u.copy_with(query=None))}
+    raw_path = u.raw_path.decode("ascii", "replace").split("?", 1)[0]
+    for path in (raw_path, u.path):
+        if len(path) > 1:
+            pieces.add(path)
+        # every segment, short ones included: a receiver may put a token
+        # anywhere in the path, and an over-redacted error is still useful.
+        # A single character carries no secret, and redacting one would
+        # erase that letter from the whole message.
+        pieces |= {seg for seg in path.split("/") if len(seg) >= 2}
+    raw_query = u.query.decode("ascii", "replace")
+    if raw_query:
+        pieces |= {raw_query, unquote(raw_query)}
+        for pair in raw_query.split("&"):
+            key, _, value = pair.partition("=")
+            if kind == "kuma" and unquote(key) in _KUMA_PARAMS:
+                continue
+            pieces |= {value, unquote(value), unquote(value.replace("+", " "))}
+    if u.userinfo:
+        info = u.userinfo.decode("ascii", "replace")
+        pieces.add(info)
+        for part in info.split(":", 1):
+            pieces |= {part, unquote(part)}
+    pieces |= {u.username, u.password or ""}
+    return {p for p in pieces if p}
+
+
+def _redact(text: str, url: str, *, kind: str | None = None,
+            sent: str | None = None) -> str:
+    """Remove every piece of `url` (and of `sent`, the exact URL a request
+    went to, which differs for Kuma) that could carry a credential from a
     message bound for a log line, the page, or the history."""
     if not text:
         return text
-    pieces = {url}
-    try:
-        u = httpx.URL(url)
-        pieces |= {str(u.copy_with(query=None)), u.path if len(u.path) > 1 else "",
-                   u.query.decode() if u.query else "", u.userinfo.decode()}
-        pieces |= {seg for seg in u.path.split("/") if len(seg) >= 6}
-    except Exception:
-        pass
-    for p in sorted((p for p in pieces if p), key=len, reverse=True):
+    pieces = _secret_pieces(url, kind=kind)
+    if sent:
+        pieces |= _secret_pieces(sent, kind=kind)
+    for p in sorted(pieces, key=len, reverse=True):
         text = text.replace(p, "<redacted>")
     return text
 
 
-def _error_text(e: Exception, url: str) -> str:
+def _error_text(e: Exception, url: str, *, kind: str | None = None,
+                sent: str | None = None) -> str:
     detail = str(e).strip()
-    return _redact(f"{type(e).__name__}: {detail}" if detail else type(e).__name__, url)
+    return _redact(f"{type(e).__name__}: {detail}" if detail else type(e).__name__,
+                   url, kind=kind, sent=sent)
 
 
 def validate_url(url: str) -> str | None:
@@ -247,20 +296,50 @@ def _client(transport: httpx.BaseTransport | None) -> httpx.Client:
                         transport=transport or HTTP_TRANSPORT)
 
 
+class _Deadline(Exception):
+    """The response did not finish within the request's wall-clock limit."""
+
+
 def _request(client: httpx.Client, t, *, status: str | None = None, msg: str = "",
-             payload: dict | None = None) -> tuple[bool, str]:
-    """One delivery. Returns (ok, result); the result is safe to show."""
+             payload: dict | None = None, max_s: float = REQUEST_S) -> tuple[bool, str]:
+    """One delivery. Returns (ok, result); the result is safe to show.
+
+    httpx's timeout bounds each phase (connect, each read), not the whole
+    request, so a receiver that trickles its body a byte at a time would
+    hold the poll forever. The request streams instead: every phase gets
+    at most `max_s`, the body read stops at a monotonic deadline of `max_s`
+    from the start, and at most BODY_MAX bytes are read."""
+    max_s = max(0.1, min(REQUEST_S, max_s))
+    deadline = time.monotonic() + max_s
+    if t["kind"] == "kuma":
+        req = client.build_request("GET", kuma_url(t["url"], status or "up", msg),
+                                   timeout=httpx.Timeout(max_s))
+    else:
+        req = client.build_request("POST", t["url"], json=payload,
+                                   timeout=httpx.Timeout(max_s))
+    sent = str(req.url)
     try:
-        if t["kind"] == "kuma":
-            r = client.get(kuma_url(t["url"], status or "up", msg))
-        else:
-            r = client.post(t["url"], json=payload)
+        r = client.send(req, stream=True)
+        try:
+            body = b""
+            for chunk in r.iter_bytes():
+                body += chunk
+                if len(body) >= BODY_MAX:
+                    break
+                if time.monotonic() > deadline:
+                    raise _Deadline(f"no complete response within {max_s:g} s")
+        finally:
+            r.close()
     except Exception as e:  # any failure is a failed delivery, never a crash
-        return False, _error_text(e, t["url"])
-    snippet = " ".join(r.text.split())[:120] if r.text else ""
-    result = _redact(f"HTTP {r.status_code}" + (f" {snippet}" if snippet else ""), t["url"])
+        return False, _error_text(e, t["url"], kind=t["kind"], sent=sent)
+    text = body[:BODY_MAX].decode("utf-8", "replace")
+    # redact the whole body first, then shorten: cutting first could leave
+    # the front half of a token that no longer matches the full one
+    clean = " ".join(_redact(text, t["url"], kind=t["kind"], sent=sent).split())
+    snippet = clean[:120] + ("…" if len(clean) > 120 else "")
+    result = f"HTTP {r.status_code}" + (f" {snippet}" if snippet else "")
     # Kuma answers 200 with {"ok": false, "msg": ...} for a bad token
-    if r.is_success and not (t["kind"] == "kuma" and '"ok":false' in r.text.replace(" ", "")):
+    if r.is_success and not (t["kind"] == "kuma" and '"ok":false' in text.replace(" ", "")):
         return True, result
     return False, result
 
@@ -353,6 +432,9 @@ class WebhookDispatcher:
         def spent() -> bool:
             return self.clock() - started >= self.budget
 
+        def left() -> float:
+            return self.budget - (self.clock() - started)
+
         with _client(self.transport) as client:
             for tid, t in transports.items():
                 mine = queued.get(tid, [])
@@ -368,7 +450,8 @@ class WebhookDispatcher:
                     down = held_down.get(tid, [])
                     status = "down" if down else "up"
                     ok, result = _request(client, t, status=status,
-                                          msg=kuma_message(down, base=base, now=now))
+                                          msg=kuma_message(down, base=base, now=now),
+                                          max_s=left())
                     updates[tid] = {"ok": ok, "result": result}
                     # the push is the delivery of every state change routed
                     # here; one-shot events cannot hold a monitor down, so
@@ -393,7 +476,7 @@ class WebhookDispatcher:
                         break
                     ok, result = _request(client, t, payload=generic_payload(
                         n, transport=t["name"], base=base, now=now,
-                        category=alert_rows[n.key][1]))
+                        category=alert_rows[n.key][1]), max_s=left())
                     if ok:
                         sent += 1
                         events.append((n, "notified", t["name"]))
@@ -424,8 +507,11 @@ class WebhookDispatcher:
                 "severity, text, href, detail) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (alert_id, now, event, n.key, n.rule, category or "", n.severity,
                  n.text, n.href, detail))
+        # a transport deleted while this cycle's requests were in flight
+        # must not leave queued notes for a later transport to inherit
+        alive = {r[0] for r in conn.execute("SELECT id FROM alert_transports")}
         per: dict[int, list] = {}
-        for e in new_outbox:
+        for e in (e for e in new_outbox if e["t"] in alive):
             per.setdefault(e["t"], []).append(e)
         kept = [e for q in per.values() for e in q[-OUTBOX_MAX:]]
         db.set_state(conn, OUTBOX_KEY, json.dumps(kept))
