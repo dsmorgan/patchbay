@@ -123,9 +123,10 @@ DECLARATION_HELP = {
 # Help for PATCHBAY_SNAPSHOT_KEEP, kept as its own constant beside the tier
 # parser's default so /ops and docs/configuration.md describe one syntax.
 SNAPSHOT_KEEP_HELP = {
-    "what": "How many break-glass snapshots to keep, by tier: the newest N, "
-            "plus the first of each recent week, month, and year, plus the "
-            "first ever. A spec that fails to parse prunes nothing.",
+    "what": "Which break-glass snapshots to keep, by tier: the first of "
+            "each recent day, week, month, and year, plus the first ever "
+            "and always the newest. A spec that fails to parse prunes "
+            "nothing.",
     "syntax": "comma-separated terms: N or Nd (daily), Nw (weekly), Nm "
               "(monthly), Ny (yearly), first; 0 in a tier = unlimited; a "
               "bare 0 = keep everything",

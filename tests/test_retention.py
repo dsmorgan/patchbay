@@ -37,7 +37,10 @@ def test_spec_terms_whitespace_and_case():
 
 def test_bare_integer_is_daily_only():
     assert parse_keep_spec("30") == KeepSpec(daily=30)
-    assert parse_keep_spec("0") == KeepSpec(daily=0)
+    # a bare 0 is the pre-tier "keep everything", not 0d (first of every day)
+    assert parse_keep_spec("0") == KeepSpec(everything=True)
+    assert parse_keep_spec("0d") == KeepSpec(daily=0)
+    assert str(parse_keep_spec("0")) == "0"
 
 
 @pytest.mark.parametrize("raw", ["30,", "thirty", "-5", "12x", "3y,first,2y",
@@ -49,9 +52,12 @@ def test_bad_specs_refuse(raw):
 
 def test_describe_reads_as_a_sentence():
     assert parse_keep_spec(DEFAULT_SPEC).describe() == (
-        "the newest 30, the first of each of the last 12 months, "
-        "the first of each of the last 3 years and the first ever")
-    assert parse_keep_spec("0,3y").describe() == "every timestamped snapshot"
+        "the newest, the first of each of the last 30 days, the first of "
+        "each of the last 12 months, the first of each of the last 3 years "
+        "and the first ever")
+    assert parse_keep_spec("0").describe() == "every timestamped snapshot"
+    assert parse_keep_spec("1").describe() == (
+        "the newest and the first of the latest day")
     assert parse_keep_spec("0m").describe() == (
         "the newest and the first of every month")
 
@@ -149,6 +155,38 @@ def test_zero_keeps_everything():
     # 0 in a periodic tier is that tier unlimited, not "off"
     keep = select_keepers(every, parse_keep_spec("1,0m"))
     assert len(keep) == 13   # every month-first; the newest is one of them
+
+
+def test_same_day_extras_never_evict_nightlies():
+    """Ten on-demand snapshots in one afternoon take one daily slot, not
+    ten: the nightlies before them all survive."""
+    nights = nightly(date(2025, 3, 1), date(2025, 3, 10))
+    burst = [datetime(2025, 3, 10, 14, m) for m in range(0, 50, 5)]
+    spec = parse_keep_spec("10")
+    on_disk: set[datetime] = set()
+    for ts in sorted(nights + burst):
+        on_disk.add(ts)
+        on_disk = set(select_keepers(on_disk, spec))
+    # the burst's last file is the newest, kept until the next snapshot
+    assert on_disk == set(nights) | {burst[-1]}
+    keep = select_keepers(on_disk, spec)
+    assert keep[burst[-1]] == ("newest",)
+    assert keep[nights[-1]] == ("daily",)
+    # the next nightly retires it
+    on_disk.add(datetime(2025, 3, 11, 3, 30))
+    assert burst[-1] not in select_keepers(on_disk, spec)
+
+
+def test_bare_zero_keeps_same_day_extras_but_0d_thins_them():
+    stamps = [datetime(2025, 3, 10, h) for h in (3, 9, 14)]
+    assert set(select_keepers(stamps, parse_keep_spec("0"))) == set(stamps)
+    assert set(select_keepers(stamps, parse_keep_spec("0d"))) == {stamps[0], stamps[-1]}
+
+
+def test_daily_window_counts_empty_days():
+    stamps = [datetime(2025, 3, 1), datetime(2025, 3, 2), datetime(2025, 3, 5)]
+    assert set(select_keepers(stamps, parse_keep_spec("4"))) == {
+        datetime(2025, 3, 2), datetime(2025, 3, 5)}
 
 
 def test_spec_without_daily_still_keeps_the_newest():
@@ -274,7 +312,7 @@ def test_ops_shows_parsed_tiers_and_warning(clean_env, tmp_path):
     from patchbay.web import app
 
     body = TestClient(app).get("/ops").text
-    assert "30,12m,3y,first · keeps the newest 30" in body
+    assert "30,12m,3y,first · keeps the newest, the first of each of the last 30 days" in body
     clean_env.setenv("PATCHBAY_SNAPSHOT_KEEP", "30,12q")
     body = TestClient(app).get("/ops").text
     assert "unparsed · pruning off" in body

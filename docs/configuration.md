@@ -118,25 +118,29 @@ snapshot survives pruning if any tier claims it:
 
 | Term | Tier | Keeps |
 |---|---|---|
-| `<n>` or `<n>d` | daily | The newest `n` snapshots |
+| `<n>` or `<n>d` | daily | The earliest snapshot of each of the last `n` calendar days |
 | `<n>w` | weekly | The earliest snapshot of each of the last `n` weeks (Monday to Sunday) |
 | `<n>m` | monthly | The earliest snapshot of each of the last `n` calendar months |
 | `<n>y` | yearly | The earliest snapshot of each of the last `n` calendar years |
 | `first` | first | The oldest snapshot ever taken |
 
 - `0` in a tier means unlimited for that tier: `0m` keeps the first of
-  every month. A bare `0` keeps every snapshot.
+  every month. A bare `0` keeps every snapshot, as it did before tiers.
 - A tier you leave out keeps nothing. The newest snapshot is always kept,
-  even by a spec with no daily term.
-- A bare integer keeps its earlier meaning: `30` keeps the newest 30 and
-  nothing else.
+  even when no tier claims it, such as a second snapshot on the same day.
+  The next snapshot prunes it.
+- A bare integer is a daily tier: with one snapshot a night, `30` keeps the
+  same 30 files it did before tiers. Extra on-demand snapshots no longer
+  push nightlies out: only the first snapshot of each day counts.
 - Periods count back from the newest snapshot, in calendar periods: with
-  `12m`, a month with no snapshot is still one of the 12.
+  `12m`, a month with no snapshot is still one of the 12, and with `30`, a
+  day with no snapshot is still one of the 30.
 - Keepers are the earliest snapshot of each period, so a keeper is known
   the day it is taken. Pruning never removes a keeper inside its window, so
   the earliest file left in a month is that month's true first snapshot.
 
-The default, `30,12m,3y,first`, keeps about 46 files: 30 nightlies, the
+The default, `30,12m,3y,first`, keeps about 46 files: the first snapshot of
+each of the last 30 days (the nightlies), the
 first of each of the last 12 months, the first of each of the last 3 years,
 and the first ever. At 5 MB a snapshot that is roughly 230 MB.
 
