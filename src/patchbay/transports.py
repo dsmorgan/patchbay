@@ -357,6 +357,17 @@ def kuma_alerts(conn: sqlite3.Connection, default: Route | None) -> dict[int, li
     return out
 
 
+def drop_outbox(conn: sqlite3.Connection, tid: int) -> None:
+    """Forget a transport's queued retries (on delete). The caller commits."""
+    try:
+        outbox = json.loads(db.get_state(conn, OUTBOX_KEY) or "[]")
+    except ValueError:
+        outbox = []
+    kept = [e for e in outbox if isinstance(e, dict) and e.get("t") != tid] \
+        if isinstance(outbox, list) else []
+    db.set_state(conn, OUTBOX_KEY, json.dumps(kept))
+
+
 def _note_dict(n: alerting.Notification) -> dict:
     return dataclasses.asdict(n)
 
