@@ -1271,6 +1271,15 @@ def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
                 f"{n} (size {sz or 'auto'}, /{rx}/)" for n, sz, rx in s.panels) or "—"),
             ("PATCHBAY_CONFIG_KEEP", _config_keep_text(s)),
         ]),
+        ("snapshots", [
+            ("PATCHBAY_SNAPSHOT_DIR", s.snapshot_dir),
+            ("PATCHBAY_SNAPSHOT_DELIVER_DIR", s.snapshot_deliver_dir or "—"),
+            # the tiers as parsed, not as typed: an unparsed spec reads as
+            # "pruning off" here, with the reason in the warnings box
+            ("PATCHBAY_SNAPSHOT_KEEP",
+             f"{s.snapshot_keep} · keeps {s.snapshot_keep.describe()}"
+             if s.snapshot_keep else "unparsed · pruning off"),
+        ]),
     ]
 
 
@@ -1341,8 +1350,10 @@ def ops_snapshot():
             path = write_snapshot(settings)
         except DeliveryError as e:
             delivered = f"[warn] written locally, delivery failed: {e}"
-            path = max(Path(settings.snapshot_dir).glob("patchbay-2*.html"),
-                       key=lambda p: p.stat().st_mtime)
+            from .retention import stamp_of
+
+            path = max((p for p in Path(settings.snapshot_dir).iterdir()
+                        if stamp_of(p.name)), key=lambda p: p.stat().st_mtime)
         lines = [f"[ok]   snapshot: {path} "
                  f"({path.stat().st_size / 1e6:.1f} MB in {db.now() - t0:.0f}s)"]
         if delivered:
@@ -1372,29 +1383,30 @@ def snapshots(request: Request):
     """Kept break-glass snapshots: what is on disk, and where they go. The
     live UI's action button posts to /ops/snapshot (unchanged); this page
     just lists and serves what that leaves behind."""
-    import re
-    import time as _time
-
     from . import demo
+    from .retention import classify, stamp_of
 
     settings = load_settings()
+    spec = settings.snapshot_keep
     d = Path(settings.snapshot_dir)
     found = []
     if d.is_dir():
-        for p in d.glob("patchbay-2*.html"):  # excludes patchbay-latest.html
-            m = re.fullmatch(r"patchbay-(\d{8})-(\d{6})\.html", p.name)
-            if not m:
-                continue
-            try:
-                ts = _time.mktime(_time.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S"))
-            except ValueError:
+        files = {p.name: p for p in d.iterdir()}
+        # the same selection pruning runs, so the tier shown is the reason a
+        # file survives; on an unparsed spec nothing is pruned, so no tier
+        # is claimed either
+        kept, _ = classify(files, spec) if spec else ({}, [])
+        for name, p in files.items():
+            ts = stamp_of(name)  # None for latest, alert copies, strays
+            if ts is None:
                 continue
             found.append({
-                "name": p.name,
-                "when": _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(ts)),
+                "name": name,
+                "when": ts.strftime("%Y-%m-%d %H:%M:%S"),
                 "ts": ts,
+                "tiers": kept.get(name, ()),
                 "size_mb": round(p.stat().st_size / 1e6, 1),
-                "href": f"/snapshots/{p.name}",
+                "href": f"/snapshots/{name}",
             })
     found.sort(key=lambda s: s["ts"], reverse=True)
     conn = _conn()
@@ -1410,7 +1422,10 @@ def snapshots(request: Request):
                    "href": "/snapshots/patchbay-latest.html"},
         "settings_view": {"dir": settings.snapshot_dir,
                            "deliver_dir": settings.snapshot_deliver_dir,
-                           "at": settings.snapshot_at, "keep": settings.snapshot_keep},
+                           "at": settings.snapshot_at, "keep": spec,
+                           "keep_warnings": [
+                               w for w in settings.parse_warnings
+                               if w.startswith("PATCHBAY_SNAPSHOT_KEEP:")]},
         "is_demo": is_demo,
         "ages": ages,
     })

@@ -21,6 +21,7 @@ import httpx
 from . import db
 from . import routed
 from .config import Settings
+from .retention import classify
 from .ports import port_kind
 
 # a line whose remainder follows one of these introduces a secret — keep the
@@ -194,8 +195,8 @@ def write_snapshot(settings: Settings, out: str | None = None) -> Path:
     """Generate and write. With no explicit path: timestamped file in
     PATCHBAY_SNAPSHOT_DIR, plus a stable patchbay-latest.html copy (a fixed
     name is what a sync target or reverse proxy wants to point at), pruning
-    timestamped snapshots beyond PATCHBAY_SNAPSHOT_KEEP, then delivering to
-    PATCHBAY_SNAPSHOT_DELIVER_DIR when one is configured."""
+    timestamped snapshots no PATCHBAY_SNAPSHOT_KEEP tier claims, then
+    delivering to PATCHBAY_SNAPSHOT_DELIVER_DIR when one is configured."""
     html = generate(settings)
     if out:
         path = Path(out)
@@ -207,9 +208,7 @@ def write_snapshot(settings: Settings, out: str | None = None) -> Path:
     path = d / time.strftime("patchbay-%Y%m%d-%H%M%S.html")
     path.write_text(html, encoding="utf-8", newline="\n")
     (d / "patchbay-latest.html").write_text(html, encoding="utf-8", newline="\n")
-    if settings.snapshot_keep > 0:
-        for old in sorted(d.glob("patchbay-2*.html"))[:-settings.snapshot_keep]:
-            old.unlink()
+    prune(settings, d)
     if settings.snapshot_deliver_dir:
         deliver(settings, path)
     return path
@@ -226,11 +225,22 @@ def deliver(settings: Settings, path: Path) -> None:
             tmp = dest / f".{name}.part"
             shutil.copyfile(path, tmp)
             tmp.replace(dest / name)
-        if settings.snapshot_keep > 0:
-            for old in sorted(dest.glob("patchbay-2*.html"))[:-settings.snapshot_keep]:
-                old.unlink()
+        prune(settings, dest)
     except OSError as e:
         raise DeliveryError(f"{dest}: {e}") from e
+
+
+def prune(settings: Settings, d: Path) -> list[str]:
+    """Delete the timestamped snapshots in one directory that no retention
+    tier claims; returns the names removed. Each directory is judged on its
+    own files, so a delivery share that missed a night still keeps its own
+    first-of-month. An unparsed spec prunes nothing."""
+    if settings.snapshot_keep is None:
+        return []
+    _, doomed = classify((p.name for p in d.iterdir()), settings.snapshot_keep)
+    for name in doomed:
+        (d / name).unlink()
+    return doomed
 
 
 def due_today(conn, settings: Settings) -> bool:

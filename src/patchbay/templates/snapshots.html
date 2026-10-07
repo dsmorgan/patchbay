@@ -23,11 +23,15 @@ these snapshots are safe to share.</p>
 <h2>Kept here</h2>
 {% if snapshots %}
 <div class="scroll"><table>
-  <tr><th>when</th><th>file</th><th>size</th><th></th><th></th></tr>
+  <tr><th>when</th><th>file</th><th>kept as</th><th>size</th><th></th><th></th></tr>
   {% for s in snapshots %}
   <tr>
     <td class="muted">{{ s.when }}</td>
     <td class="mono">{{ s.name }}</td>
+    {# no tier: the spec changed since the last prune, so the next
+       snapshot removes it (or the spec didn't parse and nothing is pruned) #}
+    <td class="muted">{{ s.tiers | join(", ") if s.tiers
+        else ("—" if not settings_view.keep else "pruned next snapshot") }}</td>
     <td class="muted">{{ s.size_mb }} MB</td>
     <td><a href="{{ s.href }}">download</a></td>
     <td><form method="post" action="/snapshots/{{ s.name }}/delete"
@@ -50,8 +54,14 @@ Written to <span class="mono">{{ settings_view.dir }}</span>{% if settings_view.
 %}, delivered to <span class="mono">{{ settings_view.deliver_dir }}</span>{% endif %}
 · {% if settings_view.at %}one written automatically at {{ settings_view.at }} daily
 {% else %}on-demand only — set <span class="mono">PATCHBAY_SNAPSHOT_AT</span> on
-<a href="/ops">Ops</a> for a daily one{% endif %} · keeping {{ settings_view.keep if settings_view.keep > 0 else "every" }}
-timestamped file{{ "s" if settings_view.keep != 1 }}.</p>
+<a href="/ops">Ops</a> for a daily one{% endif %} ·
+{% if settings_view.keep %}keeping {{ settings_view.keep.describe() }}
+(<span class="mono">PATCHBAY_SNAPSHOT_KEEP={{ settings_view.keep }}</span>).
+{% else %}pruning nothing until <span class="mono">PATCHBAY_SNAPSHOT_KEEP</span>
+parses.{% endif %}</p>
+{% for w in settings_view.keep_warnings %}
+<p class="muted" style="font-size: 0.82rem">⚠ {{ w }}</p>
+{% endfor %}
 {% if not settings_view.deliver_dir %}
 <p class="muted" style="font-size: 0.82rem">This host is the only copy, and a
 snapshot is for when this host is down.</p>

@@ -2044,15 +2044,26 @@ def test_vsphere_records_hypervisor_specs(conn, clean_env, monkeypatch):
     assert specs({"cpus": 4, "mem_bytes": 0}) == "4c"
 
 
-def test_snapshot_keep_non_integer_stored_value_warns(clean_env):
+def test_snapshot_keep_bad_stored_spec_warns_and_prunes_nothing(clean_env):
+    # a bad spec saved on /ops must not make load_settings raise (it would
+    # 500 /ops, the only place to fix it) and must not prune anything
     import sqlite3
     from patchbay.config import load_settings
+    from patchbay.retention import parse_keep_spec
     c = sqlite3.connect(os.environ["PATCHBAY_DB"])
     c.execute("CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT)")
     c.execute("INSERT INTO app_state VALUES ('cfg:PATCHBAY_SNAPSHOT_KEEP', "
-              "'30,12m,3y,first')")
+              "'30,12months')")
+    c.commit()
+    s = load_settings()
+    assert s.declaration_sources["PATCHBAY_SNAPSHOT_KEEP"] == "db"
+    assert s.snapshot_keep is None
+    assert any(w.startswith("PATCHBAY_SNAPSHOT_KEEP:") for w in s.parse_warnings)
+    # a good stored spec parses like the env one
+    c.execute("UPDATE app_state SET value = '7,6m,first' "
+              "WHERE key = 'cfg:PATCHBAY_SNAPSHOT_KEEP'")
     c.commit()
     c.close()
     s = load_settings()
-    assert s.snapshot_keep == 30
-    assert any(w.startswith("PATCHBAY_SNAPSHOT_KEEP:") for w in s.parse_warnings)
+    assert s.snapshot_keep == parse_keep_spec("7,6m,first")
+    assert not any(w.startswith("PATCHBAY_SNAPSHOT_KEEP:") for w in s.parse_warnings)
