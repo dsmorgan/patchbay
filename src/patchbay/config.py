@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
+from .retention import DEFAULT_SPEC, KeepSpec, parse_keep_spec
+
 # Declarations editable from the /ops page. Stored in the DB (app_state,
 # key 'cfg:<VAR>') in the exact .env syntax; per key, an env value wins and
 # renders the UI field read-only. Everything else (credentials, serving,
@@ -109,16 +111,6 @@ DECLARATION_HELP = {
         "syntax": "HH:MM, 24-hour local time",
         "example": "03:30",
     },
-    "PATCHBAY_SNAPSHOT_KEEP": {
-        "what": "How many break-glass snapshots to keep, by tier: the newest "
-                "N, plus the first of each recent week, month, and year, "
-                "plus the first ever. A spec that fails to parse prunes "
-                "nothing.",
-        "syntax": "comma-separated terms: N or Nd (daily), Nw (weekly), Nm "
-                  "(monthly), Ny (yearly), first; 0 in a tier = unlimited; "
-                  "a bare 0 = keep everything",
-        "example": "30,12m,3y,first",
-    },
     "PATCHBAY_CONFIG_KEEP": {
         "what": "How many firewall config revisions to keep per device; "
                 "older ones are trimmed on the poll that stores a new "
@@ -127,6 +119,19 @@ DECLARATION_HELP = {
         "example": "200",
     },
 }
+
+# Help for PATCHBAY_SNAPSHOT_KEEP, kept as its own constant beside the tier
+# parser's default so /ops and docs/configuration.md describe one syntax.
+SNAPSHOT_KEEP_HELP = {
+    "what": "How many break-glass snapshots to keep, by tier: the newest N, "
+            "plus the first of each recent week, month, and year, plus the "
+            "first ever. A spec that fails to parse prunes nothing.",
+    "syntax": "comma-separated terms: N or Nd (daily), Nw (weekly), Nm "
+              "(monthly), Ny (yearly), first; 0 in a tier = unlimited; a "
+              "bare 0 = keep everything",
+    "example": DEFAULT_SPEC,
+}
+DECLARATION_HELP["PATCHBAY_SNAPSHOT_KEEP"] = SNAPSHOT_KEEP_HELP
 
 
 class DeclarationReadError(Exception):
@@ -292,9 +297,11 @@ class Settings:
     # undeclared links on it — a false empty would delete real cabling.
     declarations_readable: bool
     # Break-glass snapshots: output directory (default: snapshots/ beside the
-    # DB) and how many timestamped files to keep (0 = keep everything).
+    # DB) and the retention tiers (retention.py). None means the spec didn't
+    # parse: nothing is pruned until it does, because a typo in a retention
+    # setting must not delete history.
     snapshot_dir: str
-    snapshot_keep: int
+    snapshot_keep: KeepSpec | None
     # Optional second destination the finished snapshot is copied to — a
     # mounted share on the box that syncs off-site. Kept separate from
     # snapshot_dir so a delivery failure never costs you the snapshot.
@@ -470,14 +477,20 @@ def load_settings() -> Settings:
         warnings.append(f"PATCHBAY_SNAPSHOT_AT: {snapshot_at!r} is not HH:MM — "
                         "the daily snapshot is off until it is")
         snapshot_at = None
-    # #65 replaces this parse with a tier spec; until then a bad stored value
-    # must not make load_settings raise (it would 500 /ops, the only fix)
+    raw_spec = (env("PATCHBAY_SNAPSHOT_KEEP") or "").strip() or DEFAULT_SPEC
+    snapshot_keep: KeepSpec | None
     try:
-        snapshot_keep = int(env("PATCHBAY_SNAPSHOT_KEEP", "30") or 30)
-    except ValueError:
-        snapshot_keep = 30
-        warnings.append(f"PATCHBAY_SNAPSHOT_KEEP: {env('PATCHBAY_SNAPSHOT_KEEP')!r} "
-                        "is not a whole number — using 30")
+        snapshot_keep = parse_keep_spec(raw_spec)
+    except ValueError as e:
+        warnings.append(f"PATCHBAY_SNAPSHOT_KEEP: {raw_spec!r} is not a tier "
+                        f"spec ({e}) — no snapshot is pruned until it is")
+        snapshot_keep = None
+    if not declarations_readable and _env("PATCHBAY_SNAPSHOT_KEEP") is None:
+        # a spec stored on /ops may be unreadable right now; the default in
+        # its place could prune what the stored one keeps. Skipping one
+        # prune costs nothing, and the unreadable-declarations warning
+        # already says why.
+        snapshot_keep = None
     config_keep = CONFIG_KEEP_DEFAULT
     raw_keep = (env("PATCHBAY_CONFIG_KEEP") or "").strip()
     if raw_keep:
