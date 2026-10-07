@@ -349,3 +349,24 @@ Each is answered in the issue that implements the decision it belongs to.
 4. Should `config changed` route to a notifying transport by default? It
    is the one informational event most people want to see, and the one
    most likely to train them to ignore the channel. Transports issue.
+
+## Amendment (2026-10-07): transports, issue #61
+
+**Open questions 1 and 4, settled by the owner on #61.**
+
+- Kuma semantics: one Kuma push monitor per route. A Kuma transport is one
+  monitor; a site that wants two routes adds two transports.
+- `config changed` routes nowhere by default. It stays on the attention
+  list and in History without paging anyone.
+
+**Deviations in the implementation.**
+
+- *Link base.* Decision 3 assumed a configured public URL for absolute
+  links, and none exists. The link base is an `app_state` value edited on
+  the Transports tab. When it is empty, messages carry paths only.
+- *Kuma skips events.* A one-shot `event` notification cannot hold a
+  monitor down, so the `kuma` preset does not carry it. Route event rules
+  to a `generic` transport to deliver them.
+- *No summary strip.* Decision 8's per-transport delivery state in the
+  /alerts summary strip is not built. The Transports tab shows each
+  transport's last sent time and last error instead.
