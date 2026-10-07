@@ -78,6 +78,9 @@ def generate(settings: Settings) -> str:
     conn = web._conn()
     try:
         db.init(conn)
+        # Every read below names its table. Never add a generic dump: the
+        # alert_* tables hold webhook URLs, which are credentials (ADR-0003
+        # Decision 2), and test_transports proves none reaches this file.
         # a demo-seeded model gets a shareable banner instead of the
         # treat-as-sensitive one — nothing in it is real
         is_demo = db.get_state(conn, "demo_seed") == "1"

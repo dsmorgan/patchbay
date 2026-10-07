@@ -12,8 +12,8 @@ set against the `alerts` table and walks each key through the lifecycle:
 Every transition lands in `alert_events`, which is the History tab. What
 the engine decides to send comes back as `Notification`s; the caller hands
 them to `dispatch()` after the poll transaction commits, so an unreachable
-receiver never holds the database. No transport exists yet (#61), so the
-default dispatcher drops them.
+receiver never holds the database. `transports.WebhookDispatcher` sends
+them (#61); with no dispatcher given, they are dropped.
 
 Like `attention.py`, this imports no web framework: the poller calls it.
 """
@@ -81,6 +81,12 @@ RULES: dict[str, Rule] = {
         category="source", event=True, params={},
         summary="The daily or a manual snapshot failed, or was not delivered "
                 "off-host."),
+    # an alert transport that failed three polls running (#61); routed by
+    # default like any rule, which reaches the other transports when the
+    # default is not the one that is failing
+    "transport-failing": Rule(
+        category="source",
+        summary="An alert transport failed to deliver on three polls in a row."),
 }
 
 # A rule that is not in the catalog (a third-party or synthetic item) gets
@@ -114,8 +120,8 @@ class Dispatcher(Protocol):
 
 
 class NullDispatcher:
-    """Drops every notification: what a site with no transport gets.
-    Transports (#61) implement the same `send`."""
+    """Drops every notification. `transports.WebhookDispatcher` implements
+    the same `send`."""
 
     def send(self, notes: list[Notification]) -> None:
         return None
@@ -425,10 +431,10 @@ def run(conn: sqlite3.Connection, settings, *, now: float | None = None) -> list
 
 def dispatch(notes: list[Notification], dispatcher: Dispatcher | None = None) -> None:
     """Hand the cycle's notifications to the transports. Called after the
-    poll transaction commits; route `none` never leaves the process."""
-    notes = [n for n in notes if n.route != "none"]
-    if notes:
-        (dispatcher or NullDispatcher()).send(notes)
+    poll transaction commits; route `none` never leaves the process. The
+    dispatcher runs even when nothing is due: a Kuma transport pushes its
+    state every cycle, which is what makes it a dead-man switch."""
+    (dispatcher or NullDispatcher()).send([n for n in notes if n.route != "none"])
 
 
 def prune_history(conn: sqlite3.Connection, now: float | None = None) -> None:

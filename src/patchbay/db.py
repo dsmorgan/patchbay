@@ -254,7 +254,7 @@ CREATE TABLE IF NOT EXISTS alert_events (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_events_ts ON alert_events (ts);
 CREATE TABLE IF NOT EXISTS alert_transports (
-    id INTEGER PRIMARY KEY,    -- schema only until #61. url is a credential:
+    id INTEGER PRIMARY KEY,    -- transports.py (#61). url is a credential:
     name TEXT NOT NULL UNIQUE, -- masked on the page, never logged, never
     kind TEXT NOT NULL,        -- in a snapshot. kind = webhook preset.
     url TEXT NOT NULL,

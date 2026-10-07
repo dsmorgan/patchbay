@@ -54,6 +54,10 @@ GATEWAY_DOWN_STATES = {"down", "offline"}
 # day so the person who missed the notification still sees it.
 EVENT_WINDOW_S = 24 * 3600
 
+# consecutive failed dispatch cycles before an alert transport is itself an
+# item (ADR-0003 Decision 1): one blip is a retry, three is a dead receiver
+TRANSPORT_FAILURES_ALERT = 3
+
 
 def human_speed(bps) -> str:
     if not bps:
@@ -340,6 +344,27 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
     items += _gateway_degraded(conn, settings, now, checked)
     items += _config_changed(conn, settings, now)
     items += _snapshot_failed(conn, now)
+
+    # transport-failing: an alert transport whose last three dispatch cycles
+    # failed. Silence about a dead receiver is the one failure the receiver
+    # cannot report itself, so the attention list carries it. last_error is
+    # redacted at the source (transports._redact); the URL never reaches it.
+    transports = conn.execute(
+        "SELECT id, name, failures, last_error FROM alert_transports "
+        "WHERE enabled = 1 ORDER BY id").fetchall()
+    if transports:
+        checked.append("alert transports delivering")
+        for t in transports:
+            if t["failures"] >= TRANSPORT_FAILURES_ALERT:
+                items.append({
+                    "rule": "transport-failing",
+                    "key": f"source:transport:{t['id']}",
+                    "category": "source",
+                    "severity": "warn",
+                    "text": f"alert transport {t['name']} failing "
+                            f"({t['failures']} polls): {t['last_error'] or 'no response'}",
+                    "href": "/alerts?tab=transports",
+                })
 
     items = _apply_rule_settings(conn, items)
     order = {"crit": 0, "warn": 1}

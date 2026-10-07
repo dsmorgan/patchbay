@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import alerting, db
+from . import alerting, db, transports
 from . import routed
 from .attention import (CATEGORIES, STALE_MIN, attention_items, device_totals, drift_report,
                         human_age, human_speed, ip_sort_key, ipam_link,
@@ -1694,9 +1694,11 @@ def ops_poll(source: str | None = None):
         conn.close()
         _ops_lock.release()
     try:  # after commit: a receiver never holds the database or the lock
-        alerting.dispatch(notes)
+        dispatcher = transports.WebhookDispatcher(settings.db_path)
+        alerting.dispatch(notes, dispatcher)
+        lines += dispatcher.lines   # never carries a URL (transports._redact)
     except Exception as e:
-        lines.append(f"[warn] alert dispatch: {e}")
+        lines.append(f"[warn] alert dispatch: {type(e).__name__}")
     return {"lines": lines}
 
 
