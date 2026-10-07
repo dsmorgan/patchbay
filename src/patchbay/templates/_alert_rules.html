@@ -36,7 +36,7 @@ Event rules fire once per occurrence, so they have no <code>for</code>.</p>
     </label>
     {% endfor %}
     <span class="rule-route muted" title="routes are edited on the Transports tab">route:
-      {% if r.route is none %}default{% elif r.route == 'none' %}nowhere (attention list only){% else %}<span class="mono">{{ r.route }}</span>{% endif %}
+      {% if r.route == 'none' %}nowhere (attention list only){% else %}<a href="/alerts?tab=transports">{{ r.route_label }}</a>{% endif %}
     </span>
     <button type="submit">save</button>
   </div>

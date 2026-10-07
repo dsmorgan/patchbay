@@ -130,10 +130,13 @@ def test_route_format_and_default(conn):
     assert transports.route_label(conn, "9:warn") == "missing transport 9, warn+"
 
 
-def test_config_changed_style_rules_route_nowhere_by_default():
+def test_config_changed_style_rules_route_nowhere_by_default(conn):
     # owner decision on #61: an informational rule informs, never pages
-    assert alerting.RULES["slow-link"].route == "none"
-    assert alerting.RULES["transport-failing"].route is None
+    alerting.seed_rules(conn)
+    routes = transports.rule_routes(conn)
+    assert routes["config-changed"] == routes["slow-link"] == "none"
+    assert routes["transport-failing"] is None
+    assert alerting.RULES["transport-failing"].category == "source"
 
 
 # -- kuma -----------------------------------------------------------------
@@ -590,3 +593,69 @@ def test_delete_clears_routes_default_and_outbox(clean_env, tmp_path, default):
     rec = Recorder()
     _poll(dbp, [_item("source:stale")], T0 + 300, rec)
     assert rec.seen == []
+
+
+# -- integration with #60: escalate, disabled rules, the Rules tab ----------
+
+def test_generic_sends_escalate_as_its_own_event(dbp):
+    _add(dbp, "hook", "generic", HOOK)
+    rec = Recorder()
+    _poll(dbp, [_item("source:stale", severity="warn")], T0, rec)
+    _poll(dbp, [_item("source:stale", severity="crit")], T0 + 300, rec)
+    bodies = [json.loads(r.content) for r in rec.seen]
+    assert [(b["event"], b["severity"]) for b in bodies] == [
+        ("raise", "warn"), ("escalate", "crit")]
+
+
+def test_kuma_crit_route_goes_down_on_escalation_to_crit(dbp):
+    tid = _add(dbp, "kuma", "kuma", KUMA)
+    c = _c(dbp)
+    pdb.set_state(c, transports.DEFAULT_ROUTE_KEY, f"{tid}:crit")
+    c.commit(); c.close()
+    rec = Recorder()
+    _poll(dbp, [_item("source:stale", severity="warn")], T0, rec)
+    _poll(dbp, [_item("source:stale", severity="crit")], T0 + 300, rec)
+    _poll(dbp, [_item("source:stale", severity="crit")], T0 + 600, rec)
+    assert [r.url.params["status"] for r in rec.seen] == ["up", "down", "down"]
+    [ev] = _events(dbp, "notified")
+    assert ev["detail"] == "kuma: pushed down" and ev["severity"] == "crit"
+
+
+def test_disabling_a_rule_dispatches_nothing(dbp):
+    _add(dbp, "hook", "generic", HOOK)
+    kuma = _add(dbp, "kuma", "kuma", KUMA)
+    _route(dbp, "stale-source", "2:warn")       # held down on kuma
+    _route(dbp, "ipam-drift", "1:warn")         # posted to the hook
+    items = [_item("source:stale"),
+             _item("ipam:conflicts", rule="ipam-drift", category="ipam")]
+    rec = Recorder()
+    _poll(dbp, items, T0, rec)
+    assert [r.method for r in rec.seen] == ["POST", "GET"]
+    assert rec.seen[1].url.params["status"] == "down"
+
+    c = _c(dbp)
+    c.execute("UPDATE alert_rules SET enabled = 0")
+    c.commit(); c.close()
+    rec = Recorder()
+    _poll(dbp, items, T0 + 300, rec)
+    # no clear goes out: the condition may still hold. Kuma follows state,
+    # and an unwatched rule holds nothing down.
+    assert [r.method for r in rec.seen] == ["GET"]
+    assert rec.seen[0].url.params["status"] == "up"
+    assert [e["detail"] for e in _events(dbp, "cleared")] == ["rule disabled"] * 2
+    assert len(_events(dbp, "notified")) == 2      # only the first poll's
+
+
+def test_rules_tab_shows_route_labels(clean_env, tmp_path):
+    import patchbay.web as web
+
+    client = TestClient(web.app)
+    client.get("/alerts")
+    dbp = str(tmp_path / "test.db")
+    tid = _add(dbp, "kuma", "kuma", KUMA)
+    _route(dbp, "ipam-drift", f"{tid}:crit")
+    page = client.get("/alerts?tab=rules").text
+    assert "default (kuma, warn+)" in page
+    assert "kuma, crit+" in page
+    assert "nowhere (attention list only)" in page
+    assert f">{tid}:crit<" not in page
