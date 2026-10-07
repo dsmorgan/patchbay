@@ -7,7 +7,7 @@ import sqlite3
 import sys
 import time
 
-from . import __version__, db
+from . import __version__, alerting, db
 from .collectors import all_collectors, available
 from .config import load_settings
 
@@ -28,6 +28,7 @@ def cmd_poll(args: argparse.Namespace) -> int:
         return 1
     rc = 0
     lines: list[str] = []
+    notes: list[alerting.Notification] = []
 
     def say(line: str, err: bool = False) -> None:
         lines.append(line)
@@ -86,14 +87,12 @@ def cmd_poll(args: argparse.Namespace) -> int:
             conn.rollback()
             say(f"[fail] normalize: {e}", err=True)
             rc = 1
-        # first-seen bookkeeping for the attention items (issue #28): the
-        # poll is when patchbay notices, so the poll is what timestamps it
+        # the alert lifecycle (ADR-0003): the poll is when patchbay notices,
+        # so the poll is what raises, clears, and timestamps
         try:
-            from .attention import record_first_seen
-
-            record_first_seen(conn, settings)
+            notes = alerting.run(conn, settings)
         except Exception as e:
-            say(f"[warn] attention bookkeeping: {e}", err=True)
+            say(f"[warn] alerting: {e}", err=True)
         db.save_last_poll(conn, lines)
         try:
             from . import snapshot as snap
@@ -101,6 +100,12 @@ def cmd_poll(args: argparse.Namespace) -> int:
             due = snap.due_today(conn, settings)
         except ImportError:  # no web extra installed — snapshots unavailable
             due = False
+    # notifications leave after the poll transaction commits, so a slow or
+    # unreachable receiver never holds the database
+    try:
+        alerting.dispatch(notes)
+    except Exception as e:
+        say(f"[warn] alert dispatch: {e}", err=True)
     # the daily snapshot runs after the poll transaction commits: it opens its
     # own connection and would otherwise contend with this one
     if due:
