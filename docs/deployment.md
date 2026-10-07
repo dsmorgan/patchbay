@@ -217,6 +217,20 @@ Repeat step 3 the morning after the first scheduled run. The nightly path
 is the poller's, with its own mount and its own `TZ`, so a working
 on-demand snapshot doesn't prove it.
 
+### Size the share for retention
+
+Each snapshot prunes both the local directory and the share by the tiers in
+`PATCHBAY_SNAPSHOT_KEEP`. The default, `30,12m,3y,first`, settles at about
+46 files per directory: 30 nightlies, the first of each of the last 12
+months and 3 years, and the first snapshot ever taken. At about 5 MB each,
+leave the share at least 250 MB. If your sync client keeps deleted files in
+a trash or version history, pruned nightlies count against that quota too.
+
+Check the tiers on `/snapshots`: each file shows the tier that keeps it, and
+the page states the effective spec. A spec that fails to parse prunes
+nothing and shows a warning there and on `/ops`; see
+[Snapshot retention](configuration.md#snapshot-retention) for the syntax.
+
 ## Where the state lives
 
 | Data | Where | Survives `compose down`? |
