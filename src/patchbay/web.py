@@ -379,13 +379,21 @@ def dashboard(request: Request):
         conn.close()
 
 
+# History shows the newest events; the table holds up to
+# alerting.EVENT_KEEP_MAX, which is an archive, not a page
+ALERT_HISTORY_ROWS = 200
+
+
 @app.get("/alerts", response_class=HTMLResponse)
 def alerts(request: Request, category: str | None = None,
-           severity: str | None = None):
-    """The full attention list (issue #28): everything the checks flag, with
-    category/severity filters addressable in the URL, and how long each item
-    has been firing. Today this renders the rules' current state; the
-    phase-6 engine (#22) extends these same rows with history."""
+           severity: str | None = None, tab: str = "active"):
+    """The alerts page (issue #28, ADR-0003 Decision 8). Active is the full
+    attention list with how long each item has been firing; History is the
+    alert engine's event log. Tab and filters are URL state, like the map.
+    Active computes the rules live rather than reading the alerts table, so
+    it matches the Overview even before the first poll has run."""
+    if tab not in ("active", "history"):
+        tab = "active"
     conn = _conn()
     try:
         db.init(conn)
@@ -397,10 +405,26 @@ def alerts(request: Request, category: str | None = None,
         shown = [it for it in items
                  if (not category or it["category"] == category)
                  and (not severity or it["severity"] == severity)]
+        history = []
+        if tab == "history":
+            where, args = [], []
+            if category:
+                where.append("category = ?"); args.append(category)
+            if severity:
+                where.append("severity = ?"); args.append(severity)
+            history = [
+                {**dict(r), "when": time.strftime("%Y-%m-%d %H:%M",
+                                                  time.localtime(r["ts"]))}
+                for r in conn.execute(
+                    "SELECT * FROM alert_events"
+                    + (" WHERE " + " AND ".join(where) if where else "")
+                    + " ORDER BY ts DESC, id DESC LIMIT ?",
+                    (*args, ALERT_HISTORY_ROWS))]
         return templates.TemplateResponse(request, "alerts.html", {
             "items": shown, "total": len(items), "checked": checked,
             "attn_summary": _attention_summary(items),
-            "category": category, "severity": severity,
+            "category": category, "severity": severity, "tab": tab,
+            "history": history, "history_cap": ALERT_HISTORY_ROWS,
             "categories": CATEGORIES, "ages": source_ages(conn),
         })
     finally:
