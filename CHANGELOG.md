@@ -9,6 +9,12 @@ put.
 ## [Unreleased]
 
 ### Added
+- Tiered snapshot retention (#65). `PATCHBAY_SNAPSHOT_KEEP` takes a spec such
+  as the new default `30,12m,3y,first`: the first snapshot of each of the last
+  30 days, 12 months, and 3 years, plus the first ever. The newest snapshot
+  always survives, a bare integer keeps its old meaning, and a spec that
+  fails to parse prunes nothing. `/snapshots` shows which tier keeps each
+  file.
 - The alerting engine from ADR-0003 (#59). Each poll diffs the attention
   items against an `alerts` table, so every alert has a lifecycle (pending,
   active, cleared) and a history. `/alerts` gains **Active** and **History**
