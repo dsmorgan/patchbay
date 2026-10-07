@@ -411,3 +411,31 @@ def test_rules_tab_gateway_loss_and_unknown_rule(clean_env, tmp_path):
                                     "name = 'gateway-degraded'").fetchone()[0])["loss"] == 12.5
     assert client.post("/alerts/rules/no-such-rule", data={}).status_code == 404
 
+
+def test_disabled_rule_hides_everywhere_and_override_applies_everywhere(
+        clean_env, tmp_path):
+    from tests.test_web import seed
+
+    import patchbay.web as web
+
+    seed(str(tmp_path / "test.db"))
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        c.execute("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
+    client = TestClient(web.app)
+    client.post("/alerts/rules/device-down", data={
+        "enabled": "1", "severity": "warn", "param_for": "1",
+        "param_roles": "switch"})
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        [it] = _items(c, load_settings(), "device-down")
+        assert it["severity"] == "warn"                 # the attention list
+        [n] = alerting.evaluate(c, [it])
+        assert n.severity == "warn"                     # and the alert
+    assert "warning" in client.get("/alerts?category=device").text
+
+    client.post("/alerts/rules/device-down", data={
+        "severity": "", "param_for": "1", "param_roles": "switch"})
+    assert "switch sw1 is down" not in client.get("/alerts").text
+    assert client.post("/ops/poll").status_code == 200
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        assert c.execute("SELECT state FROM alerts WHERE key = 'device:sw1'"
+                         ).fetchone()[0] == "cleared"   # disabling clears it
