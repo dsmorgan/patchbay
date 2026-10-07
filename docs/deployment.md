@@ -241,7 +241,7 @@ to edit it. Two presets ship:
 | Preset | What patchbay sends | Use it for |
 |---|---|---|
 | `kuma` | `GET` to an Uptime Kuma push URL every poll: `status=down` while any active alert routed to it meets the route's minimum severity, `status=up` otherwise | Paging. Kuma owns the notification providers (email, chat, phone push), and the monitor also goes down if the poller stops running. |
-| `generic` | A JSON `POST` when an alert raises, reminds, or clears | n8n, Home Assistant, or a script of your own |
+| `generic` | A JSON `POST` when an alert raises, reminds, or clears, and for each one-shot event | n8n, Home Assistant, or a script of your own |
 
 A *route* is a transport plus a minimum severity. The first transport you
 add becomes the default route for warnings and above, so one transport is
