@@ -90,6 +90,19 @@ def test_overview_hides_device_items_that_alerts_shows(clean_env, tmp_path):
     assert ">devices</a>" in page                    # a filter chip of its own
 
 
+def test_disabled_device_is_a_decision_not_an_alert(conn, settings):
+    # LibreNMS admin-disabled: no device-down item, but its cables are still
+    # inhibited, because disabled stays a down state for the engine
+    _dev(conn, "sw1", "switch")
+    _dev(conn, "sw2", "switch", "disabled")
+    _cable(conn, "sw1", "1/0/9", "sw2", "1/0/1", a_oper="down")
+    assert _items(conn, settings, "device-down") == []
+    items = attention.attention_items(conn, settings)[0]
+    assert [i["rule"] for i in items if i["rule"] == "link-down"] == ["link-down"]
+    assert alerting.evaluate(conn, items) == []
+    assert conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 0
+
+
 # --- link down ---------------------------------------------------------------
 
 def test_link_down_one_item_per_stated_cable(conn, settings):
