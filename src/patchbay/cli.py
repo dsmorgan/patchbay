@@ -103,9 +103,14 @@ def cmd_poll(args: argparse.Namespace) -> int:
     # notifications leave after the poll transaction commits, so a slow or
     # unreachable receiver never holds the database
     try:
-        alerting.dispatch(notes)
+        from .transports import WebhookDispatcher
+
+        dispatcher = WebhookDispatcher(settings.db_path)
+        alerting.dispatch(notes, dispatcher)
+        for line in dispatcher.lines:  # never carries a URL (transports._redact)
+            say(line, err=line.startswith("[warn]"))
     except Exception as e:
-        say(f"[warn] alert dispatch: {e}", err=True)
+        say(f"[warn] alert dispatch: {type(e).__name__}", err=True)
     # the daily snapshot runs after the poll transaction commits: it opens its
     # own connection and would otherwise contend with this one
     if due:
