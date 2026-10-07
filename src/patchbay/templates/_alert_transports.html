@@ -1,0 +1,127 @@
+{# The Transports tab (issue #61, ADR-0003 Decisions 3 and 8): where
+   notifications go. Plain forms posting to /alerts/transports and
+   /alerts/routes. A transport URL is write-only: the page shows scheme and
+   host, and the edit form's URL field starts empty, so the secret never
+   comes back to a browser. #}
+
+<section class="tp">
+<h2>Transports</h2>
+{% if transports %}
+<div class="scroll" style="max-width: 900px">
+<table>
+  <tr><th>name</th><th>kind</th><th>URL</th><th>last sent</th><th>last result</th><th></th></tr>
+  {% for t in transports %}
+  <tr class="{{ '' if t.enabled else 'tp-off' }}">
+    <td>{{ t.name }}{% if not t.enabled %} <span class="muted">(off)</span>{% endif %}</td>
+    <td class="muted">{{ t.kind }}</td>
+    <td class="mono muted" title="stored; shown masked">{{ t.masked }}</td>
+    <td class="mono muted">{{ t.last_sent or 'never' }}</td>
+    <td>{% if t.last_error %}<span class="tp-err">{{ t.last_error }}</span>{% if t.failures %}
+        <span class="muted">· {{ t.failures }} failed poll{{ '' if t.failures == 1 else 's' }}</span>{% endif %}
+        {% else %}<span class="muted">{{ t.last_result or '—' }}</span>{% endif %}</td>
+    <td class="tp-acts">
+      <form method="post" action="/alerts/transports/{{ t.id }}/test"><button class="tp-link">test</button></form>
+      <form method="post" action="/alerts/transports/{{ t.id }}/enabled">
+        <input type="hidden" name="enabled" value="{{ 0 if t.enabled else 1 }}">
+        <button class="tp-link">{{ 'disable' if t.enabled else 'enable' }}</button></form>
+      <details><summary>edit</summary>
+        <form method="post" action="/alerts/transports/{{ t.id }}" class="tp-form">
+          <label>name <input name="name" value="{{ t.name }}" required maxlength="64"></label>
+          <label>kind <select name="kind">{% for k, label in presets.items() %}
+            <option value="{{ k }}"{{ ' selected' if k == t.kind }}>{{ label }}</option>{% endfor %}
+          </select></label>
+          <label>URL <input name="url" type="url" autocomplete="off"
+                 placeholder="unchanged; paste a new URL to replace it"></label>
+          <button class="tp-go">save</button>
+        </form>
+        <form method="post" action="/alerts/transports/{{ t.id }}/delete">
+          <button class="linkbtn tp-err">delete {{ t.name }}</button></form>
+      </details>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% else %}
+<p class="muted">No transports yet: alerts show on this page and the
+Overview only. Add one below; the first transport becomes the default
+route for warnings and above.</p>
+{% endif %}
+
+<details{{ ' open' if not transports }}><summary>add a transport</summary>
+<form method="post" action="/alerts/transports" class="tp-form">
+  <label>name <input name="name" required maxlength="64" placeholder="kuma"></label>
+  <label>kind <select name="kind">{% for k, label in presets.items() %}
+    <option value="{{ k }}">{{ label }}</option>{% endfor %}
+  </select></label>
+  <label>URL <input name="url" type="url" required autocomplete="off"
+         placeholder="https://kuma.example.com/api/push/…"></label>
+  <button class="tp-go">add</button>
+</form>
+<p class="muted tp-note">The URL is a credential. patchbay stores it in its
+database, shows only the scheme and host after you save it, and never logs
+it or writes it to a snapshot.</p>
+</details>
+</section>
+
+{% if transports %}
+<section class="tp">
+<h2>Routes</h2>
+<p class="muted tp-note">A route is a transport plus a minimum severity. A
+Kuma transport is one push monitor: it reads down while any active alert
+routed to it meets that severity.</p>
+<form method="post" action="/alerts/routes" class="tp-form tp-routes">
+  <label>default route <select name="default">
+    <option value="">first transport, warn+</option>
+    {% for v, label in route_choices %}
+    <option value="{{ v }}"{{ ' selected' if v == default_route_raw }}>{{ label }}</option>{% endfor %}
+  </select></label>
+  <table>
+    <tr><th>rule</th><th>route</th></tr>
+    {% for r in rule_routes %}
+    <tr><td class="mono">{{ r.name }}</td>
+      <td><select name="route:{{ r.name }}" aria-label="route for {{ r.name }}">
+        <option value="">{{ default_route_label }}</option>
+        {% for v, label in route_choices %}
+        <option value="{{ v }}"{{ ' selected' if v == r.raw }}>{{ label }}</option>{% endfor %}
+      </select></td></tr>
+    {% endfor %}
+  </table>
+  <label>link base <input name="link_base" type="url" value="{{ link_base }}"
+         placeholder="{{ request.base_url }}" autocomplete="off"></label>
+  <p class="muted tp-note">Messages link back to the page that owns each
+  alert; the link base is the address a reader's browser reaches patchbay
+  on. Empty sends paths only.</p>
+  <button class="tp-go">save routes</button>
+</form>
+</section>
+{% endif %}
+
+<style>
+  .tp { margin: 0 0 1.6rem; max-width: 900px; }
+  .tp h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  .tp-off td { opacity: 0.6; }
+  .tp-err { color: var(--crit); }
+  .tp-acts { white-space: nowrap; }
+  .tp-acts form, .tp-acts details { display: inline-block; margin-right: 0.6rem; vertical-align: top; }
+  .tp-acts details[open] { display: block; }
+  .tp-form { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: end;
+             margin: 0.6rem 0; }
+  .tp-form label { display: flex; flex-direction: column; font-size: 0.8rem;
+                   color: var(--muted); gap: 0.2rem; }
+  .tp-form input, .tp-form select { background: var(--card); color: var(--ink);
+             border: 1px solid var(--line); border-radius: 4px; padding: 0.3rem 0.4rem;
+             font-size: 0.85rem; min-width: 14rem; max-width: 100%; }
+  .tp-routes table { width: 100%; }
+  .tp-note { font-size: 0.82rem; max-width: 60ch; }
+  .tp-form .tp-note { flex-basis: 100%; margin: 0; }
+  /* linkbtn is the destructive style; test and enable are not */
+  button.tp-link { background: none; border: 0; padding: 0; font: inherit;
+                   color: var(--accent); cursor: pointer; }
+  button.tp-link:hover { text-decoration: underline; }
+  button.tp-go { background: var(--card); color: var(--ink); border: 1px solid var(--accent);
+                 border-radius: 999px; padding: 0.3rem 0.9rem; font-size: 0.85rem;
+                 cursor: pointer; }
+  button.tp-go:hover { background: var(--line); }
+  details > summary { cursor: pointer; color: var(--accent); }
+</style>

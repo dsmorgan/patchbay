@@ -394,7 +394,7 @@ def alerts(request: Request, category: str | None = None,
     alert engine's event log. Tab and filters are URL state, like the map.
     Active computes the rules live rather than reading the alerts table, so
     it matches the Overview even before the first poll has run."""
-    if tab not in ("active", "history", "rules"):
+    if tab not in ("active", "history", "rules", "transports"):
         tab = "active"
     conn = _conn()
     try:
@@ -432,6 +432,7 @@ def alerts(request: Request, category: str | None = None,
             "category": category, "severity": severity, "tab": tab,
             "history": history, "history_cap": ALERT_HISTORY_ROWS,
             "categories": CATEGORIES, "ages": source_ages(conn),
+            **(transports.page_context(conn) if tab == "transports" else {}),
         })
     finally:
         conn.close()
@@ -461,6 +462,170 @@ async def alerts_rule_update(name: str, request: Request):
     finally:
         conn.close()
     return RedirectResponse(f"/alerts?tab=rules#rule-{quote(name)}", status_code=303)
+
+
+# -- alert transports and routes (#61) --------------------------------------
+# Plain forms, like everything on /alerts (ADR-0003 Decision 8); the
+# cross-origin POST guard in auth.py covers them. A transport URL is
+# write-only from here: the page shows it masked and never echoes it back.
+
+async def _form(request: Request) -> dict[str, str]:
+    from urllib.parse import parse_qs
+
+    # parsed by hand, like /configs/{node}/delete: python-multipart is not a
+    # dependency, and these forms are plain urlencoded fields
+    body = (await request.body()).decode("utf-8", "replace")
+    return {k: v[0].strip() for k, v in parse_qs(body, keep_blank_values=True).items()}
+
+
+def _to_transports():
+    from fastapi.responses import RedirectResponse
+
+    return RedirectResponse("/alerts?tab=transports", status_code=303)
+
+
+def _transport_fields(f: dict[str, str], *, url_required: bool) -> tuple[str, str, str]:
+    name, kind, url = f.get("name", ""), f.get("kind", ""), f.get("url", "")
+    if not name or len(name) > 64:
+        raise HTTPException(400, "a transport needs a name of at most 64 characters")
+    if kind not in transports.PRESETS:
+        raise HTTPException(400, f"kind must be one of: {', '.join(transports.PRESETS)}")
+    if url or url_required:
+        # the message names the problem, never the URL
+        why = transports.validate_url(url)
+        if why:
+            raise HTTPException(400, why)
+    return name, kind, url
+
+
+@app.post("/alerts/transports")
+async def transport_add(request: Request):
+    name, kind, url = _transport_fields(await _form(request), url_required=True)
+    conn = _conn()
+    try:
+        db.init(conn)
+        try:
+            conn.execute("INSERT INTO alert_transports (name, kind, url) VALUES (?, ?, ?)",
+                         (name, kind, url))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, f"a transport named {name} already exists")
+        conn.commit()
+    finally:
+        conn.close()
+    return _to_transports()
+
+
+@app.post("/alerts/transports/{tid}")
+async def transport_edit(request: Request, tid: int):
+    # a blank URL keeps the stored one: the form never holds the secret
+    name, kind, url = _transport_fields(await _form(request), url_required=False)
+    conn = _conn()
+    try:
+        db.init(conn)
+        if not conn.execute("SELECT 1 FROM alert_transports WHERE id = ?", (tid,)).fetchone():
+            raise HTTPException(404, "no such transport")
+        try:
+            conn.execute("UPDATE alert_transports SET name = ?, kind = ? WHERE id = ?",
+                         (name, kind, tid))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, f"a transport named {name} already exists")
+        if url:
+            # a new receiver starts with a clean record
+            conn.execute("UPDATE alert_transports SET url = ?, failures = 0, "
+                         "last_error = NULL, last_result = NULL WHERE id = ?", (url, tid))
+        conn.commit()
+    finally:
+        conn.close()
+    return _to_transports()
+
+
+@app.post("/alerts/transports/{tid}/enabled")
+async def transport_enable(request: Request, tid: int):
+    on = (await _form(request)).get("enabled") == "1"
+    conn = _conn()
+    try:
+        db.init(conn)
+        # re-enabling starts the three-strike count over
+        conn.execute("UPDATE alert_transports SET enabled = ?, failures = 0 WHERE id = ?",
+                     (int(on), tid))
+        conn.commit()
+    finally:
+        conn.close()
+    return _to_transports()
+
+
+@app.post("/alerts/transports/{tid}/test")
+def transport_test(tid: int):
+    conn = _conn()
+    try:
+        db.init(conn)
+        ok, _ = transports.send_test(conn, tid)
+        if not ok and not conn.execute(
+                "SELECT 1 FROM alert_transports WHERE id = ?", (tid,)).fetchone():
+            raise HTTPException(404, "no such transport")
+        conn.commit()
+    finally:
+        conn.close()
+    return _to_transports()
+
+
+@app.post("/alerts/transports/{tid}/delete")
+def transport_delete(tid: int):
+    conn = _conn()
+    try:
+        db.init(conn)
+        conn.execute("DELETE FROM alert_transports WHERE id = ?", (tid,))
+        # routes that named it fall back to the default rather than
+        # pointing at nothing; its queued retries drop next cycle
+        prefix = f"{tid}:"
+        conn.execute("UPDATE alert_rules SET route = NULL WHERE substr(route, 1, ?) = ?",
+                     (len(prefix), prefix))
+        raw = db.get_state(conn, transports.DEFAULT_ROUTE_KEY) or ""
+        if raw.startswith(prefix):
+            conn.execute("DELETE FROM app_state WHERE key = ?", (transports.DEFAULT_ROUTE_KEY,))
+        conn.commit()
+    finally:
+        conn.close()
+    return _to_transports()
+
+
+@app.post("/alerts/routes")
+async def alert_routes(request: Request):
+    """The default route, each rule's route, and the link base, in one form."""
+    f = await _form(request)
+
+    def valid(raw: str) -> bool:
+        return raw == "none" or isinstance(transports.parse_route(raw), transports.Route)
+
+    conn = _conn()
+    try:
+        db.init(conn)
+        alerting.seed_rules(conn)
+        default = f.get("default", "")
+        if default and not valid(default):
+            raise HTTPException(400, "bad default route")
+        if default:
+            db.set_state(conn, transports.DEFAULT_ROUTE_KEY, default)
+        else:
+            conn.execute("DELETE FROM app_state WHERE key = ?", (transports.DEFAULT_ROUTE_KEY,))
+        for name in transports.rule_routes(conn):
+            if f"route:{name}" not in f:
+                continue
+            raw = f[f"route:{name}"]
+            if raw and not valid(raw):
+                raise HTTPException(400, f"bad route for {name}")
+            conn.execute("UPDATE alert_rules SET route = ? WHERE name = ?", (raw or None, name))
+        base = f.get("link_base", "")
+        if base and transports.validate_url(base):
+            raise HTTPException(400, "the link base must be an http(s) URL")
+        if base:
+            db.set_state(conn, transports.LINK_BASE_KEY, base.rstrip("/"))
+        else:
+            conn.execute("DELETE FROM app_state WHERE key = ?", (transports.LINK_BASE_KEY,))
+        conn.commit()
+    finally:
+        conn.close()
+    return _to_transports()
 
 
 TOPO_ROLES = ("firewall", "router", "switch", "hypervisor", "ap", "unmanaged-switch")
