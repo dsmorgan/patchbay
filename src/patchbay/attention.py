@@ -16,14 +16,43 @@ looked at for a week must not reset it.
 from __future__ import annotations
 
 import ipaddress
+import json
+import re
 import sqlite3
 
 from . import db
 
 STALE_MIN = 15  # same rule the top bar uses
 
-# category -> the short label the summary strip and filters show
-CATEGORIES = {"link": "slow links", "ipam": "IPAM", "source": "sources"}
+# category -> the short label the summary strip and filters show. The
+# Overview hides `device`: its cards are the device-state UI.
+CATEGORIES = {"device": "devices", "link": "links", "gateway": "gateways",
+              "ipam": "IPAM", "source": "sources", "config": "config changes"}
+
+# Rule parameter defaults (ADR-0003 Decision 4). They live here, beside the
+# rules that read them; alerting.RULES seeds them into alert_rules, and a
+# site's edits there override them.
+DEVICE_DOWN_ROLES = ["switch", "ap", "firewall", "router", "hypervisor"]
+GATEWAY_LOSS_PCT = 5.0
+
+# Link sources that state a cable rather than infer one. A port that an
+# inference put on the map going down says nothing reliable about a cable.
+STATED_LINK_SOURCES = ("lldp", "unifi", "declared")
+
+# ifOperStatus values that mean the cable carries nothing. `notPresent`
+# and `dormant` describe hardware and power states, not a pulled cable.
+PORT_DOWN_STATES = {"down", "lowerlayerdown"}
+
+# Explicit "this gateway is gone" states: pfSense's mapped `down` and
+# OPNsense's translated `Offline`. Unknown and pending mean the monitor has
+# no data yet, which the loss threshold and stale-source rule cover better
+# than a critical alert would.
+GATEWAY_DOWN_STATES = {"down", "offline"}
+
+# How long an event (config changed, snapshot failed) stays on the attention
+# list. The alert engine notifies it once; the list keeps it readable for a
+# day so the person who missed the notification still sees it.
+EVENT_WINDOW_S = 24 * 3600
 
 
 def human_speed(bps) -> str:
@@ -91,6 +120,32 @@ def speed_tier(bps: int | None) -> str:
     if not bps:
         return ""
     return "vslow" if bps <= 10_000_000 else "slow" if bps <= 100_000_000 else ""
+
+
+def rule_params(conn: sqlite3.Connection, name: str, defaults: dict) -> dict:
+    """A rule's parameters: the catalog defaults under the site's stored
+    edits (alert_rules.params). A missing row or unreadable JSON means the
+    defaults, so a rule never stops checking because its row is damaged."""
+    row = conn.execute("SELECT params FROM alert_rules WHERE name = ?",
+                       (name,)).fetchone()
+    try:
+        stored = json.loads(row[0]) if row and row[0] else {}
+    except ValueError:
+        stored = {}
+    return {**defaults, **(stored if isinstance(stored, dict) else {})}
+
+
+def _roles(value) -> set[str]:
+    if isinstance(value, str):
+        value = value.split(",")
+    return {str(r).strip().lower() for r in value or () if str(r).strip()}
+
+
+def _loss_pct(value) -> float | None:
+    """`0.0 %`, `12%`, or a bare number; None when the source said nothing
+    parseable, which is no opinion rather than zero loss."""
+    m = re.search(r"-?\d+(?:\.\d+)?", str(value or ""))
+    return float(m.group()) if m else None
 
 
 def ip_sort_key(ip: str):
@@ -204,9 +259,10 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
     that owns the answer — not pre-categorized cards (issue #13). Rules only
     speak when they can actually check something, so `checked` names only
     the checks that ran and the all-clear line can only claim what it
-    verified. Device state is deliberately absent: the Overview's cards ARE
-    the device-state UI. Anything here can be silenced by declaring it
-    expected (PATCHBAY_EXPECT)."""
+    verified. Device state is category `device`, which the Overview filters
+    out because its cards ARE the device-state UI; /alerts and the alert
+    channel show it. Anything here can be silenced by declaring it expected
+    (PATCHBAY_EXPECT)."""
     items: list[dict] = []
     checked: list[str] = []
 
@@ -278,8 +334,170 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
                 "href": "/ops",
             })
 
-    items.sort(key=lambda i: i["severity"] != "crit")   # crit first, order kept
+    now = db.now()
+    items += _device_down(conn, settings, now)
+    items += _link_down(conn, settings, checked)
+    items += _gateway_degraded(conn, settings, now, checked)
+    items += _config_changed(conn, settings, now)
+    items += _snapshot_failed(conn, now)
+
+    order = {"crit": 0, "warn": 1}
+    items.sort(key=lambda i: order.get(i["severity"], 2))  # crit first, order kept
     return items, checked
+
+
+def _device_down(conn, settings, now: float) -> list[dict]:
+    """device-down: a device in a watched role reports a down state or has
+    not been reported for DEVICE_STALE_S, the same definition the rail's
+    totals and the alert engine's inhibition use. No `checked` line: the
+    Overview hides this category, so its all-clear must not claim it."""
+    roles = _roles(rule_params(conn, "device-down",
+                               {"roles": DEVICE_DOWN_ROLES})["roles"])
+    cutoff = now - DEVICE_STALE_S
+    out = []
+    for r in conn.execute("SELECT name, role, status, last_seen FROM devices "
+                          "ORDER BY name"):
+        if (r["role"] or "").lower() not in roles or r["name"] in settings.expected:
+            continue
+        status = (r["status"] or "").lower()
+        if (r["last_seen"] or 0) < cutoff:
+            what = (f"has not been reported for "
+                    f"{human_age((now - (r['last_seen'] or 0)) / 60)}"
+                    if r["last_seen"] else "has never been reported")
+        elif status in DOWN_STATES:
+            what = f"is {status}"
+        else:
+            continue
+        out.append({
+            "rule": "device-down", "key": f"device:{r['name']}",
+            "category": "device", "severity": "crit",
+            "text": f"{r['role']} {r['name']} {what}",
+            "href": f"/device/{r['name']}",
+        })
+    return out
+
+
+def _link_down(conn, settings, checked: list[str]) -> list[dict]:
+    """link-down: a stated cable with a port reporting oper down. One item
+    per cable, naming both ends in `ports`, so the alert engine's fixed
+    inhibition holds it while either end's device is down: an unplugged
+    switch is one device-down alert, not one per cable. The rule itself
+    does not test the device, because the engine holds an open alert under
+    inhibition rather than clearing it."""
+    links = conn.execute(
+        "SELECT * FROM links WHERE source IN (%s) ORDER BY a_device, a_interface"
+        % ",".join("?" * len(STATED_LINK_SOURCES)), STATED_LINK_SOURCES).fetchall()
+    if not links:
+        return []
+    checked.append("no stated link down")
+    port = {(r["dev"], r["iface"]): r for r in conn.execute(
+        "SELECT d.name AS dev, i.name AS iface, i.oper_status, i.admin_status "
+        "FROM interfaces i JOIN devices d ON d.id = i.device_id")}
+    out, seen = [], set()
+    for l in links:
+        ends = sorted([(l["a_device"], l["a_interface"]),
+                       (l["b_device"], l["b_interface"])])
+        # an admin-down port was shut on purpose; that is a change, not a fault
+        down = [e for e in ends if e in port
+                and (port[e]["oper_status"] or "").lower() in PORT_DOWN_STATES
+                and (port[e]["admin_status"] or "").lower() != "down"]
+        # sorted ends: lldp and declared rows for one cable share one key
+        key = "link-down:" + ":".join(f"{d}:{i}" for d, i in ends)
+        if not down or key in seen:
+            continue
+        names = {d for d, _ in ends} | {f"{d}:{i}" for d, i in ends}
+        if names & settings.expected:
+            continue
+        seen.add(key)
+        (ad, ai), (bd, bi) = ends
+        out.append({
+            "rule": "link-down", "key": key, "category": "link", "severity": "warn",
+            "text": f"{ad} {ai} ↔ {bd} {bi} is down ("
+                    + ", ".join(f"{d} {i}" for d, i in down) + " reports down)",
+            "href": f"/topology?focus={down[0][0]}",
+            "ports": ends,
+        })
+    return out
+
+
+def _gateway_degraded(conn, settings, now: float, checked: list[str]) -> list[dict]:
+    """gateway-degraded: crit when the firewall says a gateway is down, warn
+    when its loss exceeds the threshold. One key per gateway, so a gateway
+    that goes from lossy to down is one alert whose severity rises. A row
+    the firewall stopped refreshing is the stale-source rule's to report."""
+    gws = conn.execute("SELECT * FROM gateways WHERE last_seen >= ? ORDER BY name",
+                       (now - DEVICE_STALE_S,)).fetchall()
+    if not gws:
+        return []
+    checked.append("gateways up")
+    try:
+        limit = float(rule_params(conn, "gateway-degraded",
+                                  {"loss": GATEWAY_LOSS_PCT})["loss"])
+    except (TypeError, ValueError):
+        limit = GATEWAY_LOSS_PCT
+    out = []
+    for g in gws:
+        if g["name"] in settings.expected:
+            continue
+        status = (g["status"] or "").lower()
+        loss = _loss_pct(g["loss"])
+        if status in GATEWAY_DOWN_STATES:
+            sev, what = "crit", f"is {g['status']}"
+        elif loss is not None and loss > limit:
+            sev, what = "warn", f"loses {loss:g} % (threshold {limit:g} %)"
+        else:
+            continue
+        out.append({
+            "rule": "gateway-degraded", "key": f"gateway:{g['name']}",
+            "category": "gateway", "severity": sev,
+            "text": f"gateway {g['name']} {what}", "href": "/",
+        })
+    return out
+
+
+def _config_changed(conn, settings, now: float) -> list[dict]:
+    """config-changed (event): a stored revision that has a predecessor, so
+    a device's first capture is a baseline, not a change. The key carries
+    the revision id and its hash: ids can be reused after a delete, and a
+    config reverting to an earlier state repeats an earlier hash."""
+    out = []
+    for r in conn.execute(
+            "SELECT id, device, fetched_at, sha, message, author "
+            "FROM config_revisions cr WHERE fetched_at >= ? AND EXISTS ("
+            "  SELECT 1 FROM config_revisions p WHERE p.device = cr.device "
+            "  AND (p.fetched_at < cr.fetched_at "
+            "       OR (p.fetched_at = cr.fetched_at AND p.id < cr.id))) "
+            "ORDER BY fetched_at DESC, id DESC", (now - EVENT_WINDOW_S,)):
+        if r["device"] in settings.expected:
+            continue
+        detail = " — ".join(x for x in (r["message"], r["author"]) if x)
+        out.append({
+            "rule": "config-changed",
+            "key": f"config:{r['device']}:{r['id']}:{r['sha'][:12]}",
+            "category": "config", "severity": "info",
+            "text": f"{r['device']} config changed" + (f": {detail}" if detail else ""),
+            "href": f"/configs/{r['device']}", "at": r["fetched_at"],
+        })
+    return out
+
+
+def _snapshot_failed(conn, now: float) -> list[dict]:
+    """snapshot-failed (event): each failure the snapshot paths recorded
+    (db.record_snapshot_failure), keyed by its own timestamp and sequence
+    number."""
+    out = []
+    for f in reversed(db.snapshot_failures(conn)):
+        if f["ts"] < now - EVENT_WINDOW_S:
+            continue
+        what = "not delivered" if f.get("kind") == "undelivered" else "failed"
+        out.append({
+            "rule": "snapshot-failed", "key": f"snapshot:{f['ts']:.3f}:{f.get('n', 0)}",
+            "category": "source", "severity": "warn",
+            "text": f"{f.get('trigger') or 'snapshot'} snapshot {what}: "
+                    f"{f.get('error') or 'no detail'}",
+            "href": "/snapshots", "at": f["ts"],
+        })
+    return out
 
 
 def stamp_first_seen(conn: sqlite3.Connection, items: list[dict]) -> None:
@@ -290,5 +508,7 @@ def stamp_first_seen(conn: sqlite3.Connection, items: list[dict]) -> None:
         "SELECT key, raised_at, state FROM alerts WHERE state != 'cleared'")}
     for it in items:
         row = open_.get(it["key"])
-        it["first_seen"] = row["raised_at"] if row else None
+        # an event clears the cycle it fires, so it has no open row; its
+        # own occurrence time is when patchbay noticed it
+        it["first_seen"] = row["raised_at"] if row else it.get("at")
         it["alert_state"] = row["state"] if row else None

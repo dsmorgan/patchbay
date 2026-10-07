@@ -276,9 +276,9 @@ def _attention_summary(items: list[dict]) -> list[dict]:
     for cat, label in CATEGORIES.items():
         group = [i for i in items if i["category"] == cat]
         if group:
+            sevs = {i["severity"] for i in group}
             out.append({"cat": cat, "label": label, "n": len(group),
-                        "sev": ("crit" if any(i["severity"] == "crit" for i in group)
-                                else "warn")})
+                        "sev": next((s for s in ("crit", "warn") if s in sevs), "info")})
     return out
 
 
@@ -289,6 +289,8 @@ def dashboard(request: Request):
         db.init(conn)
         settings = load_settings()
         exceptions, checked = attention_items(conn, settings)
+        # the cards below are the device-state UI; /alerts lists device items
+        exceptions = [i for i in exceptions if i["category"] != "device"]
         stamp_first_seen(conn, exceptions)
         for it in exceptions:
             it["since"] = _since(it["first_seen"])
@@ -1351,6 +1353,7 @@ def ops_snapshot():
         try:
             path = write_snapshot(settings)
         except DeliveryError as e:
+            _record_snapshot_failure(settings, e, kind="undelivered")
             delivered = f"[warn] written locally, delivery failed: {e}"
             from .retention import stamp_of
 
@@ -1365,9 +1368,22 @@ def ops_snapshot():
         lines.append("[ok]   patchbay-latest.html updated — download from the link below")
         return {"lines": lines}
     except Exception as e:
+        _record_snapshot_failure(settings, e)
         raise HTTPException(500, f"snapshot failed: {e}")
     finally:
         _ops_lock.release()
+
+
+def _record_snapshot_failure(settings, error, *, kind: str = "failed") -> None:
+    """Leave the failure where the snapshot-failed rule reads it. Best
+    effort: the operator already sees this error in the response, and a
+    locked database must not replace it with a different one."""
+    try:
+        with db.connect(settings.db_path) as conn:
+            db.init(conn)
+            db.record_snapshot_failure(conn, error, kind=kind, trigger="manual")
+    except sqlite3.Error:
+        pass
 
 
 @app.get("/ops/snapshot/latest")

@@ -370,6 +370,37 @@ def save_last_poll(conn: sqlite3.Connection, lines: list[str]) -> None:
     set_state(conn, "last_poll", json.dumps({"ts": now(), "lines": lines}))
 
 
+# Snapshot failures, newest last, for the snapshot-failed rule. A snapshot
+# runs after the poll commits, so the rule reads this record on the next
+# poll. The cap only bounds the list: the rule reads the last day.
+SNAPSHOT_FAILURES = "snapshot_failures"
+SNAPSHOT_FAILURES_KEEP = 20
+
+
+def record_snapshot_failure(conn: sqlite3.Connection, error: str, *,
+                            kind: str = "failed", trigger: str = "daily") -> None:
+    """Note one snapshot that failed (`failed`) or was written but not
+    delivered off-host (`undelivered`). `trigger` names the path: daily,
+    manual, or (later) alert."""
+    entries = snapshot_failures(conn)
+    # a sequence number beside the time: two failures can share a
+    # millisecond, and each is its own event
+    n = (entries[-1].get("n") or 0) + 1 if entries else 1
+    entries.append({"ts": now(), "n": n, "kind": kind, "trigger": trigger,
+                    "error": str(error)[:500]})
+    set_state(conn, SNAPSHOT_FAILURES, json.dumps(entries[-SNAPSHOT_FAILURES_KEEP:]))
+
+
+def snapshot_failures(conn: sqlite3.Connection) -> list[dict]:
+    raw = get_state(conn, SNAPSHOT_FAILURES)
+    try:
+        entries = json.loads(raw) if raw else []
+    except ValueError:
+        return []
+    return [e for e in entries if isinstance(e, dict)
+            and isinstance(e.get("ts"), (int, float))] if isinstance(entries, list) else []
+
+
 def upsert_device(conn: sqlite3.Connection, *, name: str, source: str, **fields: Any) -> int:
     fields = {k: v for k, v in fields.items() if v is not None}
     cols = ["name", "source", "last_seen", *fields]

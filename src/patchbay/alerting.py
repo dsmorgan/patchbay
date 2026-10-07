@@ -25,7 +25,8 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from . import db
-from .attention import DEVICE_STALE_S, DOWN_STATES, attention_items
+from .attention import (DEVICE_DOWN_ROLES, DEVICE_STALE_S, DOWN_STATES,
+                        GATEWAY_LOSS_PCT, attention_items)
 
 # History retention: a quarter covers "has this happened before?", and the
 # count cap bounds a flapping rule that would otherwise fill 90 days.
@@ -39,18 +40,47 @@ class Rule:
     event: bool = False        # one-shot: notify and clear in the same cycle
     params: dict = field(default_factory=lambda: {"for": 1})
     route: str | None = None   # None = the default route; 'none' = nowhere
+    summary: str = ""          # when it fires, for the Rules tab
 
 
-# The catalog: the rules that exist in attention_items() today. A new rule
-# is one attention function and one row here, with tests. Severity is the
-# item's own (slow link is crit or warn by speed); alert_rules.severity
-# overrides it per site.
+# The catalog (ADR-0003 Decision 4): every rule attention_items() runs. A
+# new rule is one attention function and one row here, with tests. Severity
+# is the item's own (slow link is crit or warn by speed); alert_rules.severity
+# overrides it per site. Parameter defaults beyond `for` are attention.py's
+# constants, so the rule and its catalog row cannot disagree.
 RULES: dict[str, Rule] = {
+    # hypervisor is watched by default (#60): a host powered off on purpose
+    # is a silence, and a host that died unannounced takes its guests with it
+    "device-down": Rule(
+        category="device", params={"for": 1, "roles": list(DEVICE_DOWN_ROLES)},
+        summary="A device in a watched role reports a down state, or has not "
+                "been reported for two hours."),
+    "link-down": Rule(
+        category="link",
+        summary="A port on a stated cable (LLDP, UniFi, or declared) is down "
+                "while its device is up."),
+    "gateway-degraded": Rule(
+        category="gateway", params={"for": 1, "loss": GATEWAY_LOSS_PCT},
+        summary="Critical when the firewall reports a gateway down; warning "
+                "when its packet loss exceeds the loss percentage."),
     # informs on the attention list but routes nowhere (ADR-0003 Decision
-    # 4): a legitimately slow port is a silence, not a page
-    "slow-link": Rule(category="link", route="none"),
-    "ipam-drift": Rule(category="ipam"),
-    "stale-source": Rule(category="source"),
+    # 4): a legitimately slow port is a silence, not a page, and a config
+    # change is news, not an incident
+    "slow-link": Rule(
+        category="link", route="none",
+        summary="A link runs at 100M or slower."),
+    "config-changed": Rule(
+        category="config", event=True, params={}, route="none",
+        summary="A device's stored configuration changed."),
+    "ipam-drift": Rule(
+        category="ipam", summary="IPAM records and the network disagree."),
+    "stale-source": Rule(
+        category="source",
+        summary="A data source has not reported for 15 minutes."),
+    "snapshot-failed": Rule(
+        category="source", event=True, params={},
+        summary="The daily or a manual snapshot failed, or was not delivered "
+                "off-host."),
 }
 
 # A rule that is not in the catalog (a third-party or synthetic item) gets
@@ -58,7 +88,8 @@ RULES: dict[str, Rule] = {
 _DEFAULT_RULE = Rule(category="")
 
 # Rules whose items an unreachable device would multiply: one unplugged
-# switch is one alert, not one per cable (ADR-0003, fixed inhibition).
+# switch is one alert, not one per cable (ADR-0003, fixed inhibition). The
+# link-down rule names both cable ends in `ports` for this.
 _INHIBITED_BY_DOWN_DEVICE = {"link-down"}
 
 # where record_first_seen kept its timestamps before the alerts table; read
