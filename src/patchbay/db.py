@@ -209,6 +209,71 @@ CREATE TABLE IF NOT EXISTS raw_payloads (
     payload TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_raw_source_time ON raw_payloads (source, fetched_at);
+-- Alerting (ADR-0003). Configuration is database rows edited on /alerts,
+-- never env: alert_rules is seeded from alerting.RULES on first run, and
+-- alert_transports / alert_silences exist now so later parts add no
+-- migration.
+CREATE TABLE IF NOT EXISTS alert_rules (
+    name TEXT PRIMARY KEY,     -- catalog rule id (alerting.RULES)
+    enabled INTEGER NOT NULL DEFAULT 1,
+    severity TEXT,             -- override; NULL = what the rule says per item
+    params TEXT NOT NULL DEFAULT '{}',  -- JSON: `for`, `remind`, rule knobs
+    route TEXT                 -- NULL = the site's default route; 'none' =
+);                             -- attention list only, never dispatched
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY,
+    key TEXT NOT NULL,         -- the attention item's key
+    rule TEXT NOT NULL,
+    category TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    state TEXT NOT NULL,       -- pending | active | cleared
+    polls INTEGER NOT NULL DEFAULT 1,  -- consecutive polls held, for `for`
+    raised_at REAL NOT NULL,
+    active_at REAL,
+    cleared_at REAL,
+    last_notified_at REAL,
+    text TEXT,
+    href TEXT
+);
+-- one open alert per key; a cleared one is history, and the same condition
+-- returning raises a new row
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_open ON alerts (key)
+    WHERE state != 'cleared';
+CREATE TABLE IF NOT EXISTS alert_events (
+    id INTEGER PRIMARY KEY,    -- history: raised | active | cleared, and
+    alert_id INTEGER,          -- later notified | silenced | delivery_failed.
+    ts REAL NOT NULL,          -- key/text/severity are copied, not joined,
+    event TEXT NOT NULL,       -- so pruning alerts never orphans a line
+    key TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    category TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    text TEXT,
+    href TEXT,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_alert_events_ts ON alert_events (ts);
+CREATE TABLE IF NOT EXISTS alert_transports (
+    id INTEGER PRIMARY KEY,    -- schema only until #61. url is a credential:
+    name TEXT NOT NULL UNIQUE, -- masked on the page, never logged, never
+    kind TEXT NOT NULL,        -- in a snapshot. kind = webhook preset.
+    url TEXT NOT NULL,
+    extra TEXT NOT NULL DEFAULT '{}',   -- JSON, preset-specific fields
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_result TEXT,
+    last_sent_at REAL,
+    last_error TEXT,
+    failures INTEGER NOT NULL DEFAULT 0  -- consecutive, for the 3-strike item
+);
+CREATE TABLE IF NOT EXISTS alert_silences (
+    id INTEGER PRIMARY KEY,    -- schema only until #62
+    kind TEXT NOT NULL,        -- key | device | port | category
+    scope TEXT NOT NULL,       -- the key pattern, device, dev:port, category
+    until REAL,                -- NULL = permanent
+    reason TEXT,
+    created_by TEXT,
+    created_at REAL NOT NULL
+);
 """
 
 
