@@ -109,15 +109,22 @@ def cmd_poll(args: argparse.Namespace) -> int:
     # the daily snapshot runs after the poll transaction commits: it opens its
     # own connection and would otherwise contend with this one
     if due:
+        failure = None
         try:
             path = snap.write_snapshot(settings)
             say(f"[ok]   snapshot: {path}")
         except snap.DeliveryError as e:
             say(f"[warn] snapshot written but delivery failed: {e}", err=True)
+            failure = (e, "undelivered")
         except Exception as e:
             say(f"[fail] snapshot: {e}", err=True)
+            failure = (e, "failed")
             rc = 1
         with db.connect(settings.db_path) as conn:
+            if failure:
+                # the snapshot-failed rule reads this on the next poll: this
+                # cycle's alerting already ran, before the snapshot did
+                db.record_snapshot_failure(conn, failure[0], kind=failure[1])
             snap.mark_done(conn)      # once a day even if delivery failed —
             db.save_last_poll(conn, lines)   # retrying every 5 min won't help
     return rc

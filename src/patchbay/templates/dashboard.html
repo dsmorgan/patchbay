@@ -167,6 +167,7 @@
   .attn-chip { font-size: 0.72rem; padding: 0.05rem 0.55rem; border-radius: 999px;
                border: 1px solid var(--warn); color: var(--warn); }
   .attn-chip.crit { border-color: var(--crit); color: var(--crit); }
+  .attn-chip.info { border-color: var(--line); color: var(--muted); }
   .attn-chip:hover { text-decoration: none; background: var(--hover); }
   .attn-all { margin-left: auto; font-size: 0.75rem; }
   .attn { list-style: none; margin: 0.5rem 0 0; padding: 0;
@@ -177,6 +178,7 @@
   .attn li::before { content: ""; position: absolute; left: 0; top: 0.42em;
                      width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
   .attn li.crit::before { background: var(--crit); }
+  .attn li.info::before { background: var(--muted); }
   .attn a { color: var(--ink); }
   .attn-since { color: var(--muted); font-size: 0.75rem; margin-left: 0.4rem; }
   .attn-clear { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--muted); }

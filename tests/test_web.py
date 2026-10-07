@@ -741,13 +741,13 @@ def test_attention_section_and_alerts_page(clean_env, tmp_path, client):
     assert '<section class="attention">' in body
     assert ">Attention</a></h2>" in body
     assert 'class="attn-chip crit"' in body          # 10M link = crit
-    assert "1 slow links" in body
+    assert "1 links" in body
     assert '<ul class="attn capped">' in body
     assert 'href="/alerts"' in body
 
     page = client.get("/alerts").text
     assert "runs at 10M" in page
-    assert "slow links" in page
+    assert ">links</a>" in page
 
     # the filtered state is URL-addressable, like the map
     assert "runs at 10M" in client.get("/alerts?category=link").text

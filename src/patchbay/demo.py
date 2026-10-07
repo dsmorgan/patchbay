@@ -10,11 +10,13 @@ placement, and link precedence are exercised, not faked.
 What a viewer gets: a two-switch fabric with a firewall VM, two hypervisors
 and their guests, three APs with wireless clients, an inferred unmanaged
 switch, a declared cable to a NAS, a mirror port, a patch panel, IPAM drift
-findings of every kind, and 24h of sine-wave rate history for the load view.
+findings of every kind, a firewall config change, and 24h of sine-wave rate
+history for the load view.
 """
 
 from __future__ import annotations
 
+import hashlib
 import math
 import random
 import sqlite3
@@ -274,6 +276,20 @@ def seed(conn: sqlite3.Connection, *, rnd: random.Random | None = None) -> str:
                  "(name, address, status, loss, delay, source, last_seen) "
                  "VALUES ('WAN_GW', '100.64.10.1', 'Online', '0.0 %', "
                  "'8.1 ms', 'opnsense', ?)", (now,))
+
+    # firewall config history (#23): a baseline and one change two hours
+    # ago, so /configs has a diff and the config-changed rule has an event
+    base = ("<opnsense>\n  <system><hostname>fw1</hostname></system>\n"
+            "  <filter>\n    <rule><descr>lan to any</descr></rule>\n")
+    for age, body, msg in (
+            (3 * 86400, base, "demo: initial capture"),
+            (2 * 3600, base + "    <rule><descr>wan to vm-web1:443</descr></rule>\n",
+             "demo: publish vm-web1 on 443")):
+        text = body + "  </filter>\n</opnsense>\n"
+        conn.execute(
+            "INSERT INTO config_revisions (device, fetched_at, sha, message, "
+            "author, text) VALUES ('fw1', ?, ?, ?, 'demo', ?)",
+            (now - age, hashlib.sha256(text.encode()).hexdigest(), msg, text))
 
     # 24h of samples for every live link end: the load view's peak column.
     # A sine day (quiet at night, busy evenings) + jitter reads believably.
