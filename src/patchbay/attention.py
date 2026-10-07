@@ -360,6 +360,10 @@ def _device_down(conn, settings, now: float) -> list[dict]:
         if (r["role"] or "").lower() not in roles or r["name"] in settings.expected:
             continue
         status = (r["status"] or "").lower()
+        # disabled in the NMS on purpose: a decision, not a fault. It stays
+        # in DOWN_STATES, so the engine still inhibits its cables.
+        if status == "disabled":
+            continue
         if (r["last_seen"] or 0) < cutoff:
             what = (f"has not been reported for "
                     f"{human_age((now - (r['last_seen'] or 0)) / 60)}"
