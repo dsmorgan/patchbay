@@ -9,6 +9,10 @@ put.
 ## [Unreleased]
 
 ### Added
+- Alert rules (#60): device down (hypervisors included), link down, gateway
+  degraded, config changed, and snapshot failed. A worsening alert sends an
+  escalation. The **Rules** tab on `/alerts` enables, re-rates, and tunes
+  each rule; a disabled rule is hidden everywhere.
 - `/snapshots` and the revision list on `/configs/{node}` page at 25 rows,
   so a large keep count or an unlimited one stays readable (#68).
 - Tiered snapshot retention (#65). `PATCHBAY_SNAPSHOT_KEEP` takes a spec such
