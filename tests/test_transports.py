@@ -469,3 +469,95 @@ def test_poll_output_never_carries_the_url(clean_env, tmp_path, monkeypatch):
         assert s not in "\n".join(lines)
         assert s not in client.get("/ops").text
         assert s not in client.get("/alerts").text
+
+
+# -- review round 1: redaction edge cases, wall-clock limit, delete ---------
+
+def _echo(body):
+    """A receiver that fails and echoes `body(request)` back."""
+    def handler(request):
+        return httpx.Response(400, text=body(request))
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _one(url, body, kind="generic"):
+    t = {"kind": kind, "url": url, "name": "t"}
+    with _echo(body) as client:
+        ok, result = transports._request(client, t, payload={})
+    assert not ok
+    return result
+
+
+@pytest.mark.parametrize("url, secret", [
+    ("https://hooks.example.com/hook?token=qTok12345", "qTok12345"),   # query value
+    ("https://hooks.example.com/w/%7Etok%40en99", "%7Etok%40en99"),    # raw encoded
+    ("https://hooks.example.com/w/%7Etok%40en99", "~tok@en99"),        # decoded
+    ("https://user:pw0rdSecret@hooks.example.com/x", "pw0rdSecret"),   # password
+    ("https://hooks.example.com/hook/ab12", "ab12"),                   # short token
+])
+def test_redaction_covers_each_url_part(url, secret):
+    assert secret not in _one(url, lambda r: f"bad credential {secret}")
+
+
+def test_redaction_happens_before_truncation():
+    # a URL cut mid-token by the 120-character snippet must not leave the
+    # token's front half behind
+    body = "x" * 80 + " " + HOOK          # 120 characters falls inside the token
+    assert "hookSec" in body[:120] and "hookSecret99" not in body[:120]
+    result = _one(HOOK, lambda r: body)
+    assert "hookSec" not in result and result.endswith("<redacted>")
+
+
+def test_kuma_redacts_the_rebuilt_query_it_sent():
+    kuma = "https://kuma.example.com/api/push/kTok42?ping=&msg=OK&status=up"
+    t = {"kind": "kuma", "url": kuma, "name": "k"}
+    with _echo(lambda r: f"no monitor at {r.url}") as client:
+        ok, result = transports._request(client, t, status="down", msg="1 alert")
+    assert not ok and "kTok42" not in result
+
+
+class _Trickle(httpx.SyncByteStream):
+    def __init__(self, delay):
+        self.delay = delay
+
+    def __iter__(self):
+        import time
+        while True:              # never finishes
+            if self.delay:
+                time.sleep(self.delay)
+            yield b"x" * (1 if self.delay else 1024)
+
+
+def _stream_client(delay):
+    return httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, stream=_Trickle(delay))))
+
+
+def test_trickling_receiver_hits_the_wall_clock_limit(monkeypatch):
+    import time
+    monkeypatch.setattr(transports, "REQUEST_S", 0.3)
+    t = {"kind": "generic", "url": HOOK, "name": "g"}
+    start = time.monotonic()
+    with _stream_client(0.02) as client:
+        ok, result = transports._request(client, t, payload={})
+    assert time.monotonic() - start < 2
+    assert not ok and result.startswith("_Deadline")
+
+
+def test_endless_body_is_capped():
+    t = {"kind": "generic", "url": HOOK, "name": "g"}
+    with _stream_client(0) as client:
+        ok, result = transports._request(client, t, payload={})
+    assert ok and result.startswith("HTTP 200 xxx") and len(result) < 200
+
+
+def test_kuma_test_button_pushes_down_while_held_down(dbp):
+    tid = _add(dbp, "kuma", "kuma", KUMA)
+    _poll(dbp, [_item("source:stale")], T0, Recorder())
+    rec = Recorder()
+    c = _c(dbp)
+    ok, _ = transports.send_test(c, tid, transport=rec.transport)
+    c.close()
+    assert ok
+    assert rec.seen[-1].url.params["status"] == "down"
+    assert rec.seen[-1].url.params["msg"].startswith("patchbay test: 1 alert")
