@@ -394,7 +394,7 @@ def alerts(request: Request, category: str | None = None,
     alert engine's event log. Tab and filters are URL state, like the map.
     Active computes the rules live rather than reading the alerts table, so
     it matches the Overview even before the first poll has run."""
-    if tab not in ("active", "history"):
+    if tab not in ("active", "history", "rules"):
         tab = "active"
     conn = _conn()
     try:
@@ -422,7 +422,11 @@ def alerts(request: Request, category: str | None = None,
                     + (" WHERE " + " AND ".join(where) if where else "")
                     + " ORDER BY ts DESC, id DESC LIMIT ?",
                     (*args, ALERT_HISTORY_ROWS))]
+        rules = alerting.rule_settings(conn) if tab == "rules" else []
+        if rules:
+            conn.commit()   # seeding a fresh install's rows is not a poll's job
         return templates.TemplateResponse(request, "alerts.html", {
+            "rules": rules, "severities": alerting.SEVERITIES,
             "items": shown, "total": len(items), "checked": checked,
             "attn_summary": _attention_summary(items),
             "category": category, "severity": severity, "tab": tab,
@@ -431,6 +435,32 @@ def alerts(request: Request, category: str | None = None,
         })
     finally:
         conn.close()
+
+
+@app.post("/alerts/rules/{name}")
+async def alerts_rule_update(name: str, request: Request):
+    """Save one rule from the Rules tab (ADR-0003 Decision 2: the database is
+    the authority, no env involvement). A plain form post, answered with a
+    redirect back to the tab so a reload never resubmits."""
+    from urllib.parse import parse_qs, quote
+
+    from fastapi.responses import RedirectResponse
+
+    if name not in alerting.RULES:
+        raise HTTPException(404, f"unknown rule: {name}")
+    form = {k: v[-1] for k, v in parse_qs(
+        (await request.body()).decode(), keep_blank_values=True).items()}
+    conn = _conn()
+    try:
+        db.init(conn)
+        try:
+            alerting.update_rule(conn, name, form)
+        except ValueError as e:
+            raise HTTPException(400, f"{name}: {e}")
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse(f"/alerts?tab=rules#rule-{quote(name)}", status_code=303)
 
 
 TOPO_ROLES = ("firewall", "router", "switch", "hypervisor", "ap", "unmanaged-switch")

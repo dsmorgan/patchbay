@@ -1,0 +1,63 @@
+{# The Rules tab (ADR-0003 Decisions 2 and 4): the built-in catalog, one plain
+   form per rule. Enable, severity override, and parameters are edited here;
+   the route is shown read-only, because the Transports tab owns routing.
+   Changes take effect on the next poll. #}
+<p class="muted" style="font-size: 0.85rem; max-width: 78ch; margin-top: 0">
+Each rule is built in; a site tunes it. Changes take effect on the next poll.
+A disabled rule still shows on the attention list but raises no alert.
+Event rules fire once per occurrence, so they have no <code>for</code>.</p>
+
+<div class="rules">
+{% for r in rules %}
+<form class="rule" id="rule-{{ r.name }}" method="post" action="/alerts/rules/{{ r.name }}">
+  <div class="rule-head">
+    <label class="rule-on">
+      <input type="checkbox" name="enabled" value="1" {{ 'checked' if r.enabled }}>
+      <span class="mono">{{ r.name }}</span>
+    </label>
+    <span class="muted">{{ categories.get(r.category, r.category) }}{% if r.event %} · event{% endif %}</span>
+  </div>
+  {% if r.summary %}<p class="rule-sum muted">{{ r.summary }}</p>{% endif %}
+  <div class="rule-fields">
+    <label>severity
+      <select name="severity">
+        <option value="" {{ 'selected' if not r.severity }}>the rule's own</option>
+        {% for s in severities %}
+        <option value="{{ s }}" {{ 'selected' if r.severity == s }}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {% for k, v in r.params.items() %}
+    <label>{{ k }}
+      <input class="mono" name="param_{{ k }}"
+             value="{{ v | join(', ') if v is iterable and v is not string else v }}"
+             {% if v is iterable and v is not string %}size="44"{% else %}size="5"{% endif %}>
+    </label>
+    {% endfor %}
+    <span class="rule-route muted" title="routes are edited on the Transports tab">route:
+      {% if r.route is none %}default{% elif r.route == 'none' %}nowhere (attention list only){% else %}<span class="mono">{{ r.route }}</span>{% endif %}
+    </span>
+    <button type="submit">save</button>
+  </div>
+</form>
+{% endfor %}
+</div>
+
+<style>
+  .rules { display: flex; flex-direction: column; gap: 0.6rem; max-width: 900px; }
+  .rule { border: 1px solid var(--line); border-radius: 8px; padding: 0.55rem 0.8rem; }
+  .rule-head { display: flex; gap: 0.8rem; align-items: baseline; font-size: 0.85rem; }
+  .rule-on { display: inline-flex; gap: 0.4rem; align-items: center; color: var(--ink); }
+  .rule-sum { margin: 0.25rem 0 0.4rem; font-size: 0.8rem; }
+  .rule-fields { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center;
+                 font-size: 0.78rem; }
+  .rule-fields label { display: inline-flex; gap: 0.4rem; align-items: center;
+                       color: var(--muted); }
+  .rule-fields input, .rule-fields select {
+    padding: 0.25rem 0.5rem; border-radius: 6px; font-size: 0.78rem; max-width: 100%;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  .rule-route { margin-left: auto; }
+  .rule-fields button { background: var(--card); color: var(--accent);
+    border: 1px solid var(--accent); border-radius: 6px; padding: 0.25rem 0.7rem;
+    font-size: 0.75rem; cursor: pointer; }
+</style>

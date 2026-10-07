@@ -5,14 +5,19 @@
 {# The alerts page (issue #28, ADR-0003 Decision 8). Tabs and filters are
    plain links so the state lives in the URL, same principle as the map.
    Active renders the checks' current state; History is the alert engine's
-   event log (raised, active, cleared), newest first. #}
+   event log (raised, active, cleared), newest first; Rules edits the
+   catalog (_alert_rules.html). #}
 
 {% set base = '/alerts?tab=history&' if tab == 'history' else '/alerts?' %}
 <nav class="tabs">
   <a class="{{ 'on' if tab == 'active' }}" href="/alerts">Active</a>
   <a class="{{ 'on' if tab == 'history' }}" href="/alerts?tab=history">History</a>
+  <a class="{{ 'on' if tab == 'rules' }}" href="/alerts?tab=rules">Rules</a>
 </nav>
 
+{% if tab == 'rules' %}
+{% include '_alert_rules.html' %}
+{% else %}
 <div class="filters">
   <a class="fchip {{ 'on' if not category and not severity }}" href="{{ base[:-1] }}">all</a>
   <span class="fgroup">
@@ -81,6 +86,7 @@ shown — <a href="/alerts">clear the filter</a>.</p>
 {% else %}
 <p class="muted">No checks have anything to look at yet — they speak once
 their sources report data. <a href="/ops">Ops</a> shows what is configured.</p>
+{% endif %}
 {% endif %}
 {% endif %}
 

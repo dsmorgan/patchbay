@@ -1,7 +1,7 @@
 """The v1 rule catalog (issue #60, ADR-0003 Decision 4): device down, link
 down, gateway degraded, config changed, and snapshot failed, each as the
-attention item it produces and the alert the engine makes of it.
-Every model here is synthetic."""
+attention item it produces and the alert the engine makes of it, plus the
+Rules tab that tunes them. Every model here is synthetic."""
 
 from __future__ import annotations
 
@@ -324,3 +324,66 @@ def test_catalog_defaults_per_adr(conn):
         "config-changed", "slow-link"}
     assert alerting.RULES["config-changed"].event
     assert alerting.RULES["snapshot-failed"].event
+
+
+def test_rules_tab_lists_and_saves(clean_env, tmp_path):
+    import patchbay.web as web
+
+    client = TestClient(web.app)
+    page = client.get("/alerts?tab=rules").text
+    for name in alerting.RULES:
+        assert f'action="/alerts/rules/{name}"' in page
+    assert 'value="switch, ap, firewall, router, hypervisor"' in page
+    assert "nowhere (attention list only)" in page    # read-only route
+
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        c.execute("UPDATE alert_rules SET params = '{\"for\": 1, \"remind\": 3600}' "
+                  "WHERE name = 'device-down'")
+    r = client.post("/alerts/rules/device-down", data={
+        "enabled": "1", "severity": "warn", "param_for": "2",
+        "param_roles": "Switch, ap"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"].startswith("/alerts?tab=rules")
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        row = c.execute("SELECT * FROM alert_rules WHERE name = 'device-down'").fetchone()
+        assert (row["enabled"], row["severity"]) == (1, "warn")
+        assert json.loads(row["params"]) == {"for": 2, "remind": 3600,
+                                             "roles": ["switch", "ap"]}
+        assert row["route"] is None                    # routes are not edited here
+
+    # an unchecked box disables; an empty severity returns to the rule's own
+    client.post("/alerts/rules/device-down", data={
+        "severity": "", "param_for": "2", "param_roles": "switch"})
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        row = c.execute("SELECT * FROM alert_rules WHERE name = 'device-down'").fetchone()
+        assert (row["enabled"], row["severity"]) == (0, None)
+
+
+@pytest.mark.parametrize("form", [
+    {"param_for": "0"}, {"param_for": "soon"}, {"param_roles": " , "},
+    {"severity": "panic"},
+])
+def test_rules_tab_rejects_bad_values_without_writing(clean_env, tmp_path, form):
+    import patchbay.web as web
+
+    client = TestClient(web.app)
+    client.get("/alerts?tab=rules")                  # seeds the rows
+    r = client.post("/alerts/rules/device-down", data={"enabled": "1", **form})
+    assert r.status_code == 400
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        row = c.execute("SELECT * FROM alert_rules WHERE name = 'device-down'").fetchone()
+        assert row["severity"] is None and json.loads(row["params"])["for"] == 1
+
+
+def test_rules_tab_gateway_loss_and_unknown_rule(clean_env, tmp_path):
+    import patchbay.web as web
+
+    client = TestClient(web.app)
+    assert client.post("/alerts/rules/gateway-degraded", data={
+        "enabled": "1", "param_loss": "12.5 %"}).status_code == 200
+    assert client.post("/alerts/rules/gateway-degraded", data={
+        "enabled": "1", "param_loss": "150"}).status_code == 400
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        assert json.loads(c.execute("SELECT params FROM alert_rules WHERE "
+                                    "name = 'gateway-degraded'").fetchone()[0])["loss"] == 12.5
+    assert client.post("/alerts/rules/no-such-rule", data={}).status_code == 404
