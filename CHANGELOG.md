@@ -9,6 +9,11 @@ put.
 ## [Unreleased]
 
 ### Added
+- The alerting engine from ADR-0003 (#59). Each poll diffs the attention
+  items against an `alerts` table, so every alert has a lifecycle (pending,
+  active, cleared) and a history. `/alerts` gains **Active** and **History**
+  tabs. Nothing notifies yet; transports arrive in #61. Alert history keeps
+  90 days.
 - `PATCHBAY_CONFIG_KEEP` sets how many firewall config revisions each device
   keeps (default 50, 0 for unlimited), replacing a fixed cap. It and
   `PATCHBAY_SNAPSHOT_KEEP` are editable on /ops, and /configs shows the
