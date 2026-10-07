@@ -1561,9 +1561,9 @@ def test_snapshots_tiers_computed_over_full_list(clean_env, tmp_path, client):
     # page 2 holds the 5 oldest; they are outside the keep-3 set
     assert p2.count("download</a>") == 5
     assert p2.count("pruned next snapshot") == 5
-    # the newest are kept, so page 1 is not all "pruned" — the tier labels
-    # come from the full list, not from the slice
-    assert 0 < p1.count("pruned next snapshot") < 25
+    # newest is Feb 2; the 3-day daily window spans Feb 2, Feb 1, Jan 31 (an
+    # empty day still counts), so only 2 are kept and 23 of page 1 are pruned
+    assert p1.count("pruned next snapshot") == 23
 
 
 def test_snapshots_single_page_has_no_pager(clean_env, tmp_path, client):
@@ -1587,3 +1587,17 @@ def test_confignode_paginates_revisions(clean_env, tmp_path, client):
     assert p3.count(">view</a>") == 5 and "rev-00" in p3
     assert client.get("/configs/fw1?page=500").text == p3
     assert client.get("/configs/fw1?page=x").text == p1
+
+
+def test_confignode_row_links_keep_page(clean_env, tmp_path, client):
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    c.row_factory = sqlite3.Row
+    pdb.init(c)
+    for i in range(55):
+        c.execute("INSERT INTO config_revisions (device, fetched_at, text, sha, message)"
+                  " VALUES (?,?,?,?,?)", ("fw1", 1000 + i, f"cfg {i}", f"h{i}", f"rev-{i:02d}"))
+    c.commit(); c.close()
+    p3 = client.get("/configs/fw1?page=3").text
+    assert "&amp;page=3" in p3 or "&page=3" in p3
+    assert 'page=3">view' in p3
+    assert "page=" not in client.get("/configs/fw1").text.split("Versions")[1].split("</table>")[0]
