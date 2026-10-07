@@ -88,12 +88,18 @@ so **don't set `PATCHBAY_TLS_VERIFY=0` while using OIDC**: a disabled verify
 lets a MITM on the token endpoint forge identities. Keep it `1` (or a CA
 bundle path) in any OIDC deployment.
 
+### Config history
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PATCHBAY_CONFIG_KEEP` | `50` | Firewall config revisions kept per device; older ones are trimmed when a poll stores a new revision (`0` = keep everything). A value that is not a whole number of 0 or more falls back to `50` with a parse warning. Also editable on `/ops` when the env file doesn't set it; `/configs` shows the effective value and its source |
+
 ### Snapshots
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `PATCHBAY_SNAPSHOT_DIR` | `snapshots/` beside the DB | Where `patchbay snapshot` and the `/snapshots` page write the self-contained HTML files (timestamped + a stable `patchbay-latest.html`) |
-| `PATCHBAY_SNAPSHOT_KEEP` | `30` | Timestamped snapshots to retain (`0` = keep everything) |
+| `PATCHBAY_SNAPSHOT_KEEP` | `30` | Timestamped snapshots to retain (`0` = keep everything). Also editable on `/ops` when the env file doesn't set it |
 | `PATCHBAY_SNAPSHOT_AT` | — | `HH:MM` local time to write one snapshot a day (the poller does it). Unset = on-demand only. Also editable on `/ops` when the env file doesn't set it |
 | `PATCHBAY_SNAPSHOT_DELIVER_DIR` | — | Second destination each finished snapshot is copied to (a mounted off-site share). Kept separate from the local directory so a delivery failure never costs you the snapshot; copies land under a temporary name and are renamed, so a sync client never picks up a half-written file |
 

@@ -1479,3 +1479,21 @@ def test_topology_undo_restores_the_saved_state_and_redraws(client, tmp_path):
     assert "savePos(name, prevPx, prevPy);" in undo
     assert 'classed("pinned", prevPx != null)' in undo
     assert "savePos(name, prevFx" not in undo
+
+
+def test_config_keep_text_shows_value_and_source(clean_env):
+    clean_env.setenv("PATCHBAY_CONFIG_KEEP", "200")
+    from patchbay.web import _config_keep_text
+    from patchbay.config import load_settings
+    assert _config_keep_text(load_settings()) == "200 per device · env"
+    clean_env.setenv("PATCHBAY_CONFIG_KEEP", "0")
+    assert _config_keep_text(load_settings()) == "unlimited per device · env"
+    clean_env.delenv("PATCHBAY_CONFIG_KEEP")
+    assert _config_keep_text(load_settings()) == "50 per device · default"
+
+
+def test_ops_lists_config_keep(clean_env, client):
+    clean_env.setenv("PATCHBAY_CONFIG_KEEP", "200")
+    body = client.get("/ops").text
+    assert "PATCHBAY_CONFIG_KEEP" in body and "200 per device" in body
+    assert "PATCHBAY_SNAPSHOT_KEEP" in body
