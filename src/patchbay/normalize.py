@@ -18,7 +18,7 @@ import json
 import sqlite3
 from collections import Counter
 
-from . import db
+from . import alerting, db
 
 
 def _is_raw_model_code(value: str | None) -> bool:
@@ -923,6 +923,8 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
     # (#53), and a site fed by UniFi alone would have kept every sample.
     conn.execute("DELETE FROM rate_history WHERE ts < ?",
                  (db.now() - 7 * 86400,))
+    # ...and alert history keeps a quarter, capped by count (ADR-0003)
+    alerting.prune_history(conn)
     # ...and stale endpoint observations age out (see ENDPOINT_TTL): live
     # ones are re-upserted every poll by whichever source still sees them
     conn.execute("DELETE FROM endpoints WHERE COALESCE(last_seen, 0) < ?",
