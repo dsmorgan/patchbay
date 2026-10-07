@@ -295,7 +295,10 @@ its data. A generic notification that fails waits for the next poll and is
 sent then. Each attempt is recorded in **History** as `notified` or
 `delivery_failed`. After three consecutive failed polls, the transport
 itself becomes a `sources` item on the attention list, showing its last
-error, until a delivery succeeds.
+error, until a delivery succeeds. That item follows the default route like
+any other rule. When the failing transport is the default, the attention
+list still shows the item, and a Kuma monitor that stops receiving pushes
+goes down on its own.
 
 ## Where the state lives
 
