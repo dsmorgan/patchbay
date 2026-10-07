@@ -341,6 +341,8 @@ Each is answered in the issue that implements the decision it belongs to.
 2. The `device down` role list: is `hypervisor` in by default, given a
    lab host that is powered off on purpose is common? A silence covers it,
    but the first week of a fresh install will page on it. Rules issue.
+   *Settled in #60: yes.* A host powered off on purpose is a silence; a
+   host that died unannounced takes its guests with it.
 3. Canary floor and multiplier: the defaults above are reasoned, not
    measured. A week of samples from the reference site, read before the
    rule ships, settles them. Canaries issue.
