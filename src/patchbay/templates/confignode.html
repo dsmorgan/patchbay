@@ -21,13 +21,14 @@
 {% if versions %}
 <div class="scroll"><table>
   <tr><th>when</th><th>commit</th><th>message</th><th></th><th></th>{% if db_held %}<th></th>{% endif %}</tr>
+  {% set pg = "&page=" ~ pager.page if pager.page > 1 else "" %}
   {% for v in versions %}
   <tr>
     <td class="muted">{{ v.date or "" }}</td>
     <td class="mono">{{ v.oid[:10] }}</td>
     <td class="muted">{{ v.message }}</td>
-    <td><a href="/configs/{{ node }}?v={{ v.oid }}">view</a></td>
-    <td>{% if v.prev %}<a href="/configs/{{ node }}?v={{ v.oid }}&prev={{ v.prev }}">diff vs previous</a>{% else %}<span class="muted">first version</span>{% endif %}</td>
+    <td><a href="/configs/{{ node }}?v={{ v.oid }}{{ pg }}">view</a></td>
+    <td>{% if v.prev %}<a href="/configs/{{ node }}?v={{ v.oid }}&prev={{ v.prev }}{{ pg }}">diff vs previous</a>{% else %}<span class="muted">first version</span>{% endif %}</td>
     {% if db_held %}<td><form method="post" action="/configs/{{ node | urlencode }}/delete"
       onsubmit="return confirm('Delete revision {{ v.oid }}?')" style="display: inline">
       <input type="hidden" name="v" value="{{ v.oid }}">
