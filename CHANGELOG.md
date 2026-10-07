@@ -9,6 +9,12 @@ put.
 ## [Unreleased]
 
 ### Added
+- Alert notifications (#61). The **Transports** tab on `/alerts` adds webhook
+  receivers with two presets: `kuma` holds an Uptime Kuma push monitor down
+  while alerts on its route are active, and `generic` posts JSON on raise,
+  escalate, clear, and events. Routes pick a transport and a minimum
+  severity. Webhook URLs are masked, redacted from every message, and never
+  written to snapshots. See the Notifications section of the deployment guide.
 - Alert rules (#60): device down (hypervisors included), link down, gateway
   degraded, config changed, and snapshot failed. A worsening alert sends an
   escalation. The **Rules** tab on `/alerts` enables, re-rates, and tunes
