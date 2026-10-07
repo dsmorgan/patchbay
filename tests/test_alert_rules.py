@@ -439,3 +439,16 @@ def test_disabled_rule_hides_everywhere_and_override_applies_everywhere(
     with pdb.connect(str(tmp_path / "test.db")) as c:
         assert c.execute("SELECT state FROM alerts WHERE key = 'device:sw1'"
                          ).fetchone()[0] == "cleared"   # disabling clears it
+
+
+def test_disabling_a_rule_clears_its_alerts_without_notifying(conn, settings):
+    _dev(conn, "ap1", "ap", "down")
+    [n] = alerting.evaluate(conn, attention.attention_items(conn, settings)[0])
+    assert (n.kind, n.key) == ("raise", "device:ap1")
+
+    conn.execute("UPDATE alert_rules SET enabled = 0 WHERE name = 'device-down'")
+    assert alerting.evaluate(conn, attention.attention_items(conn, settings)[0]) == []
+    [a] = conn.execute("SELECT state FROM alerts").fetchall()
+    assert a["state"] == "cleared"
+    assert conn.execute("SELECT detail FROM alert_events WHERE event = 'cleared'"
+                        ).fetchone()[0] == "rule disabled"
