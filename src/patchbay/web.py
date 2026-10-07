@@ -1290,22 +1290,30 @@ def ops(request: Request):
     import os
 
     from .collectors import available
-    from .config import DECLARATION_HELP, DECLARATION_VARS, _db_declarations
+    from .config import (DECLARATION_HELP, DECLARATION_VARS,
+                         DeclarationReadError, _db_declarations)
 
     settings = load_settings()
-    stored = _db_declarations(settings.db_path)
+    readable = settings.declarations_readable
+    stored: dict[str, str] = {}
+    if readable:
+        try:
+            stored = _db_declarations(settings.db_path)
+        except DeclarationReadError:
+            readable = False  # locked/corrupt: render read-only, don't 500
     # a field's own parse warnings render beside the field, where the syntax
     # help is; only warnings that name no declaration stay in the top box
     decls = []
     for var in DECLARATION_VARS:
         src = settings.declaration_sources.get(var)
-        decls.append({"var": var, "source": src, "editable": src != "env",
+        decls.append({"var": var, "source": src, "editable": src != "env" and readable,
                       "value": (os.environ.get(var) if src == "env"
                                 else stored.get(var)) or "",
                       "help": DECLARATION_HELP[var],
                       "warnings": [w for w in settings.parse_warnings
                                    if w.startswith(f"{var}:")]})
     fielded = {w for d in decls for w in d["warnings"]}
+    unreadable_warning = not readable
     conn = _conn()
     try:
         db.init(conn)
@@ -1324,7 +1332,9 @@ def ops(request: Request):
             "sources": sorted(available(settings)), "ages": source_ages(conn),
             "config": _effective_config(settings),
             "warnings": [w for w in settings.parse_warnings
-                         if w not in fielded],
+                         if w not in fielded
+                         and not w.startswith("could not read stored declarations")],
+            "unreadable": unreadable_warning,
             "decls": decls,
             "export": "\n".join(f'{v}="{stored[v]}"' for v in DECLARATION_VARS
                                 if stored.get(v)),
@@ -1551,6 +1561,11 @@ async def ops_config(request: Request):
     var, value = body.get("var"), body.get("value", "")
     if var not in DECLARATION_VARS:
         raise HTTPException(400, "not an editable declaration")
+    if not load_settings().declarations_readable:
+        # never write over values we couldn't read
+        raise HTTPException(
+            409, "could not read stored declarations from the database "
+                 "(locked or corrupt) — saving is disabled until it is readable")
     if os.environ.get(var) is not None:
         raise HTTPException(409, f"{var} is set in the env file — edit it there")
     if not isinstance(value, str) or len(value) > 10000:

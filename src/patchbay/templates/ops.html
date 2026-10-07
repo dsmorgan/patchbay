@@ -57,6 +57,17 @@ poll.</p>
 </div>
 {% endif %}
 </div>
+{% if unreadable %}
+<div style="border: 1px solid var(--warn); border-radius: 8px; padding: 0.6rem 1rem;
+            margin-bottom: 0.8rem; max-width: 700px">
+  <div style="color: var(--warn); font-weight: 600; font-size: 0.85rem">
+    ⚠ Could not read stored declarations</div>
+  <div class="muted" style="font-size: 0.78rem; margin-top: 0.3rem">
+    The database is locked or corrupt. Declaration fields are read-only and
+    saving is disabled so stored values are not overwritten. Env-file
+    declarations still apply, and the poll will not prune links.</div>
+</div>
+{% endif %}
 {% if warnings %}
 <div style="border: 1px solid var(--warn); border-radius: 8px; padding: 0.6rem 1rem;
             margin-bottom: 0.8rem; max-width: 700px">
@@ -112,7 +123,7 @@ poll.</p>
           font-size: 0.78rem; border: 1px dashed var(--line); border-radius: 6px;
           color: var(--muted); word-break: break-word">{{ d.value or "—" }}</span>
     <span class="muted" style="flex: 0 0 66px; font-size: 0.72rem"
-          title="set in the env file — edit it there">env file</span>
+          title="{{ 'set in the env file — edit it there' if d.source == 'env' else 'stored declarations unreadable' }}">{{ 'env file' if d.source == 'env' else 'unreadable' }}</span>
     {% endif %}
   </div>
   <div class="dclhelp" id="help-{{ d.var }}" hidden>
