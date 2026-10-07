@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from patchbay import alerting
@@ -256,3 +258,32 @@ def test_poll_raises_then_clears_into_history(clean_env, tmp_path):
     # history filters are URL state on the history tab
     assert "runs at 10M" in client.get("/alerts?tab=history&category=link").text
     assert "No history matches" in client.get("/alerts?tab=history&category=ipam").text
+
+
+def test_duplicate_keys_in_one_cycle_raise_once(conn):
+    # two links rows differing only by source give one slow-link key; the
+    # second must not hit the open-alert index and abort the whole cycle
+    it = _item(key="source:stale", rule="stale-source", category="source")
+    notes = alerting.evaluate(conn, [it, dict(it)], now=T0)
+    assert len(_alerts(conn)) == 1
+    assert [e[0] for e in _events(conn)].count("raised") == 1
+    assert [n.kind for n in notes] == ["raise"]
+
+
+def test_failed_evaluate_rolls_back_only_alerting(conn, monkeypatch):
+    # run() owns a savepoint: a bug in the engine must discard its own
+    # half-written diff and leave the poll's earlier writes for the commit
+    pdb.upsert_device(conn, name="sw1", source="librenms", status="up")
+
+    def boom(c, items, **kw):
+        c.execute("INSERT INTO alert_events (ts, event, key, rule, category, "
+                  "severity) VALUES (1, 'raised', 'k', 'r', 'link', 'warn')")
+        raise RuntimeError("engine bug")
+
+    monkeypatch.setattr(alerting, "attention_items", lambda c, s: ([], []))
+    monkeypatch.setattr(alerting, "evaluate", boom)
+
+    with pytest.raises(RuntimeError):
+        alerting.run(conn, None)
+    assert conn.execute("SELECT COUNT(*) FROM alert_events").fetchone()[0] == 0
+    assert conn.execute("SELECT name FROM devices").fetchone()[0] == "sw1"

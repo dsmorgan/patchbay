@@ -183,6 +183,10 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
 
     for it in items:
         key = it["key"]
+        # two rows can yield one key (a link reported by two sources); the
+        # second must not insert a second open alert and abort the cycle
+        if key in seen or key in held:
+            continue
         name = it.get("rule") or it["category"]
         rule = _rule_for(name, catalog, config)
         if not rule["enabled"]:
@@ -199,7 +203,9 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
 
         if rule["event"]:
             # a one-shot key fires once; the rule keys each occurrence
-            # uniquely, and a repeat of a fired key is the same occurrence
+            # uniquely, and a repeat of a fired key is the same occurrence.
+            # Dedupe reads `alerts`, whose cleared rows prune at 90 days, so
+            # a key reused across occurrences would fire again after that.
             if conn.execute("SELECT 1 FROM alerts WHERE key = ?", (key,)).fetchone():
                 continue
             cur = conn.execute(
