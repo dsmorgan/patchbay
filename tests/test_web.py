@@ -1601,3 +1601,38 @@ def test_confignode_row_links_keep_page(clean_env, tmp_path, client):
     assert "&amp;page=3" in p3 or "&page=3" in p3
     assert 'page=3">view' in p3
     assert "page=" not in client.get("/configs/fw1").text.split("Versions")[1].split("</table>")[0]
+=======
+def _unreadable(monkeypatch):
+    from patchbay import config as cfg
+
+    def boom(_):
+        raise cfg.DeclarationReadError("database is locked")
+
+    monkeypatch.setattr(cfg, "_db_declarations", boom)
+
+
+def test_ops_renders_when_declarations_unreadable(clean_env, client, monkeypatch):
+    # issue #74: a locked/corrupt DB must not 500 the page an operator needs
+    r0 = client.post("/ops/config", json={"var": "PATCHBAY_CAPACITY", "value": "sw1:1/0/16=3G"})
+    assert r0.status_code == 200
+    _unreadable(monkeypatch)
+    r = client.get("/ops")
+    assert r.status_code == 200
+    assert "Could not read stored declarations" in r.text
+    assert 'class="dcl mono"' not in r.text and 'class="dclsave"' not in r.text
+
+
+def test_ops_save_refused_when_declarations_unreadable(clean_env, client, monkeypatch):
+    client.post("/ops/config", json={"var": "PATCHBAY_CAPACITY", "value": "sw1:1/0/16=3G"})
+    _unreadable(monkeypatch)
+    r = client.post("/ops/config", json={"var": "PATCHBAY_CAPACITY", "value": "x=1G"})
+    assert r.status_code == 409 and "could not read stored declarations" in r.json()["detail"]
+    r = client.post("/ops/config", json={"var": "PATCHBAY_CAPACITY", "value": ""})
+    assert r.status_code == 409
+    import sqlite3
+    from patchbay import config as cfg
+    conn = sqlite3.connect(cfg.load_settings().db_path)
+    row = conn.execute("SELECT value FROM app_state WHERE key = 'cfg:PATCHBAY_CAPACITY'").fetchone()
+    conn.close()
+    assert row == ("sw1:1/0/16=3G",)  # stored value untouched
+>>>>>>> 46e3a83 (/ops survives unreadable stored declarations (#74))
