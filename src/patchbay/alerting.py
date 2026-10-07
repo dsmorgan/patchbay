@@ -131,6 +131,86 @@ def seed_rules(conn: sqlite3.Connection, catalog: dict[str, Rule] = RULES) -> No
             (name, json.dumps(rule.params), rule.route))
 
 
+SEVERITIES = ("crit", "warn", "info")
+
+
+def rule_settings(conn: sqlite3.Connection,
+                  catalog: dict[str, Rule] = RULES) -> list[dict]:
+    """What the Rules tab shows: each catalog rule with its stored enable,
+    severity override, and route, and the parameters a site can edit (the
+    catalog's own keys) at their effective values."""
+    seed_rules(conn, catalog)
+    config = _config(conn, catalog)
+    out = []
+    for name, rule in catalog.items():
+        cfg = config.get(name, {})
+        stored = cfg.get("params", {})
+        out.append({
+            "name": name, "category": rule.category, "event": rule.event,
+            "summary": rule.summary,
+            "enabled": cfg.get("enabled", True), "severity": cfg.get("severity"),
+            "route": cfg.get("route", rule.route),
+            "params": {k: stored.get(k, v) for k, v in rule.params.items()},
+        })
+    return out
+
+
+def _parse_param(key: str, default, raw: str):
+    """One form value, read as the type of the catalog default. The checks
+    are the ones a rule needs to keep running: a role list that watches
+    nothing is a disabled rule, which the enable box already says."""
+    raw = raw.strip()
+    if isinstance(default, list):
+        roles = [r.strip().lower() for r in raw.split(",") if r.strip()]
+        if not roles:
+            raise ValueError(f"{key}: name at least one, or disable the rule")
+        return roles
+    if isinstance(default, int):
+        try:
+            n = int(raw)
+        except ValueError:
+            raise ValueError(f"{key}: a whole number of polls") from None
+        if n < 1:
+            raise ValueError(f"{key}: at least 1")
+        return n
+    if isinstance(default, float):
+        try:
+            x = float(raw.rstrip("% "))
+        except ValueError:
+            raise ValueError(f"{key}: a number") from None
+        if not 0 <= x <= 100:
+            raise ValueError(f"{key}: a percentage from 0 to 100")
+        return x
+    return raw
+
+
+def update_rule(conn: sqlite3.Connection, name: str, form: dict[str, str],
+                catalog: dict[str, Rule] = RULES) -> None:
+    """Apply one Rules-tab form: enabled, severity override, and the rule's
+    parameters. The route is not edited here (the Transports tab owns it),
+    and stored keys the form does not carry, such as `remind`, are kept.
+    Raises KeyError for an unknown rule and ValueError for a bad value,
+    before writing anything."""
+    rule = catalog[name]
+    severity = (form.get("severity") or "").strip() or None
+    if severity is not None and severity not in SEVERITIES:
+        raise ValueError(f"severity: one of {', '.join(SEVERITIES)}, or the rule's own")
+    parsed = {k: _parse_param(k, v, form[f"param_{k}"])
+              for k, v in rule.params.items() if f"param_{k}" in form}
+    seed_rules(conn, catalog)
+    row = conn.execute("SELECT params FROM alert_rules WHERE name = ?", (name,)).fetchone()
+    try:
+        params = json.loads(row["params"] or "{}")
+    except ValueError:
+        params = {}
+    if not isinstance(params, dict):
+        params = {}
+    params.update(parsed)
+    conn.execute("UPDATE alert_rules SET enabled = ?, severity = ?, params = ? "
+                 "WHERE name = ?",
+                 (1 if form.get("enabled") else 0, severity, json.dumps(params), name))
+
+
 def _config(conn: sqlite3.Connection, catalog: dict[str, Rule]) -> dict[str, dict]:
     """Effective per-rule settings: catalog defaults under the stored row."""
     out = {}
