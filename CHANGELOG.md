@@ -27,6 +27,11 @@ put.
   `PATCHBAY_SNAPSHOT_KEEP` are editable on /ops, and /configs shows the
   effective keep and where it came from (#67).
 
+### Fixed
+- `/ops` no longer fails when the database is locked or corrupt. It renders
+  with declarations read-only and a banner, and refuses saves instead of
+  overwriting values it could not read (#74).
+
 ## [0.18.0] — 2026-10-05
 
 ### Added
