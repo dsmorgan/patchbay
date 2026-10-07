@@ -55,11 +55,12 @@ def test_raise_hold_clear_and_raise_again(conn):
     assert (a["state"], a["raised_at"], a["active_at"]) == ("active", T0, T0)
     assert [n.kind for n in notes] == ["raise"]       # for = 1: same cycle
 
-    # still firing: one row, the text refreshed, nothing re-sent
-    it2 = {**it, "text": "now slower", "severity": "crit"}
+    # still firing: one row, the text refreshed, nothing re-sent (a
+    # severity rise is the exception; test_alert_rules covers it)
+    it2 = {**it, "text": "now slower"}
     assert alerting.evaluate(conn, [it2], now=T0 + 300) == []
     [a] = _alerts(conn)
-    assert (a["polls"], a["text"], a["severity"]) == (2, "now slower", "crit")
+    assert (a["polls"], a["text"], a["severity"]) == (2, "now slower", "warn")
     assert a["raised_at"] == T0
 
     notes = alerting.evaluate(conn, [], now=T0 + 600)
