@@ -315,6 +315,14 @@ class Settings:
     config_keep: int
 
     @property
+    def snapshot_keep_unknown(self) -> bool:
+        """True when pruning is off because a spec stored on /ops couldn't
+        be read, not because the spec is bad: the two need different fixes,
+        so the pages that say "pruning off" must tell them apart."""
+        return (not self.declarations_readable
+                and self.declaration_sources.get("PATCHBAY_SNAPSHOT_KEEP") != "env")
+
+    @property
     def wan_name(self) -> str:
         """The first provider — the whole answer for a single-WAN site."""
         return self.wan_names[0] if self.wan_names else "internet"

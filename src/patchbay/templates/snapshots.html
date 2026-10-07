@@ -57,6 +57,9 @@ Written to <span class="mono">{{ settings_view.dir }}</span>{% if settings_view.
 <a href="/ops">Ops</a> for a daily one{% endif %} ·
 {% if settings_view.keep %}keeping {{ settings_view.keep.describe() }}
 (<span class="mono">PATCHBAY_SNAPSHOT_KEEP={{ settings_view.keep }}</span>).
+{% elif settings_view.keep_unknown %}pruning nothing this run: the
+<span class="mono">PATCHBAY_SNAPSHOT_KEEP</span> saved on Ops can't be read from
+the database.
 {% else %}pruning nothing until <span class="mono">PATCHBAY_SNAPSHOT_KEEP</span>
 parses.{% endif %}</p>
 {% for w in settings_view.keep_warnings %}

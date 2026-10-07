@@ -322,3 +322,82 @@ def test_ops_shows_parsed_tiers_and_warning(clean_env, tmp_path):
     assert "hidden" not in head
     assert "no snapshot is pruned until it is" in warn_block.split("</div>\n", 1)[0]
     assert "Skipped configuration entries" not in body
+
+
+# --- unreadable stored declarations ------------------------------------------
+
+def _unreadable(monkeypatch):
+    from patchbay import config as cfg
+
+    def boom(_):
+        raise cfg.DeclarationReadError("database is locked")
+
+    monkeypatch.setattr(cfg, "_db_declarations", boom)
+
+
+def _stale_dir(tmp_path):
+    d = tmp_path / "snaps"
+    d.mkdir()
+    names = {name(ts) for ts in nightly(date(2020, 1, 1), date(2020, 3, 31))}
+    for n in names:
+        (d / n).write_text("old")
+    return d, names
+
+
+def test_unreadable_declarations_skip_pruning(clean_env, tmp_path, monkeypatch):
+    # a spec saved on /ops is unknown this run; the default in its place
+    # could prune what the stored one keeps
+    from patchbay.config import load_settings
+    from patchbay.snapshot import prune
+
+    _unreadable(monkeypatch)
+    s = load_settings()
+    assert s.snapshot_keep is None and s.snapshot_keep_unknown
+    d, names = _stale_dir(tmp_path)
+    assert prune(s, d) == []
+    assert {p.name for p in d.iterdir()} == names
+
+
+def test_unreadable_declarations_with_env_spec_still_prune(clean_env, tmp_path,
+                                                           monkeypatch):
+    # the env file wins over the DB, so its spec is known and pruning runs
+    from patchbay.config import load_settings
+    from patchbay.snapshot import prune
+
+    _unreadable(monkeypatch)
+    clean_env.setenv("PATCHBAY_SNAPSHOT_KEEP", "1")
+    s = load_settings()
+    assert s.snapshot_keep == parse_keep_spec("1") and not s.snapshot_keep_unknown
+    d, names = _stale_dir(tmp_path)
+    assert len(prune(s, d)) == len(names) - 1
+    assert {p.name for p in d.iterdir()} == {max(names)}
+
+
+def test_pages_name_unreadable_declarations_as_the_reason(clean_env, tmp_path,
+                                                          monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from tests.test_web import seed
+
+    seed(str(tmp_path / "test.db"))
+    from patchbay.config import load_settings
+    from patchbay.web import _effective_config, app
+
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    _stale_dir(tmp_path)
+    _unreadable(monkeypatch)
+    body = TestClient(app).get("/snapshots").text
+    assert "can't be read from" in body
+    assert "pruning nothing until" not in body
+    assert "could not read stored declarations" in body
+
+    keep = dict(dict(_effective_config(load_settings()))["snapshots"])
+    assert keep["PATCHBAY_SNAPSHOT_KEEP"] == (
+        "unknown (stored declarations unreadable) · pruning off")
+    # a bad env spec on the same run is still reported as a parse failure
+    clean_env.setenv("PATCHBAY_SNAPSHOT_KEEP", "30,12q")
+    keep = dict(dict(_effective_config(load_settings()))["snapshots"])
+    assert keep["PATCHBAY_SNAPSHOT_KEEP"] == "unparsed · pruning off"
+    body = TestClient(app).get("/snapshots").text
+    assert "pruning nothing until" in body
+    assert "could not read stored declarations" not in body
