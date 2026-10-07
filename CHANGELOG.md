@@ -6,6 +6,14 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+- `PATCHBAY_CONFIG_KEEP` sets how many firewall config revisions each device
+  keeps (default 50, 0 for unlimited), replacing a fixed cap. It and
+  `PATCHBAY_SNAPSHOT_KEEP` are editable on /ops, and /configs shows the
+  effective keep and where it came from (#67).
+
 ## [0.18.0] — 2026-10-05
 
 ### Added
