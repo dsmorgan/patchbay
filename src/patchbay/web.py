@@ -1313,14 +1313,18 @@ def ops(request: Request):
                       "warnings": [w for w in settings.parse_warnings
                                    if w.startswith(f"{var}:")]})
     fielded = {w for d in decls for w in d["warnings"]}
-    unreadable_warning = not readable
-    conn = _conn()
+    import json as _json
+    import sqlite3
+
+    last_poll = None
+    ages: dict = {}
+    conflicts: list = []
+    conn = None
     try:
+        conn = _conn()
         db.init(conn)
-        last_poll = None
         raw_lp = db.get_state(conn, "last_poll")
         if raw_lp:
-            import json as _json
             try:
                 last_poll = _json.loads(raw_lp)
                 last_poll["ago"] = round((db.now() - last_poll["ts"]) / 60)
@@ -1328,21 +1332,28 @@ def ops(request: Request):
                                           for l in last_poll["lines"])
             except (ValueError, KeyError, TypeError, AttributeError):
                 last_poll = None
-        return templates.TemplateResponse(request, "ops.html", {
-            "sources": sorted(available(settings)), "ages": source_ages(conn),
-            "config": _effective_config(settings),
-            "warnings": [w for w in settings.parse_warnings
-                         if w not in fielded
-                         and not w.startswith("could not read stored declarations")],
-            "unreadable": unreadable_warning,
-            "decls": decls,
-            "export": "\n".join(f'{v}="{stored[v]}"' for v in DECLARATION_VARS
-                                if stored.get(v)),
-            "last_poll": last_poll,
-            "conflicts": _json_state(conn, "declaration_conflicts") or [],
-        })
+        ages = source_ages(conn)
+        conflicts = _json_state(conn, "declaration_conflicts") or []
+    except sqlite3.Error:
+        # corrupt or locked past the timeout: still render, read-only
+        readable = False
+        last_poll, ages, conflicts = None, {}, []
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
+    return templates.TemplateResponse(request, "ops.html", {
+        "sources": sorted(available(settings)), "ages": ages,
+        "config": _effective_config(settings),
+        "warnings": [w for w in settings.parse_warnings
+                     if w not in fielded
+                     and not w.startswith("could not read stored declarations")],
+        "unreadable": not readable,
+        "decls": decls,
+        "export": "\n".join(f'{v}="{stored[v]}"' for v in DECLARATION_VARS
+                            if stored.get(v)),
+        "last_poll": last_poll,
+        "conflicts": conflicts,
+    })
 
 
 @app.post("/ops/snapshot")

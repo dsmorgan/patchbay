@@ -144,6 +144,9 @@ poll.</p>
   <pre class="mono" style="background: var(--card); border: 1px solid var(--line);
        border-radius: 8px; padding: 0.7rem 1rem; font-size: 0.78rem">{{ export }}</pre>
 </details>
+{% elif unreadable %}
+<div class="muted" style="font-size: 0.8rem; margin-top: 0.6rem">
+  Export unavailable — stored declarations could not be read.</div>
 {% endif %}
 </div>
 
