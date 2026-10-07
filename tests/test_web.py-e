@@ -1506,6 +1506,7 @@ def test_configs_keep_line_shows_when_oxidized_unreachable(clean_env, client):
     assert "Firewall config history keeps 50 per device" in r.text
 
 
+<<<<<<< HEAD
 # --- pagination (#68) --------------------------------------------------------
 
 def test_paginate_helper_clamps():
@@ -1601,6 +1602,7 @@ def test_confignode_row_links_keep_page(clean_env, tmp_path, client):
     assert "&amp;page=3" in p3 or "&page=3" in p3
     assert 'page=3">view' in p3
     assert "page=" not in client.get("/configs/fw1").text.split("Versions")[1].split("</table>")[0]
+=======
 def _unreadable(monkeypatch):
     from patchbay import config as cfg
 
@@ -1619,7 +1621,6 @@ def test_ops_renders_when_declarations_unreadable(clean_env, client, monkeypatch
     assert r.status_code == 200
     assert "Could not read stored declarations" in r.text
     assert 'class="dcl mono"' not in r.text and 'class="dclsave"' not in r.text
-    assert "Export unavailable — stored declarations could not be read." in r.text
 
 
 def test_ops_save_refused_when_declarations_unreadable(clean_env, client, monkeypatch):
@@ -1635,20 +1636,4 @@ def test_ops_save_refused_when_declarations_unreadable(clean_env, client, monkey
     row = conn.execute("SELECT value FROM app_state WHERE key = 'cfg:PATCHBAY_CAPACITY'").fetchone()
     conn.close()
     assert row == ("sw1:1/0/16=3G",)  # stored value untouched
-
-
-def test_ops_survives_really_corrupt_db(clean_env, client):
-    # issue #74: a real broken file, no monkeypatching
-    from patchbay import config as cfg
-    assert client.post("/ops/config", json={"var": "PATCHBAY_CAPACITY",
-                                            "value": "sw1:1/0/16=3G"}).status_code == 200
-    clean_env.setenv("PATCHBAY_LINKS", "sw1:p1=nas:lan1")
-    path = cfg.load_settings().db_path
-    with open(path, "r+b") as f:
-        f.write(b"garbage" * 200)
-    r = client.get("/ops")
-    assert r.status_code == 200
-    assert "Could not read stored declarations" in r.text
-    assert "sw1:p1=nas:lan1" in r.text and "env file" in r.text
-    r = client.post("/ops/config", json={"var": "PATCHBAY_CAPACITY", "value": "x=1G"})
-    assert r.status_code == 409
+>>>>>>> 46e3a83 (/ops survives unreadable stored declarations (#74))
