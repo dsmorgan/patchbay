@@ -1380,6 +1380,25 @@ def ops_snapshot_latest():
         "Content-Disposition": 'attachment; filename="patchbay-snapshot.html"'})
 
 
+PAGE_SIZE = 25
+
+
+def _paginate(items: list, raw: str | None, size: int = PAGE_SIZE) -> dict:
+    """Slice an already-sorted list into one page. A missing, non-numeric or
+    out-of-range page clamps to a valid one rather than erroring."""
+    pages = max(1, -(-len(items) // size))
+    try:
+        page = int(raw) if raw is not None else 1
+    except ValueError:
+        page = 1
+    page = min(max(page, 1), pages)
+    return {"items": items[(page - 1) * size: page * size], "page": page,
+            "pages": pages, "total": len(items),
+            # newest first, so "newer" is the lower page number
+            "newer": page - 1 if page > 1 else None,
+            "older": page + 1 if page < pages else None}
+
+
 @app.get("/snapshots", response_class=HTMLResponse)
 def snapshots(request: Request):
     """Kept break-glass snapshots: what is on disk, and where they go. The
@@ -1418,8 +1437,9 @@ def snapshots(request: Request):
         ages = source_ages(conn)
     finally:
         conn.close()
+    pager = _paginate(found, request.query_params.get("page"))
     return templates.TemplateResponse(request, "snapshots.html", {
-        "snapshots": found,
+        "snapshots": pager["items"], "pager": pager, "pager_base": "/snapshots?",
         "latest": {"exists": (d / "patchbay-latest.html").exists(),
                    "href": "/snapshots/patchbay-latest.html"},
         "settings_view": {"dir": settings.snapshot_dir,
@@ -2043,6 +2063,13 @@ def _diff_lines(old: str, new: str, old_label: str, new_label: str) -> list[tupl
     return out
 
 
+def _pager_base(node: str, want, prev) -> str:
+    """Pager link prefix that keeps an open view/diff while paging."""
+    from urllib.parse import quote, urlencode
+    q = {k: v for k, v in (("v", want), ("prev", prev)) if v}
+    return f"/configs/{quote(node, safe='')}?" + (urlencode(q) + "&" if q else "")
+
+
 @app.get("/configs/{node}", response_class=HTMLResponse)
 def config_node(request: Request, node: str):
     import difflib
@@ -2072,8 +2099,11 @@ def config_node(request: Request, node: str):
                                              f"rev {prev}", f"rev {want}")
                 else:
                     text = new
+            pager = _paginate(versions, request.query_params.get("page"))
             return templates.TemplateResponse(request, "confignode.html", {
-                "node": node, "label": label, "versions": versions, "text": text,
+                "node": node, "label": label, "versions": pager["items"],
+                "pager": pager, "pager_base": _pager_base(node, want, prev),
+                "text": text,
                 "diff_lines": diff_lines, "want": want, "prev": prev, "error": None,
                 "db_held": True,
             })
@@ -2119,8 +2149,10 @@ def config_node(request: Request, node: str):
         raise
     except Exception as exc:
         error = str(exc)
+    pager = _paginate(versions, request.query_params.get("page"))
     return templates.TemplateResponse(request, "confignode.html", {
-        "node": node, "label": label, "versions": versions, "text": text,
+        "node": node, "label": label, "versions": pager["items"],
+        "pager": pager, "pager_base": _pager_base(node, want, prev), "text": text,
         "diff_lines": diff_lines, "want": want, "prev": prev, "error": error,
     })
 

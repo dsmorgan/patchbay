@@ -1504,3 +1504,86 @@ def test_configs_keep_line_shows_when_oxidized_unreachable(clean_env, client):
     assert r.status_code == 200
     assert "unreachable" in r.text
     assert "Firewall config history keeps 50 per device" in r.text
+
+
+# --- pagination (#68) --------------------------------------------------------
+
+def test_paginate_helper_clamps():
+    from patchbay.web import _paginate
+    items = list(range(60))
+    assert _paginate(items, None)["items"] == items[:25]
+    p3 = _paginate(items, "3")
+    assert p3["items"] == items[50:] and p3["older"] is None and p3["newer"] == 2
+    assert _paginate(items, "99")["page"] == 3      # out of range -> last
+    assert _paginate(items, "0")["page"] == 1
+    assert _paginate(items, "-4")["page"] == 1
+    assert _paginate(items, "abc")["page"] == 1
+    assert _paginate([], "5") == {"items": [], "page": 1, "pages": 1, "total": 0,
+                                  "newer": None, "older": None}
+    assert len(_paginate(list(range(25)), "1")["items"]) == 25
+    assert _paginate(list(range(25)), "1")["pages"] == 1
+    assert _paginate(list(range(26)), "1")["pages"] == 2
+
+
+def _seed_snapshots(clean_env, tmp_path, n):
+    d = tmp_path / "snaps"
+    d.mkdir()
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(d))
+    (d / "patchbay-latest.html").write_text("latest")
+    for i in range(n):
+        (d / f"patchbay-2025{1 + i // 28:02d}{1 + i % 28:02d}-000000.html").write_text("x")
+
+
+def test_snapshots_paginates_newest_first(clean_env, tmp_path, client):
+    _seed_snapshots(clean_env, tmp_path, 60)
+    p1 = client.get("/snapshots").text
+    assert p1.count("download</a>") == 25
+    assert "page 1 of 3" in p1 and "/snapshots?page=2" in p1
+    assert "page=0" not in p1 and "download the latest" in p1
+    p3 = client.get("/snapshots?page=3").text
+    assert p3.count("download</a>") == 10
+    assert "page 3 of 3" in p3 and "/snapshots?page=2" in p3
+    assert "page=4" not in p3
+    # latest card and settings block stay on every page
+    assert "download the latest" in p3 and "Where they go" in p3
+    # newest first across pages: the newest file is on page 1 only
+    newest = "patchbay-20250304-000000.html"
+    assert "/snapshots/" + newest in p1 and "/snapshots/" + newest not in p3
+    assert client.get("/snapshots?page=99").text == p3
+    assert client.get("/snapshots?page=junk").text == p1
+
+
+def test_snapshots_tiers_computed_over_full_list(clean_env, tmp_path, client):
+    _seed_snapshots(clean_env, tmp_path, 30)
+    clean_env.setenv("PATCHBAY_SNAPSHOT_KEEP", "3")
+    p1 = client.get("/snapshots").text
+    p2 = client.get("/snapshots?page=2").text
+    # page 2 holds the 5 oldest; they are outside the keep-3 set
+    assert p2.count("download</a>") == 5
+    assert p2.count("pruned next snapshot") == 5
+    # the newest are kept, so page 1 is not all "pruned" — the tier labels
+    # come from the full list, not from the slice
+    assert 0 < p1.count("pruned next snapshot") < 25
+
+
+def test_snapshots_single_page_has_no_pager(clean_env, tmp_path, client):
+    _seed_snapshots(clean_env, tmp_path, 25)
+    assert "newer" not in client.get("/snapshots").text
+
+
+def test_confignode_paginates_revisions(clean_env, tmp_path, client):
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    c.row_factory = sqlite3.Row
+    pdb.init(c)
+    for i in range(55):
+        c.execute("INSERT INTO config_revisions (device, fetched_at, text, sha, message)"
+                  " VALUES (?,?,?,?,?)", ("fw1", 1000 + i, f"cfg {i}", f"h{i}", f"rev-{i:02d}"))
+    c.commit(); c.close()
+    p1 = client.get("/configs/fw1").text
+    assert p1.count(">view</a>") == 25
+    assert "rev-54" in p1 and "rev-29" not in p1
+    assert "page 1 of 3" in p1 and "/configs/fw1?page=2" in p1
+    p3 = client.get("/configs/fw1?page=3").text
+    assert p3.count(">view</a>") == 5 and "rev-00" in p3
+    assert client.get("/configs/fw1?page=500").text == p3
+    assert client.get("/configs/fw1?page=x").text == p1
