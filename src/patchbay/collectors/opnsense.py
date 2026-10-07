@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 
-from ..config import Settings
+from ..config import CONFIG_KEEP_DEFAULT, Settings
 from .. import db
 from . import register
 
@@ -45,9 +45,6 @@ _LONG_BLOB_RE = re.compile(r"<([a-zA-Z0-9_-]+)>([A-Za-z0-9+/=\s]{200,})</\1>")
 # must not read as a config change or clutter the diffs
 _REVISION_RE = re.compile(r"\s*<revision>.*?</revision>", re.S)
 
-CONFIG_REVISIONS_KEEP = 50   # per device; history beyond this is trimmed
-
-
 def _digest(m: re.Match) -> str:
     tag, content = m.group(1), m.group(2)
     stamp = hashlib.sha256(content.encode()).hexdigest()[:8]
@@ -70,8 +67,10 @@ def prepare_config(raw: str) -> tuple[str, str | None, str | None]:
     return text, msg, auth
 
 
-def save_config_revision(conn: sqlite3.Connection, device: str, raw: str) -> bool:
-    """Store a new redacted revision if the config actually changed.
+def save_config_revision(conn: sqlite3.Connection, device: str, raw: str,
+                         keep: int = CONFIG_KEEP_DEFAULT) -> bool:
+    """Store a new redacted revision if the config actually changed, then
+    trim the device to its newest `keep` revisions (0 = unlimited).
     Returns True when a new revision was written."""
     text, msg, auth = prepare_config(raw)
     sha = hashlib.sha256(text.encode()).hexdigest()
@@ -83,11 +82,12 @@ def save_config_revision(conn: sqlite3.Connection, device: str, raw: str) -> boo
     conn.execute(
         "INSERT INTO config_revisions (device, fetched_at, sha, message, author, text) "
         "VALUES (?, ?, ?, ?, ?, ?)", (device, db.now(), sha, msg, auth, text))
-    conn.execute(
-        "DELETE FROM config_revisions WHERE device = ? AND id NOT IN "
-        "(SELECT id FROM config_revisions WHERE device = ? "
-        " ORDER BY fetched_at DESC, id DESC LIMIT ?)",
-        (device, device, CONFIG_REVISIONS_KEEP))
+    if keep > 0:
+        conn.execute(
+            "DELETE FROM config_revisions WHERE device = ? AND id NOT IN "
+            "(SELECT id FROM config_revisions WHERE device = ? "
+            " ORDER BY fetched_at DESC, id DESC LIMIT ?)",
+            (device, device, keep))
     return True
 
 NAME = "opnsense"
@@ -410,7 +410,8 @@ class OpnsenseCollector:
             cfg = get_text("core/backup/download/this")
             new_rev = False
             if cfg and cfg.lstrip().startswith("<"):
-                new_rev = save_config_revision(conn, short_name, cfg)
+                new_rev = save_config_revision(conn, short_name, cfg,
+                                               settings.config_keep)
 
         summary = f"{n_ifaces} interfaces/gateways/arp/leases polled"
         if new_rev:

@@ -21,8 +21,12 @@ DECLARATION_VARS = (
     "PATCHBAY_ALIASES", "PATCHBAY_UNMANAGED", "PATCHBAY_LINKS",
     "PATCHBAY_RELATED", "PATCHBAY_VLAN_FILTER", "PATCHBAY_CAPACITY",
     "PATCHBAY_PANELS", "PATCHBAY_WAN_NAME", "PATCHBAY_WAN_PORT",
-    "PATCHBAY_EXPECT", "PATCHBAY_SNAPSHOT_AT",
+    "PATCHBAY_EXPECT", "PATCHBAY_SNAPSHOT_AT", "PATCHBAY_SNAPSHOT_KEEP",
+    "PATCHBAY_CONFIG_KEEP",
 )
+
+# Firewall config revisions kept per device when PATCHBAY_CONFIG_KEEP is unset.
+CONFIG_KEEP_DEFAULT = 50
 
 # Inline help for /ops (issue #20): what each declaration does, its syntax,
 # and one realistic example — the single source of truth for in-product help.
@@ -104,6 +108,23 @@ DECLARATION_HELP = {
                 "Snapshots page.",
         "syntax": "HH:MM, 24-hour local time",
         "example": "03:30",
+    },
+    "PATCHBAY_SNAPSHOT_KEEP": {
+        "what": "How many break-glass snapshots to keep, by tier: the newest "
+                "N, plus the first of each recent week, month, and year, "
+                "plus the first ever. A spec that fails to parse prunes "
+                "nothing.",
+        "syntax": "comma-separated terms: N or Nd (daily), Nw (weekly), Nm "
+                  "(monthly), Ny (yearly), first; 0 in a tier = unlimited; "
+                  "a bare 0 = keep everything",
+        "example": "30,12m,3y,first",
+    },
+    "PATCHBAY_CONFIG_KEEP": {
+        "what": "How many firewall config revisions to keep per device; "
+                "older ones are trimmed on the poll that stores a new "
+                "revision. 0 keeps everything.",
+        "syntax": "whole number, default 50",
+        "example": "200",
     },
 }
 
@@ -281,6 +302,9 @@ class Settings:
     # "HH:MM" local time for the poller to write one snapshot a day; unset
     # means on-demand only.
     snapshot_at: str | None
+    # Config revisions kept per device (0 = unlimited). Where the value came
+    # from is declaration_sources["PATCHBAY_CONFIG_KEEP"], absent = default.
+    config_keep: int
 
     @property
     def wan_name(self) -> str:
@@ -446,6 +470,18 @@ def load_settings() -> Settings:
         warnings.append(f"PATCHBAY_SNAPSHOT_AT: {snapshot_at!r} is not HH:MM — "
                         "the daily snapshot is off until it is")
         snapshot_at = None
+    config_keep = CONFIG_KEEP_DEFAULT
+    raw_keep = (env("PATCHBAY_CONFIG_KEEP") or "").strip()
+    if raw_keep:
+        try:
+            config_keep = int(raw_keep)
+            if config_keep < 0:
+                raise ValueError(raw_keep)
+        except ValueError:
+            config_keep = CONFIG_KEEP_DEFAULT
+            warnings.append(f"PATCHBAY_CONFIG_KEEP: {raw_keep!r} is not a "
+                            "whole number of 0 or more — using "
+                            f"{CONFIG_KEEP_DEFAULT}")
     return Settings(
         db_path=env("PATCHBAY_DB", "patchbay.db"),
         tls_verify=tls_verify,
@@ -510,4 +546,5 @@ def load_settings() -> Settings:
         snapshot_keep=int(env("PATCHBAY_SNAPSHOT_KEEP", "30") or 30),
         snapshot_deliver_dir=env("PATCHBAY_SNAPSHOT_DELIVER_DIR") or None,
         snapshot_at=snapshot_at,
+        config_keep=config_keep,
     )

@@ -1,6 +1,8 @@
 """Collector units that run without a network: pure parsers, guard behavior,
 and the phpIPAM fetch-before-delete atomicity — all against synthetic data."""
 
+import os
+
 import httpx
 import pytest
 
@@ -1024,13 +1026,58 @@ def test_config_revision_rotated_key_still_reads_as_change(conn):
 
 def test_config_revisions_pruned_to_keep(conn, monkeypatch):
     from patchbay.collectors import opnsense as ons
-    monkeypatch.setattr(ons, "CONFIG_REVISIONS_KEEP", 3)
     for i in range(5):
-        ons.save_config_revision(conn, "fw1", _CFG_XML.replace("allow lan", f"rule {i}"))
+        ons.save_config_revision(
+            conn, "fw1", _CFG_XML.replace("allow lan", f"rule {i}"), keep=3)
     assert conn.execute("SELECT COUNT(*) FROM config_revisions").fetchone()[0] == 3
     kept = [r["text"] for r in conn.execute(
         "SELECT text FROM config_revisions ORDER BY fetched_at, id")]
     assert "rule 4" in kept[-1]
+
+
+def test_config_keep_applies_per_device(conn):
+    from patchbay.collectors import opnsense as ons
+    for dev in ("fw1", "fw2"):
+        for i in range(4):
+            ons.save_config_revision(
+                conn, dev, _CFG_XML.replace("allow lan", f"rule {i}"), keep=2)
+    for dev in ("fw1", "fw2"):
+        assert conn.execute("SELECT COUNT(*) FROM config_revisions "
+                            "WHERE device = ?", (dev,)).fetchone()[0] == 2
+
+
+def test_config_keep_zero_is_unlimited(conn):
+    from patchbay.collectors import opnsense as ons
+    for i in range(60):
+        ons.save_config_revision(
+            conn, "fw1", _CFG_XML.replace("allow lan", f"rule {i}"), keep=0)
+    assert conn.execute("SELECT COUNT(*) FROM config_revisions").fetchone()[0] == 60
+
+
+def test_config_keep_default_and_env_over_db(clean_env):
+    import sqlite3
+    from patchbay.config import load_settings
+    assert load_settings().config_keep == 50
+    assert "PATCHBAY_CONFIG_KEEP" not in load_settings().declaration_sources
+    c = sqlite3.connect(os.environ["PATCHBAY_DB"])
+    c.execute("CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT)")
+    c.execute("INSERT INTO app_state VALUES ('cfg:PATCHBAY_CONFIG_KEEP', '200')")
+    c.commit()
+    c.close()
+    s = load_settings()
+    assert (s.config_keep, s.declaration_sources["PATCHBAY_CONFIG_KEEP"]) == (200, "db")
+    clean_env.setenv("PATCHBAY_CONFIG_KEEP", "75")
+    s = load_settings()
+    assert (s.config_keep, s.declaration_sources["PATCHBAY_CONFIG_KEEP"]) == (75, "env")
+
+
+@pytest.mark.parametrize("bad", ["lots", "-3", "2.5"])
+def test_config_keep_bad_value_falls_back_with_warning(clean_env, bad):
+    from patchbay.config import load_settings
+    clean_env.setenv("PATCHBAY_CONFIG_KEEP", bad)
+    s = load_settings()
+    assert s.config_keep == 50
+    assert any(w.startswith("PATCHBAY_CONFIG_KEEP:") for w in s.parse_warnings)
 
 
 class _OnsClientWithConfig(_OnsClient):
@@ -1056,6 +1103,19 @@ def test_opnsense_collect_stores_config_revision(conn, clean_env, monkeypatch):
     # raw config.xml must never land in raw_payloads
     for r in conn.execute("SELECT payload FROM raw_payloads"):
         assert "FAKEKEYB64" not in r["payload"]
+
+
+def test_opnsense_collect_applies_config_keep_setting(conn, clean_env, monkeypatch):
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(httpx, "Client", _OnsClientWithConfig)
+    for i in range(3):
+        conn.execute("INSERT INTO config_revisions (device, fetched_at, sha, text) "
+                     "VALUES ('fw1', ?, ?, 'x')", (i, f"old{i}"))
+    clean_env.setenv("PATCHBAY_CONFIG_KEEP", "2")
+    s = _ons_settings(clean_env)
+    assert s.config_keep == 2
+    OpnsenseCollector().collect(s, conn)
+    assert conn.execute("SELECT COUNT(*) FROM config_revisions").fetchone()[0] == 2
 
 
 def test_prepare_config_redacts_bare_key_and_unknown_long_blobs():
