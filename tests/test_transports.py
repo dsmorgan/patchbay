@@ -373,6 +373,73 @@ def test_secret_never_in_a_snapshot(clean_env, tmp_path):
     assert "kuma.example.com" not in html and "hooks.example.com" not in html
 
 
+# -- the Transports tab ---------------------------------------------------
+
+def test_transports_tab_add_edit_toggle_test_delete(clean_env, tmp_path, monkeypatch):
+    import patchbay.web as web
+
+    rec = Recorder()
+    monkeypatch.setattr(transports, "HTTP_TRANSPORT", rec.transport)
+    client = TestClient(web.app)
+    form = {"content-type": "application/x-www-form-urlencoded"}
+    page = client.get("/alerts?tab=transports").text
+    assert "No transports yet" in page
+
+    def post(path, **fields):
+        return client.post(path, headers=form, content=str(httpx.QueryParams(fields)),
+                           follow_redirects=False)
+
+    r = post("/alerts/transports", name="kuma", kind="kuma", url=KUMA)
+    assert r.status_code == 303 and r.headers["location"] == "/alerts?tab=transports"
+    page = client.get("/alerts?tab=transports").text
+    assert "https://kuma.example.com/…" in page
+    for s in SECRETS:
+        assert s not in page
+
+    # bad input names the problem, never echoes the URL
+    bad = post("/alerts/transports", name="x", kind="slack", url=HOOK)
+    assert bad.status_code == 400 and "hookSecret99" not in bad.text
+    assert post("/alerts/transports", name="x", kind="generic",
+                url="file:///etc/passwd").status_code == 400
+    assert post("/alerts/transports", name="kuma", kind="generic", url=HOOK).status_code == 409
+
+    # a blank URL on edit keeps the stored secret
+    assert post("/alerts/transports/1", name="kuma-main", kind="kuma", url="").status_code == 303
+    dbp = str(tmp_path / "test.db")
+    t = _transport(dbp, 1)
+    assert (t["name"], t["url"]) == ("kuma-main", KUMA)
+
+    # the test button sends one sample and records the result
+    assert post("/alerts/transports/1/test").status_code == 303
+    assert rec.seen[-1].url.params["msg"].startswith("patchbay test: OK")
+    assert _transport(dbp, 1)["last_result"].startswith("test: HTTP 200")
+    assert "test: HTTP 200" in client.get("/alerts?tab=transports").text
+
+    assert post("/alerts/transports/1/enabled", enabled="0").status_code == 303
+    assert _transport(dbp, 1)["enabled"] == 0
+    assert "(off)" in client.get("/alerts?tab=transports").text
+    post("/alerts/transports/1/enabled", enabled="1")
+
+    # routes: a per-rule override and an explicit default, then delete
+    post("/alerts/transports", name="hook", kind="generic", url=HOOK)
+    assert post("/alerts/routes", **{"default": "1:crit", "route:ipam-drift": "2:warn",
+                                     "route:stale-source": "",
+                                     "link_base": "https://patchbay.example.com/"}
+                ).status_code == 303
+    c = _c(dbp)
+    assert c.execute("SELECT route FROM alert_rules WHERE name='ipam-drift'").fetchone()[0] == "2:warn"
+    assert pdb.get_state(c, transports.DEFAULT_ROUTE_KEY) == "1:crit"
+    assert pdb.get_state(c, transports.LINK_BASE_KEY) == "https://patchbay.example.com"
+    c.close()
+    assert post("/alerts/routes", **{"route:ipam-drift": "7:loud"}).status_code == 400
+
+    assert post("/alerts/transports/2/delete").status_code == 303
+    c = _c(dbp)
+    # the rule that named the deleted transport falls back to the default
+    assert c.execute("SELECT route FROM alert_rules WHERE name='ipam-drift'").fetchone()[0] is None
+    c.close()
+
+
 def test_poll_dispatches_through_the_transports(clean_env, tmp_path, monkeypatch):
     import patchbay.web as web
 
