@@ -231,6 +231,72 @@ the page states the effective spec. A spec that fails to parse prunes
 nothing and shows a warning there and on `/ops`; see
 [Snapshot retention](configuration.md#snapshot-retention) for the syntax.
 
+## 8. Notifications
+
+patchbay tells you when something goes wrong through *transports*: webhooks
+that you configure on **Alerts → Transports**. No environment variable is
+involved. The database stores each transport, and the page is the only place
+to edit it. Two presets ship:
+
+| Preset | What patchbay sends | Use it for |
+|---|---|---|
+| `kuma` | `GET` to an Uptime Kuma push URL every poll: `status=down` while any active alert routed to it meets the route's minimum severity, `status=up` otherwise | Paging. Kuma owns the notification providers (email, chat, phone push), and the monitor also goes down if the poller stops running. |
+| `generic` | A JSON `POST` when an alert raises, reminds, or clears | n8n, Home Assistant, or a script of your own |
+
+A *route* is a transport plus a minimum severity. The first transport you
+add becomes the default route for warnings and above, so one transport is
+enough to start. You can pick another default or route an individual rule
+elsewhere under **Routes** on the same tab. `slow-link` routes nowhere by
+default: it stays on the attention list without paging anyone.
+
+A transport URL is a credential: Kuma's push token is part of the path.
+patchbay stores the URL in its database, shows only the scheme and host
+after you save it, and keeps it out of logs, poll output, alert history,
+and snapshots. To change a URL, paste a new one in the transport's edit
+form; leaving the field empty keeps the stored URL.
+
+### Set up an Uptime Kuma push monitor
+
+1. In Uptime Kuma, click **Add New Monitor** and set **Monitor Type** to
+   **Push**.
+2. Set **Heartbeat Interval** to at least twice the poll cycle. The poller
+   pushes once per cycle, and a cycle is the poll itself plus
+   `PATCHBAY_POLL_INTERVAL` (default 300 seconds), so `600` suits the
+   default. A shorter interval reports the poller down between healthy
+   pushes.
+3. Attach the notification providers that should hear about patchbay's
+   alerts, then save, and copy the **Push URL**. It looks like
+   `https://kuma.example.com/api/push/<token>?status=up&msg=OK&ping=`.
+   Paste it as Kuma shows it; patchbay replaces the `status` and `msg`
+   parameters on each push.
+4. In patchbay, open **Alerts → Transports → add a transport**. Enter a
+   name, choose **Uptime Kuma push monitor**, paste the push URL, and click
+   **add**.
+5. Click **test**. The transport's last result reads `test: HTTP 200` and
+   Kuma records a heartbeat whose message starts with `patchbay test:`. The
+   test pushes the monitor's current state, so it never flips a down
+   monitor up.
+
+Kuma now shows patchbay's state on every poll. While the monitor is down,
+its message names the alert count and the worst alert, with its severity,
+rule, text, how long it has fired, and a link. For the link to be absolute,
+set **link base** under **Routes** to the address your browser uses for
+patchbay.
+
+One Kuma monitor serves one route. To page on critical alerts and only log
+warnings, add two push monitors as two transports, and route each rule, or
+the default, to the transport that should hear it.
+
+### When delivery fails
+
+Every request times out after 5 seconds, and the transports together get at
+most 20 seconds per poll, so a slow receiver delays the poll's exit, never
+its data. A generic notification that fails waits for the next poll and is
+sent then. Each attempt is recorded in **History** as `notified` or
+`delivery_failed`. After three consecutive failed polls, the transport
+itself becomes a `sources` item on the attention list, showing its last
+error, until a delivery succeeds.
+
 ## Where the state lives
 
 | Data | Where | Survives `compose down`? |
