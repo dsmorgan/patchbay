@@ -1274,11 +1274,13 @@ def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
         ("snapshots", [
             ("PATCHBAY_SNAPSHOT_DIR", s.snapshot_dir),
             ("PATCHBAY_SNAPSHOT_DELIVER_DIR", s.snapshot_deliver_dir or "—"),
-            # the tiers as parsed, not as typed: an unparsed spec reads as
-            # "pruning off" here, with the reason in the warnings box
+            # the tiers as parsed, not as typed: with no spec in effect this
+            # reads "pruning off" and names why; the warnings say more
             ("PATCHBAY_SNAPSHOT_KEEP",
              f"{s.snapshot_keep} · keeps {s.snapshot_keep.describe()}"
-             if s.snapshot_keep else "unparsed · pruning off"),
+             if s.snapshot_keep else
+             "unknown (stored declarations unreadable) · pruning off"
+             if s.snapshot_keep_unknown else "unparsed · pruning off"),
         ]),
     ]
 
@@ -1423,9 +1425,14 @@ def snapshots(request: Request):
         "settings_view": {"dir": settings.snapshot_dir,
                            "deliver_dir": settings.snapshot_deliver_dir,
                            "at": settings.snapshot_at, "keep": spec,
+                           "keep_unknown": settings.snapshot_keep_unknown,
+                           # the parse warning, or the unreadable-declarations
+                           # one when that is why no spec is in effect
                            "keep_warnings": [
                                w for w in settings.parse_warnings
-                               if w.startswith("PATCHBAY_SNAPSHOT_KEEP:")]},
+                               if w.startswith("PATCHBAY_SNAPSHOT_KEEP:")
+                               or (settings.snapshot_keep_unknown and
+                                   w.startswith("could not read stored declarations"))]},
         "is_demo": is_demo,
         "ages": ages,
     })
