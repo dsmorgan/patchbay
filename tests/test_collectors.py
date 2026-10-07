@@ -2042,3 +2042,17 @@ def test_vsphere_records_hypervisor_specs(conn, clean_env, monkeypatch):
     assert specs(rows["hyp1"]) == "8c · 32 GB"
     assert specs({"cpus": None, "mem_bytes": None}) == ""
     assert specs({"cpus": 4, "mem_bytes": 0}) == "4c"
+
+
+def test_snapshot_keep_non_integer_stored_value_warns(clean_env):
+    import sqlite3
+    from patchbay.config import load_settings
+    c = sqlite3.connect(os.environ["PATCHBAY_DB"])
+    c.execute("CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT)")
+    c.execute("INSERT INTO app_state VALUES ('cfg:PATCHBAY_SNAPSHOT_KEEP', "
+              "'30,12m,3y,first')")
+    c.commit()
+    c.close()
+    s = load_settings()
+    assert s.snapshot_keep == 30
+    assert any(w.startswith("PATCHBAY_SNAPSHOT_KEEP:") for w in s.parse_warnings)
