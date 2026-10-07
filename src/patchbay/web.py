@@ -423,6 +423,8 @@ def alerts(request: Request, category: str | None = None,
                     + " ORDER BY ts DESC, id DESC LIMIT ?",
                     (*args, ALERT_HISTORY_ROWS))]
         rules = alerting.rule_settings(conn) if tab == "rules" else []
+        for r in rules:   # "default (kuma, warn+)" rather than the stored "1:warn"
+            r["route_label"] = transports.route_label(conn, r["route"])
         if rules:
             conn.commit()   # seeding a fresh install's rows is not a poll's job
         return templates.TemplateResponse(request, "alerts.html", {
