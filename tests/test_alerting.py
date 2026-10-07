@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from fastapi.testclient import TestClient
+
 from patchbay import alerting
 from patchbay import db as pdb
 
@@ -208,3 +210,49 @@ def test_history_retention_by_age_and_count(conn, monkeypatch):
     assert keys == ["k0", "k1", "k2"]                  # newest 3, none aged
     # a cleared alert ages out with its history; an open one never does
     assert [r["key"] for r in conn.execute("SELECT key FROM alerts")] == ["b"]
+
+
+def _web_db(tmp_path, speed):
+    from tests.test_web import seed
+
+    dbp = str(tmp_path / "test.db")
+    seed(dbp)
+    c = sqlite3.connect(dbp)
+    c.execute("UPDATE interfaces SET speed_bps = ? WHERE name IN ('1/0/1', 'vmnic0')",
+              (speed,))
+    c.commit(); c.close()
+    return dbp
+
+
+def test_poll_raises_then_clears_into_history(clean_env, tmp_path):
+    # the issue's done-when: a slow link that appears and disappears shows
+    # as raised then cleared in History, and the Overview is unchanged
+    import patchbay.web as web
+
+    dbp = _web_db(tmp_path, 10_000_000)
+    client = TestClient(web.app)
+    assert "No alert history yet" in client.get("/alerts?tab=history").text
+
+    assert client.post("/ops/poll").status_code == 200
+    page = client.get("/alerts?tab=history").text
+    assert 'class="ev-raised">raised' in page and "runs at 10M" in page
+    assert "runs at 10M" in client.get("/").text        # Overview as before
+    assert "runs at 10M" in client.get("/alerts").text  # Active tab
+
+    c = sqlite3.connect(dbp)
+    c.execute("UPDATE interfaces SET speed_bps = 10000000000")
+    c.commit(); c.close()
+    assert client.post("/ops/poll").status_code == 200
+    page = client.get("/alerts?tab=history").text
+    assert page.index('class="ev-cleared">cleared') < page.index('class="ev-raised">raised')
+    assert "runs at 10M" not in client.get("/alerts").text
+
+    c = sqlite3.connect(dbp)
+    c.row_factory = sqlite3.Row
+    [a] = c.execute("SELECT * FROM alerts").fetchall()
+    assert a["state"] == "cleared" and a["cleared_at"] >= a["raised_at"]
+    c.close()
+
+    # history filters are URL state on the history tab
+    assert "runs at 10M" in client.get("/alerts?tab=history&category=link").text
+    assert "No history matches" in client.get("/alerts?tab=history&category=ipam").text
