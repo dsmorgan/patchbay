@@ -165,6 +165,43 @@ def test_concurrent_callers_take_one_snapshot(env, monkeypatch):
         assert len(snapshot.alert_log(c)) == 1
 
 
+def test_same_second_with_no_cooldown_never_overwrites(env, clean_env, monkeypatch):
+    """Cooldown 0, two callers in one second: the file is named from the
+    claimed time and a claim needs a fresh second, so one wins and the other
+    reports the cooldown. One file, one sidecar entry, nothing overwritten."""
+    import threading
+
+    s = load_settings_with(clean_env, PATCHBAY_ALERT_SNAPSHOT_COOLDOWN="0")
+    gate = threading.Barrier(2)
+    real_claim = snapshot._claim_cooldown
+
+    def claim(conn, now, cooldown):
+        gate.wait()
+        return real_claim(conn, now, cooldown)
+
+    monkeypatch.setattr(snapshot, "_claim_cooldown", claim)
+    out: list[list[str]] = []
+    threads = [threading.Thread(target=lambda n=n: out.append(snapshot.take_alert_snapshot(
+        s, [_note(key=f"device:ap{n}", text=f"ap{n} is down")], now=T0 + n / 10)))
+        for n in (1, 2)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    [name] = _alert_files(env / "snaps")
+    assert name == datetime.fromtimestamp(T0).strftime("patchbay-%Y%m%d-%H%M%S-alert.html")
+    assert sum("in cooldown" in lines[0] for lines in out) == 1
+    with pdb.connect(str(env / "test.db")) as c:
+        log = snapshot.alert_log(c)
+        assert list(log) == [name]
+        winner = [lines for lines in out if "in cooldown" not in lines[0]][0]
+        assert len(log[name]["alerts"]) == 1 and winner[0].endswith(name)
+    # a second later is a new second: a second file
+    monkeypatch.setattr(snapshot, "_claim_cooldown", real_claim)
+    snapshot.take_alert_snapshot(s, [_note()], now=T0 + 1.5)
+    assert len(_alert_files(env / "snaps")) == 2
+
+
 def test_cooldown_whatever_raised_it(env, clean_env):
     s = load_settings()
     snapshot.take_alert_snapshot(s, [_note()], now=T0)
