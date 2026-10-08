@@ -74,6 +74,10 @@ RULES: dict[str, Rule] = {
         summary="A device's stored configuration changed."),
     "ipam-drift": Rule(
         category="ipam", summary="IPAM records and the network disagree."),
+    "expected-tunnel-missing": Rule(
+        category="tunnel",
+        summary="A tunnel declared on the Tunnels tab is absent, not up, or "
+                "has not been reported for two hours."),
     "stale-source": Rule(
         category="source",
         summary="A data source has not reported for 15 minutes."),

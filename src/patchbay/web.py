@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import alerting, db, transports
+from . import alerting, db, expected_tunnels, transports
 from . import routed
 from .attention import (CATEGORIES, STALE_MIN, attention_items, device_totals, drift_report,
                         human_age, human_speed, ip_sort_key, ipam_link,
@@ -394,7 +394,7 @@ def alerts(request: Request, category: str | None = None,
     alert engine's event log. Tab and filters are URL state, like the map.
     Active computes the rules live rather than reading the alerts table, so
     it matches the Overview even before the first poll has run."""
-    if tab not in ("active", "history", "rules", "transports"):
+    if tab not in ("active", "history", "rules", "tunnels", "transports"):
         tab = "active"
     conn = _conn()
     try:
@@ -434,6 +434,9 @@ def alerts(request: Request, category: str | None = None,
             "category": category, "severity": severity, "tab": tab,
             "history": history, "history_cap": ALERT_HISTORY_ROWS,
             "categories": CATEGORIES, "ages": source_ages(conn),
+            **({"expected": expected_tunnels.load(conn),
+                "tunnel_types": expected_tunnels.TYPES}
+               if tab == "tunnels" else {}),
             **(transports.page_context(conn) if tab == "transports" else {}),
         })
     finally:
@@ -464,6 +467,43 @@ async def alerts_rule_update(name: str, request: Request):
     finally:
         conn.close()
     return RedirectResponse(f"/alerts?tab=rules#rule-{quote(name)}", status_code=303)
+
+
+# -- expected tunnels (#63): declarations only, never keys -----------------
+
+@app.post("/alerts/tunnels")
+async def expected_tunnel_add(request: Request):
+    from fastapi.responses import RedirectResponse
+
+    f = await _form(request)
+    conn = _conn()
+    try:
+        db.init(conn)
+        try:
+            expected_tunnels.add(conn, f.get("device", ""), f.get("type", ""),
+                                 f.get("name", ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/alerts?tab=tunnels", status_code=303)
+
+
+@app.post("/alerts/tunnels/remove")
+async def expected_tunnel_remove(request: Request):
+    from fastapi.responses import RedirectResponse
+
+    f = await _form(request)
+    conn = _conn()
+    try:
+        db.init(conn)
+        expected_tunnels.remove(conn, f.get("device", ""), f.get("type", ""),
+                                f.get("name", ""))
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/alerts?tab=tunnels", status_code=303)
 
 
 # -- alert transports and routes (#61) --------------------------------------
