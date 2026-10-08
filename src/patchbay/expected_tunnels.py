@@ -5,6 +5,9 @@ declaration (like the /ops declarations, which also live in app_state), it
 needs no joins, and it adds no schema for the alerting branches to collide
 on. Each entry is {device, type, name}. Never key material, not even public
 keys: the validators below accept only those three fields.
+
+A declaration matches the device name literally. It does not follow
+renames or aliases: re-declare the tunnel after a device is renamed.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ import sqlite3
 from . import db
 
 STATE_KEY = "expected_tunnels"
-TYPES = ("wireguard", "openvpn", "ipsec", "vpn")
+TYPES = ("wireguard", "openvpn", "ipsec")
 MAX_FIELD = 128
 
 
