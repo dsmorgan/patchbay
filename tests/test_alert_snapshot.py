@@ -30,6 +30,7 @@ def env(clean_env, tmp_path, monkeypatch):
     with pdb.connect(str(tmp_path / "test.db")) as c:
         pdb.init(c)
     clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    clean_env.setenv("PATCHBAY_ALERT_SNAPSHOT", "on")
     monkeypatch.setattr(snapshot, "generate", lambda s: "<html>snap</html>")
     return tmp_path
 
@@ -128,18 +129,43 @@ def test_non_triggers_take_nothing(env, note):
     assert _state(env, snapshot.ALERT_LAST_KEY) is None
 
 
-def test_only_dispatched_notes_count():
-    """A crit that routes nowhere is filtered by dispatch(), so the trigger,
-    which reads dispatch()'s return value, never sees it (#62 silences ride
-    the same path)."""
-    from patchbay import alerting
-
-    sent = alerting.dispatch([_note(route="none"), _note(key="x", severity="warn")])
-    assert [n.key for n in sent] == ["x"]
-    assert snapshot.alert_triggers(sent) == []
+def test_a_crit_routed_nowhere_still_snapshots(env):
+    """The owner's call on #66: every new crit takes one, routed or not.
+    Silenced alerts (#62) produce no notification, so they never do."""
+    snapshot.take_alert_snapshot(load_settings(), [_note(route="none")], now=T0)
+    assert len(_alert_files(env / "snaps")) == 1
 
 
-def test_cooldown_whatever_raised_it(env):
+def test_concurrent_callers_take_one_snapshot(env, monkeypatch):
+    """The poller and /ops/poll can finish at once: the cooldown claim is
+    atomic, so exactly one writes and the other reports the cooldown."""
+    import threading
+
+    s = load_settings()
+    gate = threading.Barrier(2)
+    real_claim = snapshot._claim_cooldown
+
+    def claim(conn, now, cooldown):
+        gate.wait()            # both callers reach the claim together
+        return real_claim(conn, now, cooldown)
+
+    monkeypatch.setattr(snapshot, "_claim_cooldown", claim)
+    out: list[list[str]] = []
+    threads = [threading.Thread(target=lambda: out.append(
+        snapshot.take_alert_snapshot(s, [_note()], now=T0))) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(_alert_files(env / "snaps")) == 1
+    assert sorted(lines[0].split(":")[0] for lines in out) == [
+        "[ok]   alert snapshot", "[ok]   alert snapshot"]
+    assert sum("in cooldown" in lines[0] for lines in out) == 1
+    with pdb.connect(str(env / "test.db")) as c:
+        assert len(snapshot.alert_log(c)) == 1
+
+
+def test_cooldown_whatever_raised_it(env, clean_env):
     s = load_settings()
     snapshot.take_alert_snapshot(s, [_note()], now=T0)
     # a different alert ten minutes later: inside the default hour
@@ -152,16 +178,13 @@ def test_cooldown_whatever_raised_it(env):
     assert float(_state(env, snapshot.ALERT_LAST_KEY)) == T0 + 3601
 
     # cooldown 0 = none
-    with pdb.connect(str(env / "test.db")) as c:
-        snapshot.update_alert_snapshot_settings(c, {"cooldown": "0", "keep": "10"})
+    s = load_settings_with(clean_env, PATCHBAY_ALERT_SNAPSHOT_COOLDOWN="0")
     assert snapshot.take_alert_snapshot(s, [_note()], now=T0 + 3602)[0].startswith(
         "[ok]   alert snapshot: /")
 
 
-def test_keep_count_from_settings(env, monkeypatch):
-    s = load_settings()
-    with pdb.connect(str(env / "test.db")) as c:
-        snapshot.update_alert_snapshot_settings(c, {"cooldown": "0", "keep": "2"})
+def test_keep_count_from_settings(env, clean_env):
+    s = load_settings_with(clean_env, PATCHBAY_ALERT_SNAPSHOT_KEEP="2")
     d = env / "snaps"
     d.mkdir()
     for n in range(1, 4):
@@ -171,16 +194,52 @@ def test_keep_count_from_settings(env, monkeypatch):
     assert len(files) == 2 and files[0] == "patchbay-20200103-000000-alert.html"
 
 
-def test_settings_validate_before_writing(conn):
-    assert snapshot.alert_snapshot_settings(conn) == {"cooldown": 60, "keep": 10}
-    for bad in ({"cooldown": "-1", "keep": "10"}, {"cooldown": "x", "keep": "10"},
-                {"cooldown": "60", "keep": ""},
-                {"cooldown": str(snapshot.ALERT_COOLDOWN_MAX + 1), "keep": "1"}):
-        with pytest.raises(ValueError):
-            snapshot.update_alert_snapshot_settings(conn, bad)
-    assert pdb.get_state(conn, snapshot.ALERT_COOLDOWN_KEY) is None
-    snapshot.update_alert_snapshot_settings(conn, {"cooldown": "15", "keep": "0"})
-    assert snapshot.alert_snapshot_settings(conn) == {"cooldown": 15, "keep": 0}
+def load_settings_with(mp, **env):
+    for k, v in env.items():
+        mp.setenv(k, v)
+    return load_settings()
+
+
+# -- the flag and its settings (env-style declarations) ------------------------
+
+def test_off_by_default_takes_nothing(env, clean_env):
+    clean_env.delenv("PATCHBAY_ALERT_SNAPSHOT")
+    s = load_settings()
+    assert s.alert_snapshot is False
+    assert snapshot.take_alert_snapshot(s, [_note()], now=T0) == []
+    assert _alert_files(env / "snaps") == []
+    assert _state(env, snapshot.ALERT_LAST_KEY) is None   # no cooldown claim
+
+
+def test_flag_from_env_or_db_and_env_wins(env, clean_env):
+    clean_env.delenv("PATCHBAY_ALERT_SNAPSHOT")
+    with pdb.connect(str(env / "test.db")) as c:
+        pdb.set_state(c, "cfg:PATCHBAY_ALERT_SNAPSHOT", "yes")
+        pdb.set_state(c, "cfg:PATCHBAY_ALERT_SNAPSHOT_COOLDOWN", "15")
+        pdb.set_state(c, "cfg:PATCHBAY_ALERT_SNAPSHOT_KEEP", "3")
+    s = load_settings()
+    assert (s.alert_snapshot, s.alert_snapshot_cooldown, s.alert_snapshot_keep) == (True, 15, 3)
+    assert s.declaration_sources["PATCHBAY_ALERT_SNAPSHOT"] == "db"
+    clean_env.setenv("PATCHBAY_ALERT_SNAPSHOT", "off")
+    clean_env.setenv("PATCHBAY_ALERT_SNAPSHOT_KEEP", "0")
+    s = load_settings()
+    assert (s.alert_snapshot, s.alert_snapshot_keep) == (False, 0)
+    assert s.declaration_sources["PATCHBAY_ALERT_SNAPSHOT"] == "env"
+    for word in ("true", "ON", "1", "yes"):
+        clean_env.setenv("PATCHBAY_ALERT_SNAPSHOT", word)
+        assert load_settings().alert_snapshot is True
+
+
+def test_bad_values_warn_and_fall_back(clean_env):
+    clean_env.setenv("PATCHBAY_ALERT_SNAPSHOT", "maybe")
+    clean_env.setenv("PATCHBAY_ALERT_SNAPSHOT_COOLDOWN", "-5")
+    clean_env.setenv("PATCHBAY_ALERT_SNAPSHOT_KEEP", "ten")
+    s = load_settings()
+    assert (s.alert_snapshot, s.alert_snapshot_cooldown, s.alert_snapshot_keep) == (False, 60, 10)
+    warned = " ".join(s.parse_warnings)
+    for var in ("PATCHBAY_ALERT_SNAPSHOT:", "PATCHBAY_ALERT_SNAPSHOT_COOLDOWN:",
+                "PATCHBAY_ALERT_SNAPSHOT_KEEP:"):
+        assert var in warned
 
 
 # -- failure -------------------------------------------------------------------
@@ -243,19 +302,18 @@ def test_poll_survives_an_alert_snapshot_failure(env, monkeypatch):
 
 # -- the UI ------------------------------------------------------------------
 
-def test_rules_tab_edits_the_settings(env):
+def test_pages_state_the_flag(env, clean_env):
     import patchbay.web as web
 
     client = TestClient(web.app)
+    assert "at most one per 60 min" in client.get("/alerts?tab=rules").text
+    assert "Snapshot on critical:\non · at most one per 60 min" in client.get("/snapshots").text
+    assert "PATCHBAY_ALERT_SNAPSHOT (+ _COOLDOWN, _KEEP)" in client.get("/ops").text
+    assert client.post("/alerts/snapshot", data={"cooldown": "1"}).status_code in (404, 405)
+    clean_env.delenv("PATCHBAY_ALERT_SNAPSHOT")
     page = client.get("/alerts?tab=rules").text
-    assert 'id="alert-snapshot"' in page and 'name="cooldown" value="60"' in page
-    r = client.post("/alerts/snapshot", data={"cooldown": "30", "keep": "5"},
-                    follow_redirects=False)
-    assert r.status_code == 303
-    assert _state(env, snapshot.ALERT_COOLDOWN_KEY) == "30"
-    assert client.post("/alerts/snapshot", data={"cooldown": "30", "keep": "-2"},
-                       follow_redirects=False).status_code == 400
-    assert _state(env, snapshot.ALERT_KEEP_KEY) == "5"
+    assert 'id="alert-snapshot"' in page and "Off: turn it on" in page
+    assert "Snapshot on critical:\noff" in client.get("/snapshots").text
 
 
 def test_snapshots_page_lists_alert_snapshots_with_their_cause(env):
@@ -285,6 +343,7 @@ def test_done_when_unplugged_aps_on_the_demo(clean_env, tmp_path, monkeypatch):
     with pdb.connect(dbp) as c:
         demo.seed(c)
     clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    clean_env.setenv("PATCHBAY_ALERT_SNAPSHOT", "on")
     monkeypatch.setattr(snapshot, "generate", lambda s: "<html>snap</html>")
     seen: list[httpx.Request] = []
     monkeypatch.setattr(transports, "HTTP_TRANSPORT", httpx.MockTransport(

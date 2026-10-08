@@ -536,17 +536,12 @@ def run(conn: sqlite3.Connection, settings, *, now: float | None = None) -> list
     return notes
 
 
-def dispatch(notes: list[Notification],
-             dispatcher: Dispatcher | None = None) -> list[Notification]:
+def dispatch(notes: list[Notification], dispatcher: Dispatcher | None = None) -> None:
     """Hand the cycle's notifications to the transports. Called after the
     poll transaction commits; route `none` never leaves the process. The
     dispatcher runs even when nothing is due: a Kuma transport pushes its
-    state every cycle, which is what makes it a dead-man switch. Returns
-    what was handed over: the snapshot on critical (#66) reads only that,
-    so a note that goes nowhere never takes a snapshot."""
-    sent = [n for n in notes if n.route != "none"]
-    (dispatcher or NullDispatcher()).send(sent)
-    return sent
+    state every cycle, which is what makes it a dead-man switch."""
+    (dispatcher or NullDispatcher()).send([n for n in notes if n.route != "none"])
 
 
 def prune_history(conn: sqlite3.Connection, now: float | None = None) -> None:
