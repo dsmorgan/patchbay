@@ -9,6 +9,10 @@ put.
 ## [Unreleased]
 
 ### Added
+- Port-counter canaries (#64). A port whose error rate jumps to 100 times its
+  own 7-day baseline, and at least 50 per second, raises a warning after two
+  polls. LibreNMS error rates only: discard rates are not collected (see #86).
+  Defaults are provisional and tunable on the Rules tab.
 - Expected tunnels (#63). Declare VPN tunnels on the **Tunnels** tab of
   `/alerts` by device, type, and name; one that is missing, stale, or down
   raises a warning. Idle WireGuard counts as down unless the rule's
