@@ -47,7 +47,8 @@
 {# The attention list (issue #13): below the counts — the page opens with
    what the network IS — one flat ordered list, each line linking to the
    page that owns the answer. Device state is not repeated here: the cards
-   below are the device-state UI. PATCHBAY_EXPECT silences what's expected. #}
+   below are the device-state UI. A silenced item (#62) is not listed here;
+   /alerts shows it on the Silenced tab. #}
 {% if checked %}
 <section class="attention">
   {# issue #28: a distinct section — heading, severity-colored category

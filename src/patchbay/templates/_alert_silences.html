@@ -1,0 +1,98 @@
+{# The Silenced and Silences tabs (#62, ADR-0003 Decisions 6 and 8).
+   Silenced lists the items a silence covers right now, with that silence,
+   so a silence is never invisible. Silences is the list itself: add,
+   remove, expired rows muted. PATCHBAY_EXPECT entries show here as
+   permanent, read-only rows; they are edited on /ops. Plain forms posting
+   to /alerts/silences. #}
+
+{% if tab == 'silenced' %}
+<section class="sil">
+{% if silenced_items %}
+<div class="scroll" style="max-width: 900px">
+<table>
+  <tr><th></th><th>category</th><th>what</th><th>silenced by</th><th>until</th></tr>
+  {% for it in silenced_items %}
+  <tr>
+    <td><span class="dot {{ {'crit': 'down', 'info': 'info'}.get(it.severity, 'unknown') }}"
+             title="{{ {'crit': 'critical', 'info': 'information'}.get(it.severity, 'warning') }}"></span></td>
+    <td class="muted">{{ categories.get(it.category, it.category) }}</td>
+    <td><a href="{{ it.href }}">{{ it.text }}</a></td>
+    <td>{{ it.silence_what }}{% if it.silenced.reason %}
+        <span class="muted">· {{ it.silenced.reason }}</span>{% endif %}</td>
+    <td class="muted mono">{{ it.silence_until }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% else %}
+<p class="muted">Nothing is silenced right now. A silenced item still
+shows here, so a silence is never invisible.</p>
+{% endif %}
+<p class="muted sil-note"><a href="/alerts?tab=silences">Silences</a> lists
+and edits what covers these.</p>
+</section>
+
+{% else %}
+<section class="sil">
+<details{{ ' open' if not silences }}><summary>add a silence</summary>
+<form method="post" action="/alerts/silences" class="sil-add">
+  <input type="hidden" name="back" value="silences">
+  <label>kind <select name="kind">{% for k, label in silence_kinds.items() %}
+    <option value="{{ k }}">{{ 'alert key' if k == 'key' else label }}</option>{% endfor %}
+  </select></label>
+  <label>scope <input name="scope" required maxlength="300"
+         placeholder="sw1, sw1:1/0/2, link, or an alert key"></label>
+  <label>for <select name="hours">{% for v, label in durations %}
+    <option value="{{ v }}"{{ ' selected' if v == default_hours }}>{{ label }}</option>{% endfor %}
+  </select></label>
+  <label>reason <input name="reason" maxlength="500"></label>
+  <button class="sil-go">add</button>
+</form>
+<p class="muted sil-note">A device silence covers every alert about the
+device and its ports; a port is <span class="mono">device:interface</span>;
+a category is one of {{ categories | join(", ") }}. A silenced alert is
+still recorded, but it leaves the Overview and is never sent. When the
+silence ends, an alert that still holds raises as new.</p>
+</details>
+
+{% if silences %}
+<div class="scroll" style="max-width: 900px">
+<table>
+  <tr><th>silences</th><th>until</th><th>reason</th><th>by</th><th></th></tr>
+  {% for s in silences %}
+  <tr class="{{ '' if s.live else 'sil-old' }}">
+    <td>{{ s.what }}</td>
+    <td class="mono">{{ s.until_text }}{% if not s.live %} <span class="muted">(expired)</span>{% endif %}</td>
+    <td>{{ s.reason or '' }}</td>
+    <td class="muted">{{ s.created_by or '' }}{% if s.created_text %}
+        <span class="mono">· {{ s.created_text }}</span>{% endif %}</td>
+    <td>{% if s.source == 'db' %}
+      <form method="post" action="/alerts/silences/{{ s.id }}/delete">
+        <input type="hidden" name="back" value="silences">
+        <button class="linkbtn">{{ 'end now' if s.live else 'remove' }}</button></form>
+    {% else %}<a class="muted" href="/ops" title="declared in PATCHBAY_EXPECT">edit on Ops</a>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+</section>
+{% endif %}
+
+<style>
+  .sil { max-width: 900px; }
+  .sil-old td { opacity: 0.55; }
+  .sil-note { font-size: 0.82rem; max-width: 60ch; }
+  .sil-add { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: end;
+             margin: 0.6rem 0; }
+  .sil-add label { display: flex; flex-direction: column; font-size: 0.8rem;
+                   color: var(--muted); gap: 0.2rem; }
+  .sil-add input, .sil-add select { background: var(--card); color: var(--ink);
+             border: 1px solid var(--line); border-radius: 4px; padding: 0.3rem 0.4rem;
+             font-size: 0.85rem; min-width: 12rem; max-width: 100%; }
+  button.sil-go { background: var(--card); color: var(--ink); border: 1px solid var(--accent);
+                  border-radius: 999px; padding: 0.3rem 0.9rem; font-size: 0.85rem;
+                  cursor: pointer; }
+  button.sil-go:hover { background: var(--line); }
+  details > summary { cursor: pointer; color: var(--accent); }
+</style>

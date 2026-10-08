@@ -1,0 +1,34 @@
+{# The silence button on an Active row (#62, ADR-0003 Decision 6): one
+   plain form, scoped to this alert by default, 24 hours by default. The
+   scope select offers the item's own ports, devices, and category, so a
+   wider silence starts from the row it is about. Included inside the row
+   loop (an include does not see `loop`), so the style block rides on
+   the first item only. #}
+<details class="sil-btn"><summary>silence</summary>
+<form method="post" action="/alerts/silences" class="sil-form">
+  <input type="hidden" name="back" value="active">
+  <label>scope <select name="target">{% for kind, scope in it.scopes %}
+    <option value="{{ kind }}:{{ scope }}">{{ silence_kinds[kind] }}{% if kind != 'key' %} {{ scope }}{% endif %}</option>{% endfor %}
+  </select></label>
+  <label>for <select name="hours">{% for v, label in durations %}
+    <option value="{{ v }}"{{ ' selected' if v == default_hours }}>{{ label }}</option>{% endfor %}
+  </select></label>
+  <label>reason <input name="reason" maxlength="500" placeholder="known; being replaced"></label>
+  <button class="sil-go">silence</button>
+</form>
+</details>
+{% if it is sameas items[0] %}
+<style>
+  .sil-btn > summary { cursor: pointer; color: var(--accent); font-size: 0.82rem; }
+  .sil-btn[open] { min-width: 16rem; }
+  .sil-form { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.4rem 0; }
+  .sil-form label { display: flex; flex-direction: column; font-size: 0.8rem;
+                    color: var(--muted); gap: 0.2rem; }
+  .sil-form input, .sil-form select { background: var(--card); color: var(--ink);
+             border: 1px solid var(--line); border-radius: 4px; padding: 0.3rem 0.4rem;
+             font-size: 0.85rem; max-width: 100%; }
+  button.sil-go { align-self: start; background: var(--card); color: var(--ink);
+                  border: 1px solid var(--accent); border-radius: 999px;
+                  padding: 0.25rem 0.8rem; font-size: 0.82rem; cursor: pointer; }
+</style>
+{% endif %}
