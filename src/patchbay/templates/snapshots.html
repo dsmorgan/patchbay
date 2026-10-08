@@ -48,6 +48,38 @@ for one a day.</p>
 {% endif %}
 </div>
 
+<div id="snapalert" data-live>
+<h2>Taken on alerts</h2>
+{% if alert_snapshots %}
+<div class="scroll"><table>
+  <tr><th>when</th><th>file</th><th>alert</th><th>size</th><th></th><th></th></tr>
+  {% for s in alert_snapshots %}
+  <tr>
+    <td class="muted">{{ s.when }}</td>
+    <td class="mono">{{ s.name }}</td>
+    <td>{% for a in s.alerts %}{% if not loop.first %}<br>{% endif %}{{ a.text or a.key }}{%
+        if a.kind == 'escalate' %} <span class="muted">(escalated)</span>{% endif %}{% else
+        %}<span class="muted">not recorded</span>{% endfor %}{% if s.more
+        %}<br><span class="muted">and {{ s.more }} more</span>{% endif %}</td>
+    <td class="muted">{{ s.size_mb }} MB</td>
+    <td><a href="{{ s.href }}">download</a></td>
+    <td><form method="post" action="/snapshots/{{ s.name }}/delete"
+          onsubmit="return confirm('Delete {{ s.name }} (and its delivered copy)?')"
+          style="display: inline"><button class="linkbtn">delete</button></form></td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% else %}
+<p class="muted">None yet. A critical alert takes one after the poll that
+raises it.</p>
+{% endif %}
+<p class="muted" style="font-size: 0.82rem">At most one per
+{{ alert_cfg.cooldown ~ " minutes" if alert_cfg.cooldown else "poll (no cooldown)" }},
+keeping {{ "the newest " ~ alert_cfg.keep if alert_cfg.keep else "all of them" }},
+apart from the tiers above · set on <a href="/alerts?tab=rules#alert-snapshot">Alerts
+· Rules</a>.</p>
+</div>
+
 <h2>Where they go</h2>
 <div style="max-width: 700px">
 <p class="muted" style="font-size: 0.85rem">

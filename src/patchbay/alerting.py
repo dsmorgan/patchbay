@@ -100,8 +100,8 @@ RULES: dict[str, Rule] = {
         summary="A data source has not reported for 15 minutes."),
     "snapshot-failed": Rule(
         category="source", event=True, params={},
-        summary="The daily or a manual snapshot failed, or was not delivered "
-                "off-host."),
+        summary="The daily, a manual, or an alert snapshot failed, or was not "
+                "delivered off-host."),
     # a port's error or discard rate orders of magnitude above its own
     # baseline (#64, ADR-0003 Decision 5); `for` 2 so one bad sample is quiet
     "port-canary": Rule(
@@ -536,12 +536,17 @@ def run(conn: sqlite3.Connection, settings, *, now: float | None = None) -> list
     return notes
 
 
-def dispatch(notes: list[Notification], dispatcher: Dispatcher | None = None) -> None:
+def dispatch(notes: list[Notification],
+             dispatcher: Dispatcher | None = None) -> list[Notification]:
     """Hand the cycle's notifications to the transports. Called after the
     poll transaction commits; route `none` never leaves the process. The
     dispatcher runs even when nothing is due: a Kuma transport pushes its
-    state every cycle, which is what makes it a dead-man switch."""
-    (dispatcher or NullDispatcher()).send([n for n in notes if n.route != "none"])
+    state every cycle, which is what makes it a dead-man switch. Returns
+    what was handed over: the snapshot on critical (#66) reads only that,
+    so a note that goes nowhere never takes a snapshot."""
+    sent = [n for n in notes if n.route != "none"]
+    (dispatcher or NullDispatcher()).send(sent)
+    return sent
 
 
 def prune_history(conn: sqlite3.Connection, now: float | None = None) -> None:

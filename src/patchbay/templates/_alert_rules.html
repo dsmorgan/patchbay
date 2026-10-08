@@ -51,6 +51,8 @@ Event rules fire once per occurrence, so they have no <code>for</code>.</p>
 {% endfor %}
 </div>
 
+{% if alert_snapshot %}{% include "_alert_snapshot.html" %}{% endif %}
+
 <style>
   .rules { display: flex; flex-direction: column; gap: 0.6rem; max-width: 900px; }
   .rule { border: 1px solid var(--line); border-radius: 8px; padding: 0.55rem 0.8rem; }

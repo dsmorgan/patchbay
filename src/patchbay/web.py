@@ -434,12 +434,18 @@ def alerts(request: Request, category: str | None = None,
                     + " ORDER BY ts DESC, id DESC LIMIT ?",
                     (*args, ALERT_HISTORY_ROWS))]
         rules = alerting.rule_settings(conn) if tab == "rules" else []
+        alert_snap = None
+        if tab == "rules":
+            from .snapshot import alert_snapshot_settings
+
+            alert_snap = alert_snapshot_settings(conn)
         for r in rules:   # "default (kuma, warn+)" rather than the stored "1:warn"
             r["route_label"] = transports.route_label(conn, r["route"])
         if rules:
             conn.commit()   # seeding a fresh install's rows is not a poll's job
         return templates.TemplateResponse(request, "alerts.html", {
             "rules": rules, "severities": alerting.SEVERITIES,
+            "alert_snapshot": alert_snap,
             "items": shown, "total": len(items), "checked": checked,
             "attn_summary": _attention_summary(items),
             "category": category, "severity": severity, "tab": tab,
@@ -518,6 +524,28 @@ async def expected_tunnel_remove(request: Request):
     finally:
         conn.close()
     return RedirectResponse("/alerts?tab=tunnels", status_code=303)
+
+
+@app.post("/alerts/snapshot")
+async def alerts_snapshot_settings(request: Request):
+    """Snapshot on critical (#66): the cooldown and keep count, saved from
+    the Rules tab. Validated before anything is written."""
+    from .snapshot import update_alert_snapshot_settings
+
+    form = await _form(request)
+    conn = _conn()
+    try:
+        db.init(conn)
+        try:
+            update_alert_snapshot_settings(conn, form)
+        except ValueError as e:
+            raise HTTPException(400, f"alert snapshots: {e}")
+        conn.commit()
+    finally:
+        conn.close()
+    from fastapi.responses import RedirectResponse
+
+    return RedirectResponse("/alerts?tab=rules#alert-snapshot", status_code=303)
 
 
 # -- alert transports and routes (#61) --------------------------------------
@@ -1756,7 +1784,7 @@ def snapshots(request: Request):
     live UI's action button posts to /ops/snapshot (unchanged); this page
     just lists and serves what that leaves behind."""
     from . import demo
-    from .retention import classify, stamp_of
+    from .retention import alert_stamp_of, classify, stamp_of
 
     settings = load_settings()
     spec = settings.snapshot_keep
@@ -1786,8 +1814,28 @@ def snapshots(request: Request):
         db.init(conn)
         is_demo = db.get_state(conn, demo.MARKER) == "1"
         ages = source_ages(conn)
+        # alert snapshots (#66) beside the tiers, not inside them: their own
+        # list, each with the alerts that took it, from the sidecar record
+        from .snapshot import alert_log, alert_snapshot_settings
+
+        log = alert_log(conn)
+        alert_cfg = alert_snapshot_settings(conn)
     finally:
         conn.close()
+    alert_found = []
+    if d.is_dir():
+        for p in d.iterdir():
+            ts = alert_stamp_of(p.name)
+            if ts is None:
+                continue
+            entry = log.get(p.name) or {}
+            alert_found.append({
+                "name": p.name, "when": ts.strftime("%Y-%m-%d %H:%M:%S"), "ts": ts,
+                "alerts": entry.get("alerts") or [], "more": entry.get("more") or 0,
+                "size_mb": round(p.stat().st_size / 1e6, 1),
+                "href": f"/snapshots/{p.name}",
+            })
+    alert_found.sort(key=lambda s: s["ts"], reverse=True)
     pager = _paginate(found, request.query_params.get("page"))
     return templates.TemplateResponse(request, "snapshots.html", {
         "snapshots": pager["items"], "pager": pager, "pager_base": "/snapshots?",
@@ -1804,6 +1852,7 @@ def snapshots(request: Request):
                                if w.startswith("PATCHBAY_SNAPSHOT_KEEP:")
                                or (settings.snapshot_keep_unknown and
                                    w.startswith("could not read stored declarations"))]},
+        "alert_snapshots": alert_found, "alert_cfg": alert_cfg,
         "is_demo": is_demo,
         "ages": ages,
     })
@@ -1819,7 +1868,7 @@ def snapshot_file(name: str):
     settings = load_settings()
     d = Path(settings.snapshot_dir)
     p = d / name
-    if (not re.fullmatch(r"patchbay-(?:\d{8}-\d{6}|latest)\.html", name)
+    if (not re.fullmatch(r"patchbay-(?:\d{8}-\d{6}(?:-alert)?|latest)\.html", name)
             or p.resolve().parent != d.resolve() or not p.exists()):
         raise HTTPException(404, "no such snapshot")
     return Response(p.read_bytes(), media_type="text/html", headers={
@@ -1838,7 +1887,7 @@ def snapshot_delete(name: str):
     settings = load_settings()
     d = Path(settings.snapshot_dir)
     p = d / name
-    if (not re.fullmatch(r"patchbay-(?:\d{8}-\d{6}|latest)\.html", name)
+    if (not re.fullmatch(r"patchbay-(?:\d{8}-\d{6}(?:-alert)?|latest)\.html", name)
             or p.resolve().parent != d.resolve()):
         raise HTTPException(404, "no such snapshot")
     if p.exists():
@@ -1977,12 +2026,18 @@ def ops_poll(source: str | None = None):
     finally:
         conn.close()
         _ops_lock.release()
+    sent = []
     try:  # after commit: a receiver never holds the database or the lock
         dispatcher = transports.WebhookDispatcher(settings.db_path)
-        alerting.dispatch(notes, dispatcher)
+        sent = alerting.dispatch(notes, dispatcher)
         lines += dispatcher.lines   # never carries a URL (transports._redact)
     except Exception as e:
         lines.append(f"[warn] alert dispatch: {type(e).__name__}")
+    # snapshot on critical (#66), as the poller runs it: after dispatch, and
+    # a failure is a recorded event and a line, never a failed poll
+    from .snapshot import take_alert_snapshot
+
+    lines += take_alert_snapshot(settings, sent)
     return {"lines": lines}
 
 
