@@ -107,6 +107,35 @@ def test_rule_items_carry_the_names_silences_match(conn, clean_env):
     assert it["silenced"]["scope"] == "hyp1:vmnic0"
 
 
+def test_expected_tunnel_and_port_canary_items_are_silenceable(conn, clean_env):
+    from patchbay import expected_tunnels
+
+    pdb.upsert_device(conn, name="fw1", source="opnsense", role="firewall", status="up")
+    expected_tunnels.add(conn, "fw1", "wireguard", "wg-site")
+    settings = load_settings()
+
+    def tunnel():
+        [it] = [i for i in attention.attention_items(conn, settings)[0]
+                if i["rule"] == "expected-tunnel-missing"]
+        return it
+
+    it = tunnel()
+    assert it["silenced"] is None
+    # the button offers the device, never the device-level hold as a port
+    assert ("device", "fw1") in silences.scopes_for(it)
+    assert not any(k == "port" for k, _ in silences.scopes_for(it))
+    sid = _silence(conn, "device", "fw1")
+    assert tunnel()["silenced"]["scope"] == "fw1"
+    silences.delete(conn, sid)
+    _silence(conn, "category", "tunnel")
+    assert tunnel()["silenced"]["kind"] == "category"
+
+    canary = _item("port:canary:sw1:1/0/5:out_discards", "port-canary", "port",
+                   ports=[("sw1", "1/0/5")])
+    _silence(conn, "port", "sw1:1/0/5")
+    assert _mark(conn, [canary])[0]["silenced"]["scope"] == "sw1:1/0/5"
+
+
 # -- expiry ---------------------------------------------------------------
 
 def test_expired_silence_covers_nothing(conn):
@@ -154,15 +183,56 @@ def test_unsilenced_alert_counts_for_again(conn):
         == ["raise"]
 
 
-def test_condition_ending_while_silenced_sends_nothing(conn):
+def _cycle(conn, items, now):
+    return alerting.evaluate(conn, _mark(conn, [dict(i) for i in items], now=now), now=now)
+
+
+def test_announced_then_silenced_then_ended_sends_one_clear(conn):
+    # the receiver heard the raise, so it must hear the clear, or it stays
+    # firing forever; the silence itself still sends nothing
     it = _item("source:stale")
-    alerting.evaluate(conn, _mark(conn, [dict(it)]), now=T0)
+    assert [n.kind for n in _cycle(conn, [it], T0)] == ["raise"]
     _silence(conn, "key", "source:stale")
-    alerting.evaluate(conn, _mark(conn, [dict(it)], now=T0 + 300), now=T0 + 300)
-    assert alerting.evaluate(conn, [], now=T0 + 600) == []
-    [a] = _alerts(conn)
-    assert a["state"] == "cleared"
+    assert _cycle(conn, [it], T0 + 300) == []
+    notes = _cycle(conn, [], T0 + 600)
+    assert [(n.kind, n.key) for n in notes] == [("clear", "source:stale")]
+    assert _events(conn)[-1] == ("cleared", None)
+    assert _cycle(conn, [], T0 + 900) == []
+
+
+def test_never_announced_silenced_alert_ends_quietly(conn):
+    _silence(conn, "key", "source:stale")
+    it = _item("source:stale")
+    assert _cycle(conn, [it], T0) == []
+    assert _cycle(conn, [], T0 + 300) == []
     assert _events(conn)[-1] == ("cleared", "silenced")
+
+
+def test_pending_then_silenced_then_ended_is_quiet(conn):
+    alerting.seed_rules(conn)
+    conn.execute("UPDATE alert_rules SET params = '{\"for\": 3}' WHERE name = 'stale-source'")
+    it = _item("source:stale")
+    assert _cycle(conn, [it], T0) == []
+    assert _alerts(conn)[0]["state"] == "pending"
+    _silence(conn, "key", "source:stale")
+    assert _cycle(conn, [it], T0 + 300) == []
+    assert _cycle(conn, [], T0 + 600) == []
+    assert _events(conn)[-1] == ("cleared", "silenced")
+
+
+def test_announced_reraised_pending_then_ended_sends_one_clear(conn):
+    alerting.seed_rules(conn)
+    conn.execute("UPDATE alert_rules SET params = '{\"for\": 2}' WHERE name = 'stale-source'")
+    it = _item("source:stale")
+    assert _cycle(conn, [it], T0) == []
+    assert [n.kind for n in _cycle(conn, [it], T0 + 300)] == ["raise"]   # announced
+    _silence(conn, "key", "source:stale", until=T0 + 900)
+    assert _cycle(conn, [it], T0 + 600) == []
+    assert _cycle(conn, [it], T0 + 1200) == []        # expired: pending again
+    [a] = _alerts(conn)
+    assert (a["state"], a["last_notified_at"]) == ("pending", T0 + 300)
+    notes = _cycle(conn, [], T0 + 1500)
+    assert [n.kind for n in notes] == ["clear"]
 
 
 def test_silenced_from_the_start_is_stored_never_sent(conn):
@@ -236,6 +306,38 @@ def test_silenced_alert_does_not_hold_kuma_down(tmp_path):
     assert poll(T0 + 300) == []                  # silenced: nothing sent
     poll(T0 + 3900)                              # expired, still holds
     assert [dict(r.url.params)["status"] for r in rec.seen] == ["down", "up", "down"]
+    c.close()
+
+
+def test_queued_retry_for_a_silenced_alert_is_dropped(tmp_path):
+    from tests.test_transports import HOOK, Recorder
+
+    p = str(tmp_path / "t.db")
+    c = sqlite3.connect(p)
+    c.row_factory = sqlite3.Row
+    pdb.init(c)
+    c.execute("INSERT INTO alert_transports (name, kind, url) VALUES ('hook', 'generic', ?)",
+              (HOOK,))
+    c.commit()
+
+    def poll(now, rec):
+        notes = _cycle(c, [_item("source:stale")], now)
+        c.commit()
+        alerting.dispatch(notes, transports.WebhookDispatcher(p, transport=rec.transport,
+                                                             now=now))
+
+    down = Recorder(status=500)
+    poll(T0, down)                               # the raise fails and is queued
+    assert len(down.seen) == 1
+    assert pdb.get_state(c, transports.OUTBOX_KEY) != "[]"
+    _silence(c, "key", "source:stale")
+    c.commit()
+    up = Recorder()
+    poll(T0 + 300, up)
+    assert up.seen == []                         # not sent late
+    assert pdb.get_state(c, transports.OUTBOX_KEY) == "[]"   # nor kept
+    assert [(r["event"], r["detail"]) for r in c.execute(
+        "SELECT event, detail FROM alert_events ORDER BY id")][-1] == ("dropped", "silenced")
     c.close()
 
 
