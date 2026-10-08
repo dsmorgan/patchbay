@@ -252,7 +252,7 @@ Facts no protocol can discover. All optional; all use the pattern
 | `PATCHBAY_RELATED` | `component=owner,…` | Out-of-band component ties (a BMC/CIMC/iDRAC and the server it manages) |
 | `PATCHBAY_VLAN_FILTER` | `dev:iface=1+24+73,…` | Trunks with a restricted VLAN list (defaults assume trunks carry every VLAN — allowed-lists aren't readable via SNMP) |
 | `PATCHBAY_CAPACITY` | `dev:iface=3G,…` | Real service capacity below the port speed; load math divides by it and the map shows both: "10G (3G)". `G`/`M` suffixes |
-| `PATCHBAY_EXPECT` | `dev:iface` or `dev`,… | Conditions declared expected, silenced on the Overview's attention list: a port whose link is legitimately slow (`core1:1/0/16`), or a whole device (`hyp1`) to quiet every item naming it. An alert nobody can silence trains everyone to ignore the list |
+| `PATCHBAY_EXPECT` | `dev:iface` or `dev`,… | Legacy input to the silence list: each entry is a permanent, read-only silence on the alerts page (**Alerts > Silences**), which hides it from the Overview and from every alert transport. A port whose link is legitimately slow (`core1:1/0/16`), or a whole device (`hyp1`) to quiet every item naming it. Add new silences, with an expiry and a reason, on that page instead |
 | `PATCHBAY_ROUTED_ORDER` | `name-or-vid,…` | Routed-view rail order override (ADR-0002): named networks (VLAN id or name) pin to the left in the declared order; the rest keep the computed order |
 | `PATCHBAY_PANELS` | `name:size=regex,…` | Patch panels. The regex's first capture group is the panel position claimed by a port description; distinct prefixes keep panels apart; size `0` = sized by the highest position seen |
 
