@@ -66,6 +66,31 @@ for _s in (10_000_000_000, 20_000_000_000, 25_000_000_000,
     WRAPPED_SPEED[(_s % 2**32) // 1_000_000 * 1_000_000] = _s
 
 
+# LibreNMS's per-second counter rates -> rate_history's columns (#64). Only
+# the error rates live on the `ports` table; the discard rates are in
+# `ports_statistics`, which the ports listing cannot select (it validates
+# `columns` against `ports` and refuses the whole request on an unknown
+# one). Discards stay NULL here until a source reports them.
+COUNTER_RATES = {"ifInErrors_rate": "in_errors", "ifOutErrors_rate": "out_errors",
+                 "ifInDiscards_rate": "in_discards",
+                 "ifOutDiscards_rate": "out_discards"}
+PORTS_COLUMNS = ("port_id,ifName,ifIndex,ifAdminStatus,ifOperStatus,ifSpeed,"
+                 "ifPhysAddress,ifAlias,ifInOctets_rate,ifOutOctets_rate,"
+                 "ifInErrors_rate,ifOutErrors_rate")
+
+
+def _rate_sample(p: dict) -> tuple | None:
+    """One port's rate_history values (in_bps, out_bps, then the counters
+    in db.RATE_COUNTERS order), or None when the port reported no rate."""
+    bits = [int(p[k] * 8) if p.get(k) is not None else None
+            for k in ("ifInOctets_rate", "ifOutOctets_rate")]
+    by_col = {col: p.get(k) for k, col in COUNTER_RATES.items()}
+    counters = [float(by_col[c]) if by_col[c] is not None else None
+                for c in db.RATE_COUNTERS]
+    vals = (*bits, *counters)
+    return vals if any(v is not None for v in vals) else None
+
+
 def _speed(raw: int | None) -> int | None:
     return WRAPPED_SPEED.get(raw, raw) if raw is not None else None
 
@@ -121,9 +146,7 @@ class LibreNmsCollector:
 
                 ports = self._get(
                     client, settings,
-                    f"devices/{d['device_id']}/ports?columns="
-                    "port_id,ifName,ifIndex,ifAdminStatus,ifOperStatus,ifSpeed,"
-                    "ifPhysAddress,ifAlias,ifInOctets_rate,ifOutOctets_rate",
+                    f"devices/{d['device_id']}/ports?columns={PORTS_COLUMNS}",
                 ).get("ports", [])
                 for p in ports:
                     if not p.get("ifName"):
@@ -145,13 +168,13 @@ class LibreNmsCollector:
                                  if p.get("ifOutOctets_rate") is not None else None),
                     )
                     n_ports += 1
-                    if p.get("ifInOctets_rate") is not None or p.get("ifOutOctets_rate") is not None:
+                    sample = _rate_sample(p)
+                    if sample is not None:
                         conn.execute(
-                            "INSERT INTO rate_history (device, interface, ts, in_bps, out_bps) "
-                            "VALUES (?, ?, ?, ?, ?)",
-                            (name, p["ifName"], db.now(),
-                             int(p["ifInOctets_rate"] * 8) if p.get("ifInOctets_rate") is not None else None,
-                             int(p["ifOutOctets_rate"] * 8) if p.get("ifOutOctets_rate") is not None else None),
+                            "INSERT INTO rate_history (device, interface, ts, in_bps, "
+                            f"out_bps, {', '.join(db.RATE_COUNTERS)}) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (name, p["ifName"], db.now(), *sample),
                         )
 
             # Retire devices removed from LibreNMS — they stayed on every page

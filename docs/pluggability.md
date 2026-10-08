@@ -82,7 +82,7 @@ same object:
 | `vnic_vlans` | virtual NIC MAC → its port group VLAN, which the guest OS cannot see | hypervisor |
 | `ipam_addresses` | the IPAM address book verbatim (for drift comparison) | IPAM |
 | `gateways` | WAN/gateway state | firewall |
-| `rate_history` | per-port in/out samples (feeds the 24 h-peak load view) | NMS, wireless controller (switch ports, AP uplinks) |
+| `rate_history` | per-port in/out samples (feeds the 24 h-peak load view), plus error and discard rates for the port canaries | NMS, wireless controller (switch ports, AP uplinks) |
 | `raw_payloads` | cached raw API responses, for debugging collectors | all |
 
 Rows carry their **evidence source**, and the normalizer resolves conflicts by
