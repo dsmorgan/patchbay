@@ -9,6 +9,12 @@ put.
 ## [Unreleased]
 
 ### Added
+- Snapshot on critical alert (#66), off by default. Set
+  `PATCHBAY_ALERT_SNAPSHOT=on` (env file or /ops) and every new critical alert,
+  routed or not, takes a `patchbay-…-alert.html` snapshot, at most one per
+  `PATCHBAY_ALERT_SNAPSHOT_COOLDOWN` minutes (default 60). Alert snapshots keep
+  their own count (`PATCHBAY_ALERT_SNAPSHOT_KEEP`, default 10), never displace
+  the tiered dailies, and `/snapshots` lists the alerts that caused each one.
 - Silences (#62). Silence an alert from its row on `/alerts`, or add one on
   the **Silences** tab, by device, port, category, or exact alert, for a
   duration or permanently, with a reason. A silenced alert stays visible on
