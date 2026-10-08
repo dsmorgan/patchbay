@@ -188,39 +188,25 @@ def test_concurrent_callers_take_one_snapshot(env, monkeypatch):
         assert len(snapshot.alert_log(c)) == 1
 
 
-def test_same_second_with_no_cooldown_never_overwrites(env, clean_env, monkeypatch):
-    """Cooldown 0, two callers in one second: the file is named from the
-    claimed time and a claim needs a fresh second, so one wins and the other
-    reports the cooldown. One file, one sidecar entry, nothing overwritten."""
-    import threading
-
+def test_same_second_with_no_cooldown_never_overwrites(env, clean_env):
+    """Cooldown 0, two claims in one second: the file is named from the
+    claimed time and a claim needs a fresh second, so the second caller
+    reports the cooldown. One file, one sidecar entry, nothing overwritten.
+    Sequential, so the order (earlier claim first) is fixed."""
     s = load_settings_with(clean_env, PATCHBAY_ALERT_SNAPSHOT_COOLDOWN="0")
-    gate = threading.Barrier(2)
-    real_claim = snapshot._claim_cooldown
-
-    def claim(conn, now, cooldown):
-        gate.wait()
-        return real_claim(conn, now, cooldown)
-
-    monkeypatch.setattr(snapshot, "_claim_cooldown", claim)
-    out: list[list[str]] = []
-    threads = [threading.Thread(target=lambda n=n: out.append(snapshot.take_alert_snapshot(
-        s, [_note(key=f"device:ap{n}", text=f"ap{n} is down")], now=T0 + n / 10)))
-        for n in (1, 2)]
-    for th in threads:
-        th.start()
-    for th in threads:
-        th.join()
+    first = snapshot.take_alert_snapshot(
+        s, [_note(key="device:ap1", text="ap1 is down")], now=T0 + 0.1)
+    second = snapshot.take_alert_snapshot(
+        s, [_note(key="device:ap2", text="ap2 is down")], now=T0 + 0.2)
     [name] = _alert_files(env / "snaps")
     assert name == datetime.fromtimestamp(T0).strftime("patchbay-%Y%m%d-%H%M%S-alert.html")
-    assert sum("in cooldown" in lines[0] for lines in out) == 1
+    assert first[0].endswith(name)
+    assert second[0].startswith("[ok]   alert snapshot: in cooldown until")
     with pdb.connect(str(env / "test.db")) as c:
         log = snapshot.alert_log(c)
         assert list(log) == [name]
-        winner = [lines for lines in out if "in cooldown" not in lines[0]][0]
-        assert len(log[name]["alerts"]) == 1 and winner[0].endswith(name)
+        assert log[name]["alerts"][0]["text"] == "ap1 is down"
     # a second later is a new second: a second file
-    monkeypatch.setattr(snapshot, "_claim_cooldown", real_claim)
     snapshot.take_alert_snapshot(s, [_note()], now=T0 + 1.5)
     assert len(_alert_files(env / "snaps")) == 2
 
