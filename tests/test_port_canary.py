@@ -150,7 +150,9 @@ def test_params_and_expected(conn, clean_env, clock):
     assert _canaries(conn, load_settings()) == []
     clean_env.setenv("PATCHBAY_EXPECT", "sw1:1/0/5")
     conn.execute("UPDATE alert_rules SET params = '{}' WHERE name = 'port-canary'")
-    assert _canaries(conn, load_settings()) == []
+    # computed, but silenced through the silence list (#62)
+    [it] = _canaries(conn, load_settings())
+    assert (it["silenced"]["kind"], it["silenced"]["scope"]) == ("port", "sw1:1/0/5")
 
 
 def test_stale_sample_says_nothing(conn, settings, clock):
