@@ -13,11 +13,14 @@
   <a class="{{ 'on' if tab == 'active' }}" href="/alerts">Active</a>
   <a class="{{ 'on' if tab == 'history' }}" href="/alerts?tab=history">History</a>
   <a class="{{ 'on' if tab == 'rules' }}" href="/alerts?tab=rules">Rules</a>
+  <a class="{{ 'on' if tab == 'tunnels' }}" href="/alerts?tab=tunnels">Tunnels</a>
   <a class="{{ 'on' if tab == 'transports' }}" href="/alerts?tab=transports">Transports</a>
 </nav>
 
 {% if tab == 'rules' %}
 {% include '_alert_rules.html' %}
+{% elif tab == 'tunnels' %}
+{% include "_alert_tunnels.html" %}
 {% elif tab == 'transports' %}
 {% include "_alert_transports.html" %}
 {% else %}

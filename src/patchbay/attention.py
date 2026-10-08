@@ -27,7 +27,8 @@ STALE_MIN = 15  # same rule the top bar uses
 # category -> the short label the summary strip and filters show. The
 # Overview hides `device`: its cards are the device-state UI.
 CATEGORIES = {"device": "devices", "link": "links", "gateway": "gateways",
-              "ipam": "IPAM", "source": "sources", "config": "config changes"}
+              "ipam": "IPAM", "source": "sources", "config": "config changes",
+              "tunnel": "tunnels"}
 
 # Rule parameter defaults (ADR-0003 Decision 4). They live here, beside the
 # rules that read them; alerting.RULES seeds them into alert_rules, and a
@@ -344,6 +345,7 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
     items += _gateway_degraded(conn, settings, now, checked)
     items += _config_changed(conn, settings, now)
     items += _snapshot_failed(conn, now)
+    items += _expected_tunnel_missing(conn, now, checked)
 
     # transport-failing: an alert transport whose last three dispatch cycles
     # failed. Silence about a dead receiver is the one failure the receiver
@@ -498,6 +500,43 @@ def _gateway_degraded(conn, settings, now: float, checked: list[str]) -> list[di
             "rule": "gateway-degraded", "key": f"gateway:{g['name']}",
             "category": "gateway", "severity": sev,
             "text": f"gateway {g['name']} {what}", "href": "/",
+        })
+    return out
+
+
+# --- expected-tunnel-missing (#63) -------------------------------------------
+# A declared tunnel (expected_tunnels) is missing when its row is absent, its
+# status is not "up" (WireGuard "idle" = stale handshake counts as not up),
+# or the row was last refreshed over DEVICE_STALE_S ago. A stale row is
+# missing: nothing has confirmed the tunnel since, and the firewall's own
+# down or stale state is reported by its own rules. Undeclared tunnels never
+# alert.
+def _expected_tunnel_missing(conn, now: float, checked: list[str]) -> list[dict]:
+    from . import expected_tunnels
+
+    declared = expected_tunnels.load(conn)
+    if not declared:
+        return []
+    checked.append("expected tunnels up")
+    have = {(r["device"], r["type"], r["name"]): r
+            for r in conn.execute("SELECT device, type, name, status, last_seen FROM tunnels")}
+    out = []
+    for e in declared:
+        row = have.get((e["device"], e["type"], e["name"]))
+        if row is None:
+            why = "is not reported"
+        elif (row["last_seen"] or 0) < now - DEVICE_STALE_S:
+            why = "was last reported over two hours ago"
+        elif (row["status"] or "").lower() != "up":
+            why = f"is {row['status'] or 'not up'}"
+        else:
+            continue
+        out.append({
+            "rule": "expected-tunnel-missing",
+            "key": f"tunnel:{e['device']}:{e['type']}:{e['name']}",
+            "category": "tunnel", "severity": "warn",
+            "text": f"expected {e['type']} tunnel {e['name']} on {e['device']} {why}",
+            "href": "/routed",
         })
     return out
 

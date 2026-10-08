@@ -1,0 +1,47 @@
+{# The Tunnels tab (issue #63, ADR-0003 Decision 4): VPN tunnels the site
+   expects to be up, as declarations (device, type, name). The
+   expected-tunnel-missing rule alerts when one is absent, not up, or stale.
+   No key material is ever entered, stored, or shown here. #}
+<section class="et">
+<h2>Expected tunnels</h2>
+<p class="muted et-note">Declare the tunnels that should always be up. A
+declared tunnel that is absent from the firewall's report, not up, or not
+refreshed for two hours raises <span class="mono">expected-tunnel-missing</span>.
+A tunnel not listed here never alerts. Enter names only: never keys.</p>
+{% if expected %}
+<div class="scroll" style="max-width: 700px">
+<table>
+  <tr><th>device</th><th>type</th><th>name</th><th></th></tr>
+  {% for e in expected %}
+  <tr>
+    <td>{{ e.device }}</td><td class="muted">{{ e.type }}</td><td>{{ e.name }}</td>
+    <td><form method="post" action="/alerts/tunnels/remove">
+      <input type="hidden" name="device" value="{{ e.device }}">
+      <input type="hidden" name="type" value="{{ e.type }}">
+      <input type="hidden" name="name" value="{{ e.name }}">
+      <button class="linkbtn">remove</button></form></td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% else %}
+<p class="muted">No tunnels declared yet.</p>
+{% endif %}
+<form method="post" action="/alerts/tunnels" class="et-form">
+  <label>device <input name="device" required maxlength="128" placeholder="fw1"></label>
+  <label>type <select name="type">{% for t in tunnel_types %}
+    <option value="{{ t }}">{{ t }}</option>{% endfor %}</select></label>
+  <label>name <input name="name" required maxlength="128" placeholder="site-b"></label>
+  <button class="et-go">add</button>
+</form>
+</section>
+<style>
+  .et h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+  .et-note { font-size: 0.85rem; max-width: 70ch; }
+  .et-form { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: end; margin-top: 0.8rem; }
+  .et-form label { display: flex; flex-direction: column; font-size: 0.8rem; color: var(--muted); }
+  .et-form input, .et-form select { background: var(--card); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 4px; padding: 0.25rem 0.4rem; }
+  button.et-go { background: var(--card); color: var(--ink); border: 1px solid var(--accent);
+    border-radius: 4px; padding: 0.3rem 0.8rem; cursor: pointer; }
+</style>
