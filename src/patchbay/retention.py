@@ -24,6 +24,8 @@ DEFAULT_SPEC = "30,12m,3y,first"
 # their own rules, so a pattern that admitted them would let the tiers
 # delete files they don't govern.
 SNAPSHOT_NAME = re.compile(r"patchbay-(\d{8}-\d{6})\.html")
+# the alert-triggered copies (#66): a plain newest-n count of their own
+ALERT_SNAPSHOT_NAME = re.compile(r"patchbay-(\d{8}-\d{6})-alert\.html")
 
 # display order on /snapshots, shortest-lived first. "newest" is the file
 # most recently written, kept whatever the spec; "all" is a bare 0.
@@ -173,3 +175,26 @@ def classify(names: Iterable[str],
     kept = {n: keep[ts] for n, ts in stamped.items() if ts in keep}
     prune = sorted(n for n, ts in stamped.items() if ts not in keep)
     return kept, prune
+
+
+def alert_stamp_of(name: str) -> datetime | None:
+    """The timestamp an alert snapshot's file name carries, or None for any
+    other name, tiered snapshots included."""
+    m = ALERT_SNAPSHOT_NAME.fullmatch(name)
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1), "%Y%m%d-%H%M%S")
+    except ValueError:
+        return None
+
+
+def alert_prunable(names: Iterable[str], keep: int) -> list[str]:
+    """The alert snapshots beyond the newest `keep` (0 = unlimited). Names
+    that are not alert snapshots are never returned, so this count cannot
+    touch a file the tiers govern, as classify() cannot touch an alert one."""
+    if keep <= 0:
+        return []
+    stamped = sorted(((ts, n) for n in names if (ts := alert_stamp_of(n)) is not None),
+                     reverse=True)
+    return sorted(n for _, n in stamped[keep:])

@@ -395,7 +395,7 @@ def record_snapshot_failure(conn: sqlite3.Connection, error: str, *,
                             kind: str = "failed", trigger: str = "daily") -> None:
     """Note one snapshot that failed (`failed`) or was written but not
     delivered off-host (`undelivered`). `trigger` names the path: daily,
-    manual, or (later) alert."""
+    manual, or alert."""
     entries = snapshot_failures(conn)
     # a sequence number beside the time: two failures can share a
     # millisecond, and each is its own event

@@ -102,15 +102,25 @@ def cmd_poll(args: argparse.Namespace) -> int:
             due = False
     # notifications leave after the poll transaction commits, so a slow or
     # unreachable receiver never holds the database
+    sent: list[alerting.Notification] = []
     try:
         from .transports import WebhookDispatcher
 
         dispatcher = WebhookDispatcher(settings.db_path)
-        alerting.dispatch(notes, dispatcher)
+        sent = alerting.dispatch(notes, dispatcher)
         for line in dispatcher.lines:  # never carries a URL (transports._redact)
             say(line, err=line.startswith("[warn]"))
     except Exception as e:
         say(f"[warn] alert dispatch: {type(e).__name__}", err=True)
+    # snapshot on critical (#66): after dispatch, so a notification never
+    # waits on the renderer; its failure is recorded, never the poll's rc
+    try:
+        from . import snapshot as snap
+
+        for line in snap.take_alert_snapshot(settings, sent):
+            say(line, err=line.startswith("[warn]"))
+    except ImportError:  # no web extra installed — snapshots unavailable
+        pass
     # the daily snapshot runs after the poll transaction commits: it opens its
     # own connection and would otherwise contend with this one
     if due:

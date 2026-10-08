@@ -11,6 +11,7 @@ scrubbed on the way in, and the whole file is still treated as leakable.
 from __future__ import annotations
 
 import base64
+import json
 import re
 import shutil
 import time
@@ -21,7 +22,7 @@ import httpx
 from . import db
 from . import routed
 from .config import Settings
-from .retention import classify
+from .retention import alert_prunable, classify
 from .ports import port_kind
 
 # a line whose remainder follows one of these introduces a secret — keep the
@@ -191,15 +192,24 @@ def generate(settings: Settings) -> str:
 class DeliveryError(Exception):
     """The snapshot was written locally but couldn't be copied off-box. Raised
     only after the local file is safe, so callers report it without implying
-    the snapshot was lost."""
+    the snapshot was lost. `path` is that local file, when known."""
+
+    path: Path | None = None
 
 
-def write_snapshot(settings: Settings, out: str | None = None) -> Path:
+def write_snapshot(settings: Settings, out: str | None = None, *,
+                   alert_keep: int | None = None) -> Path:
     """Generate and write. With no explicit path: timestamped file in
     PATCHBAY_SNAPSHOT_DIR, plus a stable patchbay-latest.html copy (a fixed
     name is what a sync target or reverse proxy wants to point at), pruning
     timestamped snapshots no PATCHBAY_SNAPSHOT_KEEP tier claims, then
-    delivering to PATCHBAY_SNAPSHOT_DELIVER_DIR when one is configured."""
+    delivering to PATCHBAY_SNAPSHOT_DELIVER_DIR when one is configured.
+
+    With `alert_keep` (#66), the file is an alert snapshot,
+    patchbay-YYYYMMDD-HHMMSS-alert.html, and the alert snapshots beyond the
+    newest `alert_keep` (0 = unlimited) are pruned in both directories. The
+    tiers never see an alert snapshot, and the alert count never sees a
+    tiered one (retention.py)."""
     html = generate(settings)
     if out:
         path = Path(out)
@@ -208,16 +218,21 @@ def write_snapshot(settings: Settings, out: str | None = None) -> Path:
         return path
     d = Path(settings.snapshot_dir)
     d.mkdir(parents=True, exist_ok=True)
-    path = d / time.strftime("patchbay-%Y%m%d-%H%M%S.html")
+    name = "patchbay-%Y%m%d-%H%M%S" + ("-alert" if alert_keep is not None else "") + ".html"
+    path = d / time.strftime(name)
     path.write_text(html, encoding="utf-8", newline="\n")
     (d / "patchbay-latest.html").write_text(html, encoding="utf-8", newline="\n")
-    prune(settings, d)
+    prune(settings, d, alert_keep)
     if settings.snapshot_deliver_dir:
-        deliver(settings, path)
+        try:
+            deliver(settings, path, alert_keep)
+        except DeliveryError as e:
+            e.path = path
+            raise
     return path
 
 
-def deliver(settings: Settings, path: Path) -> None:
+def deliver(settings: Settings, path: Path, alert_keep: int | None = None) -> None:
     """Copy a finished snapshot to the off-box destination. Writes to a
     temporary name first and renames, so a half-copied 4 MB file is never
     what a sync client picks up."""
@@ -228,19 +243,22 @@ def deliver(settings: Settings, path: Path) -> None:
             tmp = dest / f".{name}.part"
             shutil.copyfile(path, tmp)
             tmp.replace(dest / name)
-        prune(settings, dest)
+        prune(settings, dest, alert_keep)
     except OSError as e:
         raise DeliveryError(f"{dest}: {e}") from e
 
 
-def prune(settings: Settings, d: Path) -> list[str]:
+def prune(settings: Settings, d: Path, alert_keep: int | None = None) -> list[str]:
     """Delete the timestamped snapshots in one directory that no retention
     tier claims; returns the names removed. Each directory is judged on its
     own files, so a delivery share that missed a night still keeps its own
-    first-of-month. An unparsed spec prunes nothing."""
-    if settings.snapshot_keep is None:
-        return []
-    _, doomed = classify((p.name for p in d.iterdir()), settings.snapshot_keep)
+    first-of-month. An unparsed spec prunes nothing. With `alert_keep`, the
+    alert snapshots beyond that count go too, judged on their own."""
+    names = [p.name for p in d.iterdir()]
+    doomed = (classify(names, settings.snapshot_keep)[1]
+              if settings.snapshot_keep is not None else [])
+    if alert_keep is not None:
+        doomed = doomed + alert_prunable(names, alert_keep)
     for name in doomed:
         (d / name).unlink()
     return doomed
@@ -264,3 +282,138 @@ def due_today(conn, settings: Settings) -> bool:
 
 def mark_done(conn) -> None:
     db.set_state(conn, "snapshot_day", time.strftime("%Y-%m-%d"))
+
+
+# -- snapshot on critical (#66, ADR-0003 Decision 7) --------------------------
+# A crit alert that is raised or escalated, and actually sent, takes a
+# snapshot after the poll commits, at most once per cooldown whatever raised
+# it. The settings are edited on the Rules tab of /alerts; the poller is a
+# fresh process each cycle, so the cooldown's clock lives in app_state too.
+
+ALERT_COOLDOWN_KEY = "alert_snapshot_cooldown"   # minutes; 0 = none
+ALERT_KEEP_KEY = "alert_snapshot_keep"           # count; 0 = unlimited
+ALERT_LAST_KEY = "alert_snapshot_at"             # epoch of the last attempt
+ALERT_LOG_KEY = "alert_snapshots"                # sidecar: file -> its cause
+ALERT_COOLDOWN_DEFAULT = 60
+ALERT_KEEP_DEFAULT = 10
+# bounds on the form: a week of cooldown, and a count far past any share
+ALERT_COOLDOWN_MAX = 7 * 24 * 60
+ALERT_KEEP_MAX = 1000
+# the sidecar names at most this many causes per file, and remembers at
+# most this many files: an unlimited keep count lists the oldest as unknown
+ALERT_CAUSES_MAX = 5
+ALERT_LOG_MAX = 200
+_TRIGGER_KINDS = ("raise", "escalate")
+
+
+def _state_int(conn, key: str, default: int) -> int:
+    try:
+        return max(0, int(db.get_state(conn, key) or default))
+    except ValueError:
+        return default
+
+
+def alert_snapshot_settings(conn) -> dict[str, int]:
+    """The effective cooldown (minutes) and keep count."""
+    return {"cooldown": _state_int(conn, ALERT_COOLDOWN_KEY, ALERT_COOLDOWN_DEFAULT),
+            "keep": _state_int(conn, ALERT_KEEP_KEY, ALERT_KEEP_DEFAULT)}
+
+
+def _form_int(form: dict[str, str], key: str, label: str, hi: int) -> int:
+    raw = (form.get(key) or "").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        raise ValueError(f"{label}: a whole number") from None
+    if not 0 <= n <= hi:
+        raise ValueError(f"{label}: from 0 to {hi}")
+    return n
+
+
+def update_alert_snapshot_settings(conn, form: dict[str, str]) -> None:
+    """Apply the Rules-tab form. Raises ValueError before writing anything."""
+    cooldown = _form_int(form, "cooldown", "cooldown", ALERT_COOLDOWN_MAX)
+    keep = _form_int(form, "keep", "keep", ALERT_KEEP_MAX)
+    db.set_state(conn, ALERT_COOLDOWN_KEY, str(cooldown))
+    db.set_state(conn, ALERT_KEEP_KEY, str(keep))
+
+
+def alert_triggers(sent) -> list:
+    """The notifications that call for a snapshot: a crit raised, or an
+    alert escalated to crit. Pass only what was dispatched, so a note that
+    went nowhere (route none, or silenced) never takes one."""
+    return [n for n in sent if n.kind in _TRIGGER_KINDS and n.severity == "crit"]
+
+
+def alert_log(conn) -> dict[str, dict]:
+    """The sidecar: alert snapshot file name -> {ts, alerts: [...]}."""
+    raw = db.get_state(conn, ALERT_LOG_KEY)
+    try:
+        entries = json.loads(raw) if raw else []
+    except ValueError:
+        return {}
+    if not isinstance(entries, list):
+        return {}
+    return {e["name"]: e for e in entries
+            if isinstance(e, dict) and isinstance(e.get("name"), str)}
+
+
+def _log_alert_snapshot(conn, name: str, ts: float, triggers: list) -> None:
+    # key, rule, severity, and the item's text: what the alerts page already
+    # shows, never a transport or its URL
+    causes = [{"key": n.key, "rule": n.rule, "kind": n.kind, "text": n.text[:200]}
+              for n in triggers[:ALERT_CAUSES_MAX]]
+    entries = list(alert_log(conn).values())
+    entries.append({"name": name, "ts": ts, "alerts": causes,
+                    "more": max(0, len(triggers) - ALERT_CAUSES_MAX)})
+    db.set_state(conn, ALERT_LOG_KEY, json.dumps(entries[-ALERT_LOG_MAX:]))
+
+
+def take_alert_snapshot(settings: Settings, sent, *, now: float | None = None) -> list[str]:
+    """Run after dispatch: write an alert snapshot when `sent` holds a crit
+    trigger and the cooldown has passed. Returns poll-output lines and never
+    raises: a failure is recorded for the snapshot-failed rule (trigger
+    `alert`) and the poll goes on."""
+    triggers = alert_triggers(sent)
+    if not triggers:
+        return []
+    now = db.now() if now is None else now
+    try:
+        with db.connect(settings.db_path) as conn:
+            cfg = alert_snapshot_settings(conn)
+            try:
+                last = float(db.get_state(conn, ALERT_LAST_KEY) or 0)
+            except ValueError:
+                last = 0.0
+            if cfg["cooldown"] and now - last < cfg["cooldown"] * 60:
+                until = time.strftime("%H:%M", time.localtime(last + cfg["cooldown"] * 60))
+                return [f"[ok]   alert snapshot: in cooldown until {until}"]
+            # the attempt starts the window, so a snapshot that keeps
+            # failing is one failure event per cooldown, not one per poll
+            db.set_state(conn, ALERT_LAST_KEY, repr(now))
+    except Exception as e:
+        return [f"[warn] alert snapshot: {type(e).__name__}: {e}"]
+
+    lines: list[str] = []
+    path: Path | None = None
+    failure = None
+    try:
+        path = write_snapshot(settings, alert_keep=cfg["keep"])
+        lines.append(f"[ok]   alert snapshot: {path}")
+    except DeliveryError as e:
+        path = e.path
+        lines.append(f"[warn] alert snapshot written but delivery failed: {e}")
+        failure = (e, "undelivered")
+    except Exception as e:
+        lines.append(f"[warn] alert snapshot failed: {e}")
+        failure = (e, "failed")
+    try:
+        with db.connect(settings.db_path) as conn:
+            if failure:
+                db.record_snapshot_failure(conn, failure[0], kind=failure[1],
+                                           trigger="alert")
+            if path is not None:
+                _log_alert_snapshot(conn, path.name, now, triggers)
+    except Exception as e:
+        lines.append(f"[warn] alert snapshot record: {type(e).__name__}: {e}")
+    return lines

@@ -296,7 +296,10 @@ def test_snapshots_page_shows_tiers_and_spec(clean_env, tmp_path):
     assert row.index("monthly, first") < row.index("</tr>")
     row = body[body.index("patchbay-20250102-033000.html"):]
     assert row.index("pruned next snapshot") < row.index("</tr>")
-    assert "-alert.html" not in body          # not a tiered snapshot
+    # not a tiered snapshot: listed only under its own heading (#66)
+    kept = body[body.index("<h2>Kept here</h2>"):body.index("<h2>Taken on alerts</h2>")]
+    assert "-alert.html" not in kept
+    assert "patchbay-20250102-091500-alert.html" in body
 
     clean_env.setenv("PATCHBAY_SNAPSHOT_KEEP", "1,12q")
     body = TestClient(app).get("/snapshots").text
