@@ -225,6 +225,7 @@ Each snapshot prunes both the local directory and the share by the tiers in
 months and 3 years, and the first snapshot ever taken. At about 5 MB each,
 leave the share at least 250 MB. If your sync client keeps deleted files in
 a trash or version history, pruned nightlies count against that quota too.
+Alert snapshots add up to their own keep count (default 10) on top.
 
 Check the tiers on `/snapshots`: each file shows the tier that keeps it, and
 the page states the effective spec. A spec that fails to parse prunes
