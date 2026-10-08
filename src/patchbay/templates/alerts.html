@@ -15,6 +15,8 @@
   <a class="{{ 'on' if tab == 'rules' }}" href="/alerts?tab=rules">Rules</a>
   <a class="{{ 'on' if tab == 'tunnels' }}" href="/alerts?tab=tunnels">Tunnels</a>
   <a class="{{ 'on' if tab == 'transports' }}" href="/alerts?tab=transports">Transports</a>
+  <a class="{{ 'on' if tab == 'silenced' }}" href="/alerts?tab=silenced">Silenced{% if silenced_items %} ({{ silenced_items | length }}){% endif %}</a>
+  <a class="{{ 'on' if tab == 'silences' }}" href="/alerts?tab=silences">Silences</a>
 </nav>
 
 {% if tab == 'rules' %}
@@ -23,6 +25,8 @@
 {% include "_alert_tunnels.html" %}
 {% elif tab == 'transports' %}
 {% include "_alert_transports.html" %}
+{% elif tab in ('silenced', 'silences') %}
+{% include "_alert_silences.html" %}
 {% else %}
 <div class="filters">
   <a class="fchip {{ 'on' if not category and not severity }}" href="{{ base[:-1] }}">all</a>
@@ -68,7 +72,7 @@ clears; history is kept for 90 days.</p>
 {% if items %}
 <div class="scroll" style="max-width: 900px">
 <table>
-  <tr><th></th><th>category</th><th>what</th><th>for</th></tr>
+  <tr><th></th><th>category</th><th>what</th><th>for</th><th></th></tr>
   {% for it in items %}
   <tr>
     <td><span class="dot {{ {'crit': 'down', 'info': 'info'}.get(it.severity, 'unknown') }}"
@@ -76,6 +80,7 @@ clears; history is kept for 90 days.</p>
     <td class="muted">{{ categories[it.category] }}</td>
     <td><a href="{{ it.href }}">{{ it.text }}</a></td>
     <td class="muted mono" title="how long this has been firing (recorded at poll time)">{{ it.since }}{% if it.alert_state == 'pending' %} · pending{% endif %}</td>
+    <td>{% include "_silence_button.html" %}</td>
   </tr>
   {% endfor %}
 </table>

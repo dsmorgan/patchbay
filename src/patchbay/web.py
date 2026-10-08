@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import alerting, db, expected_tunnels, transports
+from . import alerting, db, expected_tunnels, silences, transports
 from . import routed
 from .attention import (CATEGORIES, STALE_MIN, attention_items, device_totals, drift_report,
                         human_age, human_speed, ip_sort_key, ipam_link,
@@ -289,8 +289,10 @@ def dashboard(request: Request):
         db.init(conn)
         settings = load_settings()
         exceptions, checked = attention_items(conn, settings)
-        # the cards below are the device-state UI; /alerts lists device items
-        exceptions = [i for i in exceptions if i["category"] != "device"]
+        # the cards below are the device-state UI; /alerts lists device items.
+        # A silenced item is known and fine; /alerts lists it on its own tab.
+        exceptions = [i for i in exceptions
+                      if i["category"] != "device" and not i["silenced"]]
         stamp_first_seen(conn, exceptions)
         for it in exceptions:
             it["since"] = _since(it["first_seen"])
@@ -393,17 +395,26 @@ def alerts(request: Request, category: str | None = None,
     attention list with how long each item has been firing; History is the
     alert engine's event log. Tab and filters are URL state, like the map.
     Active computes the rules live rather than reading the alerts table, so
-    it matches the Overview even before the first poll has run."""
-    if tab not in ("active", "history", "rules", "tunnels", "transports"):
+    it matches the Overview even before the first poll has run. Silenced
+    lists the items a silence covers, beside the silence; Silences edits
+    them (#62)."""
+    if tab not in ("active", "history", "rules", "tunnels", "transports",
+                   "silenced", "silences"):
         tab = "active"
     conn = _conn()
     try:
         db.init(conn)
         settings = load_settings()
-        items, checked = attention_items(conn, settings)
-        stamp_first_seen(conn, items)
-        for it in items:
+        every, checked = attention_items(conn, settings)
+        stamp_first_seen(conn, every)
+        for it in every:
             it["since"] = _since(it["first_seen"])
+            it["scopes"] = silences.scopes_for(it)
+        items = [it for it in every if not it["silenced"]]
+        silenced = [it for it in every if it["silenced"]]
+        for it in silenced:
+            it["silence_what"] = silences.describe(it["silenced"])
+            it["silence_until"] = silences.until_text(it["silenced"])
         shown = [it for it in items
                  if (not category or it["category"] == category)
                  and (not severity or it["severity"] == severity)]
@@ -437,7 +448,10 @@ def alerts(request: Request, category: str | None = None,
             **({"expected": expected_tunnels.load(conn),
                 "tunnel_types": expected_tunnels.TYPES}
                if tab == "tunnels" else {}),
+            "silenced_items": silenced, "silence_kinds": silences.KINDS,
+            "durations": silences.DURATIONS, "default_hours": silences.DEFAULT_HOURS,
             **(transports.page_context(conn) if tab == "transports" else {}),
+            **(silences.page_context(conn, settings) if tab == "silences" else {}),
         })
     finally:
         conn.close()
@@ -673,6 +687,64 @@ async def alert_routes(request: Request):
     finally:
         conn.close()
     return _to_transports()
+
+
+# -- silences (#62) ------------------------------------------------------------
+# Plain forms, covered by the cross-origin POST guard in auth.py like the
+# rest of /alerts. Every value is validated before anything is written.
+
+def _silence_categories() -> set[str]:
+    return set(CATEGORIES) | {r.category for r in alerting.RULES.values() if r.category}
+
+
+def _silence_back(f: dict[str, str]):
+    from fastapi.responses import RedirectResponse
+
+    # a fixed map, never the posted value: the form says which tab it came
+    # from, and a redirect must not go anywhere a form field names
+    back = {"active": "/alerts", "silences": "/alerts?tab=silences"}
+    return RedirectResponse(back.get(f.get("back", ""), "/alerts?tab=silences"),
+                            status_code=303)
+
+
+@app.post("/alerts/silences")
+async def silence_add(request: Request):
+    """Add a silence, from the Silences tab or an Active row's button.
+    `created_by` is what the auth gate knows: the OIDC identity when the
+    site signs in that way, else "operator"."""
+    f = await _form(request)
+    settings = load_settings()
+    who = getattr(request.state, "auth", None) if settings.auth_mode == "oidc" else None
+    try:
+        row = silences.parse(f, now=db.now(), created_by=who or "operator",
+                             categories=_silence_categories())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    conn = _conn()
+    try:
+        db.init(conn)
+        silences.add(conn, row)
+        conn.commit()
+    finally:
+        conn.close()
+    return _silence_back(f)
+
+
+@app.post("/alerts/silences/{sid}/delete")
+async def silence_delete(sid: int, request: Request):
+    """Remove a silence. What it covered returns on the next poll, as a
+    new raise if the condition still holds. PATCHBAY_EXPECT rows have no
+    numeric id and cannot be addressed here; they are edited on /ops."""
+    f = await _form(request)
+    conn = _conn()
+    try:
+        db.init(conn)
+        if not silences.delete(conn, sid):
+            raise HTTPException(404, "no such silence")
+        conn.commit()
+    finally:
+        conn.close()
+    return _silence_back(f)
 
 
 TOPO_ROLES = ("firewall", "router", "switch", "hypervisor", "ap", "unmanaged-switch")
