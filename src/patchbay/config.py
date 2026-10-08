@@ -98,9 +98,12 @@ DECLARATION_HELP = {
         "example": "core1:1/0/16",
     },
     "PATCHBAY_EXPECT": {
-        "what": "Expected conditions, silenced on the Overview's attention "
-                "list: a port whose link is legitimately slow, or a whole "
-                "device (bare name) to quiet every item naming it.",
+        "what": "Legacy: expected conditions, read as permanent silences. "
+                "A port whose link is legitimately slow, or a whole device "
+                "(bare name) to quiet every item naming it. New silences, "
+                "with an expiry and a reason, belong on the Silences tab of "
+                "the Alerts page (/alerts?tab=silences), which also lists "
+                "these.",
         "syntax": "device:interface or device, comma-separated",
         "example": "core1:1/0/16,hyp1",
     },
@@ -172,11 +175,11 @@ class Settings:
     # Site-provided identity aliases, e.g. a chassis serial no source maps:
     # PATCHBAY_ALIASES="ABC123456=core1,oldname=newname"
     aliases: dict[str, str]
-    # Conditions the operator has declared expected, so the Overview's
-    # attention list stays quiet about them: "dev:iface" silences the
-    # slow-link item for that port (a management drop that is legitimately
-    # 100M); a bare "dev" silences every item that names the device. An
-    # alert nobody can silence trains everyone to ignore the list.
+    # Conditions the operator has declared expected: legacy input to the
+    # silence list (silences.py, #62), each entry a permanent silence.
+    # "dev:iface" silences items at that port (a management drop that is
+    # legitimately 100M); a bare "dev" silences every item that names the
+    # device. An alert nobody can silence trains everyone to ignore the list.
     # PATCHBAY_EXPECT="core1:1/0/16,hyp1"
     expected: set[str]
     # Declared unmanaged switches (ports the operator knows feed one), shown
