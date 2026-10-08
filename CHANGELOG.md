@@ -9,6 +9,12 @@ put.
 ## [Unreleased]
 
 ### Added
+- Silences (#62). Silence an alert from its row on `/alerts`, or add one on
+  the **Silences** tab, by device, port, category, or exact alert, for a
+  duration or permanently, with a reason. A silenced alert stays visible on
+  the **Silenced** tab, sends nothing, and releases a Kuma monitor; an alert
+  already announced still sends its clear. `PATCHBAY_EXPECT` entries show as
+  permanent read-only silences and behave as before.
 - Port-counter canaries (#64). A port whose error rate jumps to 100 times its
   own 7-day baseline, and at least 50 per second, raises a warning after two
   polls. LibreNMS error rates only: discard rates are not collected (see #86).
