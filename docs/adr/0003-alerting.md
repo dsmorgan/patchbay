@@ -212,6 +212,14 @@ so canaries ride the existing 7-day retention and index. UniFi reports
 absolute counters per port, which needs a delta against the previous poll;
 that is a follow-up, and the rule works with whatever ports have samples.
 
+*Corrected in #64:* only the error rates are on LibreNMS's `ports` table.
+The discard rates live in `ports_statistics` (split out in 2018), which the
+ports listing cannot select: it validates `columns` against `ports` and
+refuses the whole request on an unknown one. The only route that returns
+them is per port (`/ports/{id}?with=statistics`). The collector therefore
+fills the two error columns; the discard columns exist and stay NULL until
+a follow-up collects them.
+
 **Baseline options**
 
 | option | how | why not, or why |
@@ -346,6 +354,9 @@ Each is answered in the issue that implements the decision it belongs to.
 3. Canary floor and multiplier: the defaults above are reasoned, not
    measured. A week of samples from the reference site, read before the
    rule ships, settles them. Canaries issue.
+   *Deferred in #64:* the counters are not collected before #64, so no
+   week of samples could exist when it shipped. The ADR defaults ship as
+   provisional; tune them on the Rules tab once a week has accrued.
 4. Should `config changed` route to a notifying transport by default? It
    is the one informational event most people want to see, and the one
    most likely to train them to ignore the channel. Transports issue.
