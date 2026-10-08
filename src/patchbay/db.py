@@ -230,7 +230,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     rule TEXT NOT NULL,
     category TEXT NOT NULL,
     severity TEXT NOT NULL,
-    state TEXT NOT NULL,       -- pending | active | cleared
+    state TEXT NOT NULL,       -- pending | active | silenced | cleared
     polls INTEGER NOT NULL DEFAULT 1,  -- consecutive polls held, for `for`
     raised_at REAL NOT NULL,
     active_at REAL,
@@ -270,9 +270,10 @@ CREATE TABLE IF NOT EXISTS alert_transports (
     failures INTEGER NOT NULL DEFAULT 0  -- consecutive, for the 3-strike item
 );
 CREATE TABLE IF NOT EXISTS alert_silences (
-    id INTEGER PRIMARY KEY,    -- schema only until #62
-    kind TEXT NOT NULL,        -- key | device | port | category
-    scope TEXT NOT NULL,       -- the key pattern, device, dev:port, category
+    id INTEGER PRIMARY KEY,    -- silences.py (#62); PATCHBAY_EXPECT adds
+    kind TEXT NOT NULL,        -- read-only rows of its own, never stored
+                               -- here. kind: key | device | port | category
+    scope TEXT NOT NULL,       -- the exact key, device, dev:port, category
     until REAL,                -- NULL = permanent
     reason TEXT,
     created_by TEXT,

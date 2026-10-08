@@ -9,6 +9,18 @@ set against the `alerts` table and walks each key through the lifecycle:
     clear    key absent now, present before -> row marked cleared, kept
     event    a one-shot rule: raised, active and cleared in one cycle
 
+Silences (#62, silences.py) add one state. An item a silence covers is
+still stored, as `silenced`, and nothing is sent about it while it is:
+
+    silence  pending or active -> silenced; no clear is sent, because the
+             condition did not end. Kuma reads only `active`, so the
+             monitor stops being held down on the same poll.
+    hold     silenced and still covered -> stays silenced, text refreshed
+    expire   silenced and no longer covered, condition still holds -> the
+             same row raises as new: raised_at and the `for` count restart
+             and the one notification is a `raise`, never a clear first
+    end      silenced and the condition ends -> cleared as history only
+
 Every transition lands in `alert_events`, which is the History tab. What
 the engine decides to send comes back as `Notification`s; the caller hands
 them to `dispatch()` after the poll transaction commits, so an unreachable
@@ -28,6 +40,7 @@ from . import db
 from .attention import (CANARY_CLEAR, CANARY_FLOOR, CANARY_FOR, CANARY_MULTIPLIER,
                         CANARY_WARMUP_H, DEVICE_DOWN_ROLES, DEVICE_STALE_S,
                         DOWN_STATES, GATEWAY_LOSS_PCT, attention_items)
+from .silences import describe
 
 # History retention: a quarter covers "has this happened before?", and the
 # count cap bounds a flapping rule that would otherwise fill 90 days.
@@ -337,6 +350,13 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
         rule = _rule_for(name, catalog, config)
         if not rule["enabled"]:
             continue
+        silence = it.get("silenced")
+        if silence:
+            # checked before inhibition: an operator's silence must release
+            # a Kuma monitor even while a down device holds the item
+            seen.add(key)
+            _silenced(conn, it, name, rule, open_.get(key), silence, now)
+            continue
         if inhibited(it, down):
             # neither raised nor cleared: when the device returns, a port
             # that is still down picks up where it was
@@ -366,6 +386,22 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             continue
 
         row = open_.get(key)
+        if row is not None and row["state"] == "silenced":
+            # the silence expired or was removed while the condition held:
+            # it raises as new on the same row, so the receiver hears one
+            # raise and no clear for a condition that never ended
+            state = "active" if rule["for"] <= 1 else "pending"
+            conn.execute(
+                "UPDATE alerts SET severity=?, text=?, href=?, polls=1, state=?, "
+                "raised_at=?, active_at=?, last_notified_at=? WHERE id=?",
+                (a["severity"], a["text"], a["href"], state, now,
+                 now if state == "active" else None,
+                 now if state == "active" else None, row["id"]))
+            _event(conn, row["id"], now, "raised", a, "silence ended")
+            if state == "active":
+                _event(conn, row["id"], now, "active", a)
+                notes.append(_note("raise", a, now, rule["route"]))
+            continue
         if row is None:
             raised = legacy.get(key, now)
             state = "active" if rule["for"] <= 1 else "pending"
@@ -419,6 +455,10 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
         # pending alert was never announced: its clear is history, not news.
         if not rule["enabled"]:
             detail = "rule disabled"
+        elif row["state"] == "silenced":
+            # whatever was announced before the silence, the operator asked
+            # not to hear about this item; the clear is history only
+            detail = "silenced"
         elif row["state"] != "active":
             detail = "never active"
         else:
@@ -430,6 +470,39 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
     if legacy:
         conn.execute("DELETE FROM app_state WHERE key = ?", (_LEGACY_FIRST_SEEN,))
     return notes
+
+
+def _silenced(conn, it: dict, name: str, rule: dict, row, silence: dict,
+              now: float) -> None:
+    """One silenced item: stored and marked, never notified."""
+    a = {"key": it["key"], "rule": name, "category": it["category"],
+         "severity": rule["severity"] or it["severity"],
+         "text": it.get("text"), "href": it.get("href")}
+    why = describe(silence) + (f": {silence['reason']}" if silence.get("reason") else "")
+    if rule["event"]:
+        # a one-shot fires once whether or not anyone hears it, so a later
+        # unsilence does not replay an occurrence that is already past
+        if conn.execute("SELECT 1 FROM alerts WHERE key = ?", (it["key"],)).fetchone():
+            return
+        cur = conn.execute(
+            "INSERT INTO alerts (key, rule, category, severity, state, polls, "
+            "raised_at, cleared_at, text, href) VALUES (?,?,?,?, 'cleared', 1, ?,?,?,?)",
+            (it["key"], name, a["category"], a["severity"], now, now, a["text"], a["href"]))
+        _event(conn, cur.lastrowid, now, "silenced", a, why)
+        _event(conn, cur.lastrowid, now, "cleared", a, "silenced")
+        return
+    if row is None:
+        cur = conn.execute(
+            "INSERT INTO alerts (key, rule, category, severity, state, polls, "
+            "raised_at, text, href) VALUES (?,?,?,?, 'silenced', 1, ?,?,?)",
+            (it["key"], name, a["category"], a["severity"], now, a["text"], a["href"]))
+        _event(conn, cur.lastrowid, now, "silenced", a, why)
+        return
+    conn.execute("UPDATE alerts SET severity=?, text=?, href=?, polls=?, state='silenced' "
+                 "WHERE id=?", (a["severity"], a["text"], a["href"], row["polls"] + 1,
+                                row["id"]))
+    if row["state"] != "silenced":
+        _event(conn, row["id"], now, "silenced", a, why)
 
 
 def _legacy_first_seen(conn: sqlite3.Connection) -> dict[str, float]:
@@ -447,7 +520,7 @@ def run(conn: sqlite3.Connection, settings, *, now: float | None = None) -> list
     discarding the poll's data; the caller commits and then dispatches."""
     conn.execute("SAVEPOINT alerting")
     try:
-        items, _ = attention_items(conn, settings)
+        items, _ = attention_items(conn, settings, now=now)
         notes = evaluate(conn, items, now=now)
         conn.execute("RELEASE alerting")
     except Exception:
@@ -468,7 +541,8 @@ def dispatch(notes: list[Notification], dispatcher: Dispatcher | None = None) ->
 def prune_history(conn: sqlite3.Connection, now: float | None = None) -> None:
     """Retention for the history: events older than EVENT_KEEP_DAYS go, then
     all but the newest EVENT_KEEP_MAX. Cleared alerts age out on the same
-    window; an open alert is never pruned, however old."""
+    window; an open alert is never pruned, however old. A silence that
+    expired that long ago goes too: it no longer explains any history."""
     cutoff = (db.now() if now is None else now) - EVENT_KEEP_DAYS * 86400
     conn.execute("DELETE FROM alert_events WHERE ts < ?", (cutoff,))
     conn.execute(
@@ -476,4 +550,6 @@ def prune_history(conn: sqlite3.Connection, now: float | None = None) -> None:
         "(SELECT id FROM alert_events ORDER BY ts DESC, id DESC LIMIT ?)",
         (EVENT_KEEP_MAX,))
     conn.execute("DELETE FROM alerts WHERE state = 'cleared' AND cleared_at < ?",
+                 (cutoff,))
+    conn.execute("DELETE FROM alert_silences WHERE until IS NOT NULL AND until < ?",
                  (cutoff,))

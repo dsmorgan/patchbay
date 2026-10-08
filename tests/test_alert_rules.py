@@ -70,8 +70,10 @@ def test_device_down_roles_parameter_and_expected(conn, clean_env):
                  (json.dumps({"for": 1, "roles": ["switch"]}),))
     assert [i["key"] for i in _items(conn, load_settings(), "device-down")] == ["device:sw1"]
 
+    # still computed, but silenced (#62): the engine stores it, quietly
     clean_env.setenv("PATCHBAY_EXPECT", "sw1")
-    assert _items(conn, load_settings(), "device-down") == []
+    [it] = _items(conn, load_settings(), "device-down")
+    assert it["silenced"]["scope"] == "sw1"
 
 
 def test_overview_hides_device_items_that_alerts_shows(clean_env, tmp_path):
@@ -132,7 +134,8 @@ def test_link_down_skips_admin_down_and_expected(conn, clean_env):
     conn.execute("UPDATE interfaces SET admin_status = 'up' WHERE name = '1/0/2'")
     assert len(_items(conn, load_settings(), "link-down")) == 1
     clean_env.setenv("PATCHBAY_EXPECT", "sw1:1/0/2")
-    assert _items(conn, load_settings(), "link-down") == []
+    [it] = _items(conn, load_settings(), "link-down")
+    assert it["silenced"]["kind"] == "port"
 
 
 def test_down_switch_is_one_alert_not_one_per_cable(conn, settings):
