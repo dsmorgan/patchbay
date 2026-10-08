@@ -198,7 +198,7 @@ class DeliveryError(Exception):
 
 
 def write_snapshot(settings: Settings, out: str | None = None, *,
-                   alert_keep: int | None = None) -> Path:
+                   alert_keep: int | None = None, stamp: float | None = None) -> Path:
     """Generate and write. With no explicit path: timestamped file in
     PATCHBAY_SNAPSHOT_DIR, plus a stable patchbay-latest.html copy (a fixed
     name is what a sync target or reverse proxy wants to point at), pruning
@@ -209,7 +209,9 @@ def write_snapshot(settings: Settings, out: str | None = None, *,
     patchbay-YYYYMMDD-HHMMSS-alert.html, and the alert snapshots beyond the
     newest `alert_keep` (0 = unlimited) are pruned in both directories. The
     tiers never see an alert snapshot, and the alert count never sees a
-    tiered one (retention.py)."""
+    tiered one (retention.py). `stamp` names the file from that time rather
+    than the clock after rendering: an alert snapshot passes its claimed
+    cooldown time, which no other claim shares to the second."""
     html = generate(settings)
     if out:
         path = Path(out)
@@ -219,7 +221,7 @@ def write_snapshot(settings: Settings, out: str | None = None, *,
     d = Path(settings.snapshot_dir)
     d.mkdir(parents=True, exist_ok=True)
     name = "patchbay-%Y%m%d-%H%M%S" + ("-alert" if alert_keep is not None else "") + ".html"
-    path = d / time.strftime(name)
+    path = d / time.strftime(name, time.localtime(stamp))
     path.write_text(html, encoding="utf-8", newline="\n")
     (d / "patchbay-latest.html").write_text(html, encoding="utf-8", newline="\n")
     prune(settings, d, alert_keep)
@@ -339,9 +341,12 @@ def _claim_cooldown(conn, now: float, cooldown_min: int) -> float | None:
             last = float(db.get_state(conn, ALERT_LAST_KEY) or 0)
         except ValueError:
             last = 0.0
-        if cooldown_min and now - last < cooldown_min * 60:
+        # at least a second even with no cooldown: the file is named from
+        # the claimed second, so two claims must never share one
+        window = max(cooldown_min * 60, 1)
+        if now - last < window:
             conn.rollback()
-            return last + cooldown_min * 60
+            return last + window
         # the attempt starts the window, so a snapshot that keeps failing is
         # one failure event per cooldown, not one per poll
         db.set_state(conn, ALERT_LAST_KEY, repr(now))
@@ -394,7 +399,7 @@ def take_alert_snapshot(settings: Settings, notes, *, now: float | None = None) 
     path: Path | None = None
     failure = None
     try:
-        path = write_snapshot(settings, alert_keep=settings.alert_snapshot_keep)
+        path = write_snapshot(settings, alert_keep=settings.alert_snapshot_keep, stamp=now)
         lines.append(f"[ok]   alert snapshot: {path}")
     except DeliveryError as e:
         path = e.path
