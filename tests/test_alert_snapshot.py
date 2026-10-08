@@ -136,6 +136,29 @@ def test_a_crit_routed_nowhere_still_snapshots(env):
     assert len(_alert_files(env / "snaps")) == 1
 
 
+def test_a_silenced_crit_takes_no_snapshot(env):
+    """Silences (#62) act in the engine: a silenced item yields no
+    notification, raise or escalation, so it never reaches the trigger.
+    Through the real path: silences.apply, evaluate, then the snapshot."""
+    from patchbay import alerting, silences
+
+    s = load_settings()
+    it = {"key": "device:ap1", "rule": "device-down", "category": "device",
+          "severity": "crit", "text": "ap1 is down", "href": "/device/ap1",
+          "devices": ["ap1"]}
+    with pdb.connect(str(env / "test.db")) as c:
+        silences.add(c, {"kind": "device", "scope": "ap1", "until": None,
+                         "reason": "maintenance", "created_by": "operator",
+                         "created_at": T0})
+        items = [dict(it)]
+        silences.apply(c, items, s, T0)
+        notes = alerting.evaluate(c, items, now=T0)
+        assert [r["state"] for r in c.execute("SELECT state FROM alerts")] == ["silenced"]
+    assert notes == []
+    assert snapshot.take_alert_snapshot(s, notes, now=T0) == []
+    assert _alert_files(env / "snaps") == []
+
+
 def test_concurrent_callers_take_one_snapshot(env, monkeypatch):
     """The poller and /ops/poll can finish at once: the cooldown claim is
     atomic, so exactly one writes and the other reports the cooldown."""

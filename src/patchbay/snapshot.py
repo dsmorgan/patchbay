@@ -307,8 +307,7 @@ def alert_triggers(notes) -> list:
     alert escalated to crit. Pass the engine's notes before routing: a crit
     routed `none` still takes one (the owner's call on #66), and a silenced
     alert (#62) yields no note, so it never does."""
-    return [n for n in notes if n.kind in _TRIGGER_KINDS and n.severity == "crit"
-            and not getattr(n, "silenced", False)]
+    return [n for n in notes if n.kind in _TRIGGER_KINDS and n.severity == "crit"]
 
 
 def alert_log(conn) -> dict[str, dict]:
