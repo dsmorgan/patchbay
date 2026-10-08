@@ -965,6 +965,68 @@ def test_librenms_hardware_alias_corrected(conn, clean_env, monkeypatch):
     assert dev is not None and dev["vendor"] == "UAP-AC-Pro", dev
 
 
+class _LnmsRatesClient(_LnmsClient):
+    """LibreNMS API stub: one switch whose ports listing answers with the
+    columns asked for, the way get_device_ports selects them."""
+    urls: list[str] = []
+    port = {"port_id": 7, "ifName": "1/0/5", "ifIndex": 5, "ifOperStatus": "up",
+            "ifAdminStatus": "up", "ifSpeed": 1_000_000_000,
+            "ifInOctets_rate": 1000, "ifOutOctets_rate": 2000,
+            "ifInErrors_rate": 0, "ifOutErrors_rate": 3,
+            # ports_statistics columns: never selectable through this route
+            "ifInDiscards_rate": 11, "ifOutDiscards_rate": 4200}
+
+    def get(self, url, **kw):
+        type(self).urls.append(url)
+        outer = self
+
+        class R:
+            status_code = 200
+            def raise_for_status(self_): pass
+            def json(self_):
+                if url.endswith("/devices"):
+                    return {"devices": [{"device_id": 1, "sysName": "sw1",
+                                         "os": "netgear", "status": 1,
+                                         "disabled": 0}]}
+                if "/ports?columns=" in url:
+                    cols = url.split("columns=", 1)[1].split(",")
+                    return {"ports": [{k: v for k, v in outer.port.items()
+                                       if k in cols}]}
+                return {"links": [], "vlans": [], "ports_fdb": []}
+        return R()
+
+
+def test_librenms_ports_query_stores_error_rates(conn, clean_env, monkeypatch):
+    """#64: the ports query asks for the error rates, and the sample lands in
+    rate_history per second beside the bit rates. It must not ask for the
+    discard rates: LibreNMS keeps them in ports_statistics and refuses a
+    ports listing that names a column `ports` lacks."""
+    from patchbay.collectors.librenms import LibreNmsCollector
+    _LnmsRatesClient.urls = []
+    monkeypatch.setattr(httpx, "Client", _LnmsRatesClient)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    [q] = [u for u in _LnmsRatesClient.urls if "/ports?columns=" in u]
+    cols = q.split("columns=", 1)[1].split(",")
+    assert {"ifInErrors_rate", "ifOutErrors_rate"} <= set(cols)
+    assert not {"ifInDiscards_rate", "ifOutDiscards_rate"} & set(cols)
+    row = conn.execute("SELECT * FROM rate_history WHERE interface = '1/0/5'").fetchone()
+    assert (row["in_bps"], row["out_bps"]) == (8000, 16000)
+    assert (row["in_errors"], row["out_errors"]) == (0.0, 3.0)
+    assert (row["in_discards"], row["out_discards"]) == (None, None)
+
+
+def test_librenms_rate_sample_parses_every_counter():
+    """A payload that does carry the discard rates (a later source, or a
+    LibreNMS that moves them) maps each onto its own column."""
+    from patchbay.collectors.librenms import _rate_sample
+    assert _rate_sample({"ifInOctets_rate": 10, "ifInErrors_rate": 1,
+                         "ifOutErrors_rate": 2, "ifInDiscards_rate": 3,
+                         "ifOutDiscards_rate": 4}) == (80, None, 1.0, 2.0, 3.0, 4.0)
+    assert _rate_sample({"ifOutDiscards_rate": 5}) == (
+        None, None, None, None, None, 5.0)          # counters alone still sample
+    assert _rate_sample({"ifName": "1/0/1"}) is None
+
+
 # --- opnsense: firewall config history (#23) ---------------------------------
 
 _CFG_XML = """<?xml version="1.0"?>
