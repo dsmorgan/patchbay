@@ -281,7 +281,7 @@ def test_failed_evaluate_rolls_back_only_alerting(conn, monkeypatch):
                   "severity) VALUES (1, 'raised', 'k', 'r', 'link', 'warn')")
         raise RuntimeError("engine bug")
 
-    monkeypatch.setattr(alerting, "attention_items", lambda c, s: ([], []))
+    monkeypatch.setattr(alerting, "attention_items", lambda c, s, **kw: ([], []))
     monkeypatch.setattr(alerting, "evaluate", boom)
 
     with pytest.raises(RuntimeError):

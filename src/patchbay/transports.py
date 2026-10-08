@@ -346,8 +346,8 @@ def _request(client: httpx.Client, t, *, status: str | None = None, msg: str = "
 
 def kuma_alerts(conn: sqlite3.Connection, default: Route | None) -> dict[int, list]:
     """Active alerts per transport they hold down. Only `active` counts:
-    pending has not held long enough, and a silenced alert (#62) is not
-    news."""
+    pending has not held long enough, and a silenced alert (#62) has its
+    own state, so a silence releases the monitor on the next push."""
     routes = rule_routes(conn)
     out: dict[int, list] = {}
     for a in conn.execute("SELECT * FROM alerts WHERE state = 'active' ORDER BY raised_at"):

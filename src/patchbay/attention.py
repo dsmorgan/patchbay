@@ -22,7 +22,7 @@ import re
 import sqlite3
 from urllib.parse import quote
 
-from . import db
+from . import db, silences
 
 STALE_MIN = 15  # same rule the top bar uses
 
@@ -261,21 +261,25 @@ def drift_report(conn: sqlite3.Connection, settings) -> dict:
     }
 
 
-def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], list[str]]:
+def attention_items(conn: sqlite3.Connection, settings, *,
+                    now: float | None = None) -> tuple[list[dict], list[str]]:
     """One flat, ordered list of items worth a look, each linking to the page
     that owns the answer — not pre-categorized cards (issue #13). Rules only
     speak when they can actually check something, so `checked` names only
     the checks that ran and the all-clear line can only claim what it
     verified. Device state is category `device`, which the Overview filters
     out because its cards ARE the device-state UI; /alerts and the alert
-    channel show it. Anything here can be silenced by declaring it expected
-    (PATCHBAY_EXPECT)."""
+    channel show it.
+
+    Every item is returned, silenced or not: `silenced` holds the silence
+    that covers it (silences.py, which also reads PATCHBAY_EXPECT), or
+    None. Each surface decides what a silenced item means for it."""
     items: list[dict] = []
     checked: list[str] = []
 
     # slow-link: the better-known end's speed through speed_tier() — a link
     # with no known speed is not slow, same rule the map uses. A port (or a
-    # whole device) declared expected keeps its legitimately-slow link quiet.
+    # whole device) silenced keeps its legitimately-slow link quiet.
     links = conn.execute("SELECT * FROM links ORDER BY a_device, a_interface").fetchall()
     if links:
         checked.append("no unexpected slow links")
@@ -290,11 +294,6 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
             tier = speed_tier(bps)
             if not tier:
                 continue
-            names = {l["a_device"], l["b_device"],
-                     f"{l['a_device']}:{l['a_interface']}",
-                     f"{l['b_device']}:{l['b_interface']}"}
-            if names & settings.expected:
-                continue
             items.append({
                 "rule": "slow-link",
                 "key": f"link:{l['a_device']}:{l['a_interface']}:"
@@ -304,6 +303,8 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
                 "text": f"{l['a_device']} {l['a_interface']} ↔ "
                         f"{l['b_device']} {l['b_interface']} runs at {human_speed(bps)}",
                 "href": f"/topology?focus={l['a_device']}",
+                "ports": [(l["a_device"], l["a_interface"]),
+                          (l["b_device"], l["b_interface"])],
             })
 
     # drift: only when the site has IPAM at all — no IPAM, no claim. One
@@ -341,7 +342,7 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
                 "href": "/ops",
             })
 
-    now = db.now()
+    now = db.now() if now is None else now
     items += _device_down(conn, settings, now)
     items += _link_down(conn, settings, checked)
     items += _gateway_degraded(conn, settings, now, checked)
@@ -372,6 +373,7 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
                 })
 
     items = _apply_rule_settings(conn, items)
+    silences.apply(conn, items, settings, now)
     order = {"crit": 0, "warn": 1}
     items.sort(key=lambda i: order.get(i["severity"], 2))  # crit first, order kept
     return items, checked
@@ -405,7 +407,7 @@ def _device_down(conn, settings, now: float) -> list[dict]:
     out = []
     for r in conn.execute("SELECT name, role, status, last_seen FROM devices "
                           "ORDER BY name"):
-        if (r["role"] or "").lower() not in roles or r["name"] in settings.expected:
+        if (r["role"] or "").lower() not in roles:
             continue
         status = (r["status"] or "").lower()
         # disabled in the NMS on purpose: a decision, not a fault. It stays
@@ -424,7 +426,7 @@ def _device_down(conn, settings, now: float) -> list[dict]:
             "rule": "device-down", "key": f"device:{r['name']}",
             "category": "device", "severity": "crit",
             "text": f"{r['role']} {r['name']} {what}",
-            "href": f"/device/{r['name']}",
+            "href": f"/device/{r['name']}", "devices": [r["name"]],
         })
     return out
 
@@ -457,9 +459,6 @@ def _link_down(conn, settings, checked: list[str]) -> list[dict]:
         key = "link-down:" + ":".join(f"{d}:{i}" for d, i in ends)
         if not down or key in seen:
             continue
-        names = {d for d, _ in ends} | {f"{d}:{i}" for d, i in ends}
-        if names & settings.expected:
-            continue
         seen.add(key)
         (ad, ai), (bd, bi) = ends
         out.append({
@@ -489,8 +488,6 @@ def _gateway_degraded(conn, settings, now: float, checked: list[str]) -> list[di
         limit = GATEWAY_LOSS_PCT
     out = []
     for g in gws:
-        if g["name"] in settings.expected:
-            continue
         status = (g["status"] or "").lower()
         loss = _loss_pct(g["loss"])
         if status in GATEWAY_DOWN_STATES:
@@ -503,6 +500,9 @@ def _gateway_degraded(conn, settings, now: float, checked: list[str]) -> list[di
             "rule": "gateway-degraded", "key": f"gateway:{g['name']}",
             "category": "gateway", "severity": sev,
             "text": f"gateway {g['name']} {what}", "href": "/",
+            # a gateway is silenced by its name as a device, which is how
+            # PATCHBAY_EXPECT has always matched it
+            "devices": [g["name"]],
         })
     return out
 
@@ -562,8 +562,6 @@ def _config_changed(conn, settings, now: float) -> list[dict]:
             "  AND (p.fetched_at < cr.fetched_at "
             "       OR (p.fetched_at = cr.fetched_at AND p.id < cr.id))) "
             "ORDER BY fetched_at DESC, id DESC", (now - EVENT_WINDOW_S,)):
-        if r["device"] in settings.expected:
-            continue
         detail = " — ".join(x for x in (r["message"], r["author"]) if x)
         out.append({
             "rule": "config-changed",
@@ -571,6 +569,7 @@ def _config_changed(conn, settings, now: float) -> list[dict]:
             "category": "config", "severity": "info",
             "text": f"{r['device']} config changed" + (f": {detail}" if detail else ""),
             "href": f"/configs/{r['device']}", "at": r["fetched_at"],
+            "devices": [r["device"]],
         })
     return out
 
@@ -718,8 +717,6 @@ def _port_canary(conn, settings, now: float, checked: list[str]) -> list[dict]:
     out = []
     for r in latest:
         dev, iface = r["device"], r["interface"]
-        if {dev, f"{dev}:{iface}"} & settings.expected:
-            continue
         for counter, label in CANARY_COUNTERS.items():
             rate = r[counter]
             key = f"port:canary:{dev}:{iface}:{counter}"
