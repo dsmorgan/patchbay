@@ -384,16 +384,27 @@ Each is answered in the issue that implements the decision it belongs to.
 
 ## Amendment (2026-10-07): snapshot on critical, issue #66
 
-**Deviations and details in the implementation.**
+**Settled by the owner on #66.**
 
-- *Trigger.* A crit `raise` or an `escalate` to crit counts only when
-  dispatch hands it to the transports. A crit routed `none` (or silenced)
-  takes no snapshot.
+- *Off by default.* Snapshot on critical is a feature flag,
+  `PATCHBAY_ALERT_SNAPSHOT`, off unless a site turns it on. It and its two
+  parameters, `PATCHBAY_ALERT_SNAPSHOT_COOLDOWN` (minutes, default 60) and
+  `PATCHBAY_ALERT_SNAPSHOT_KEEP` (default 10), are env-style declarations:
+  set in the env file or on `/ops`, with the env file winning, like the
+  other snapshot settings. Decision 7 put the parameters on the alerts
+  page; the Rules tab only states them.
+- *Every crit counts.* A crit raised, or escalated to crit, takes a
+  snapshot whether or not it is routed (route `none` included). A silenced
+  alert (#62) produces no notification, so it never takes one.
+
+**Details in the implementation.**
+
 - *Cooldown clock.* The window starts at the attempt, not the success, so a
   snapshot that keeps failing is one `snapshot failed` event per window
-  rather than one per poll.
-- *Settings.* The cooldown and keep count are on the Rules tab, stored in
-  `app_state`. `/snapshots` names each file's causing alerts from a sidecar
-  record in `app_state` (key, rule, and the alert's text; nothing else).
+  rather than one per poll. The claim is atomic, so the poller and
+  `/ops/poll` finishing together take one snapshot, not two.
+- *Cause record.* `/snapshots` names each file's causing alerts from a
+  sidecar record in `app_state` (key, rule, and the alert's text; nothing
+  else).
 - *Latest.* An alert snapshot also refreshes `patchbay-latest.html`: it is
   the newest picture of the network.

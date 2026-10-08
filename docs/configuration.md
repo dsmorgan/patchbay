@@ -101,6 +101,9 @@ bundle path) in any OIDC deployment.
 | `PATCHBAY_SNAPSHOT_DIR` | `snapshots/` beside the DB | Where `patchbay snapshot` and the `/snapshots` page write the self-contained HTML files (timestamped + a stable `patchbay-latest.html`) |
 | `PATCHBAY_SNAPSHOT_KEEP` | `30,12m,3y,first` | Retention tiers for timestamped snapshots; see [Snapshot retention](#snapshot-retention). Also editable on `/ops` when the env file doesn't set it |
 | `PATCHBAY_SNAPSHOT_AT` | — | `HH:MM` local time to write one snapshot a day (the poller does it). Unset = on-demand only. Also editable on `/ops` when the env file doesn't set it |
+| `PATCHBAY_ALERT_SNAPSHOT` | off | Take a snapshot when a critical alert is raised or escalated (`on`/`off`; also `true`/`false`, `yes`/`no`, `1`/`0`). An unreadable value warns and stays off. Also editable on `/ops` when the env file doesn't set it |
+| `PATCHBAY_ALERT_SNAPSHOT_COOLDOWN` | `60` | Minutes between alert snapshots, whatever raised them (`0` = no cooldown). A value that is not a whole number of 0 or more falls back to `60` with a parse warning. Also editable on `/ops` |
+| `PATCHBAY_ALERT_SNAPSHOT_KEEP` | `10` | Alert snapshots kept per directory, newest first (`0` = all). Falls back to `10` with a parse warning. Also editable on `/ops` |
 | `PATCHBAY_SNAPSHOT_DELIVER_DIR` | — | Second destination each finished snapshot is copied to (a mounted off-site share). Kept separate from the local directory so a delivery failure never costs you the snapshot; copies land under a temporary name and are renamed, so a sync client never picks up a half-written file |
 
 A snapshot is one fully self-contained HTML file — interactive topology map,
@@ -149,15 +152,14 @@ directory alike, and judges each by its own file names. It governs only
 `patchbay-YYYYMMDD-HHMMSS.html` files: `patchbay-latest.html` and
 alert-triggered copies (`…-alert.html`) are never pruned by the tiers.
 
-A critical alert takes its own snapshot,
-`patchbay-YYYYMMDD-HHMMSS-alert.html`, after the poll that raises or
-escalates it and sends it to a transport. Two settings on the Rules tab of
-`/alerts`, stored in the database, govern these: a cooldown (default 60
-minutes, 0 = none) allows at most one per window whatever raised it, and a
-keep count (default 10, 0 = unlimited) keeps the newest alert snapshots in
-each directory. The keep count never touches tiered files, and the tiers
-never touch alert files. `/snapshots` lists alert snapshots separately, with
-the alerts that took each one.
+With `PATCHBAY_ALERT_SNAPSHOT` on, a critical alert takes its own snapshot,
+`patchbay-YYYYMMDD-HHMMSS-alert.html`, after the poll that raises it or
+escalates it to critical, whether or not the alert is routed to a
+transport. A silenced alert never takes one. The cooldown allows at most
+one per window, whatever raised it, and the keep count keeps the newest
+alert snapshots in each directory. The keep count never touches tiered
+files, and the tiers never touch alert files. `/snapshots` lists alert
+snapshots separately, with the alerts that took each one.
 
 If the spec fails to parse, patchbay prunes nothing until you fix it, and
 `/ops` and `/snapshots` show the parse warning. A typo in a retention
