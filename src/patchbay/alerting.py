@@ -25,8 +25,9 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from . import db
-from .attention import (DEVICE_DOWN_ROLES, DEVICE_STALE_S, DOWN_STATES,
-                        GATEWAY_LOSS_PCT, attention_items)
+from .attention import (CANARY_CLEAR, CANARY_FLOOR, CANARY_FOR, CANARY_MULTIPLIER,
+                        CANARY_WARMUP_H, DEVICE_DOWN_ROLES, DEVICE_STALE_S,
+                        DOWN_STATES, GATEWAY_LOSS_PCT, attention_items)
 
 # History retention: a quarter covers "has this happened before?", and the
 # count cap bounds a flapping rule that would otherwise fill 90 days.
@@ -86,6 +87,18 @@ RULES: dict[str, Rule] = {
         category="source", event=True, params={},
         summary="The daily or a manual snapshot failed, or was not delivered "
                 "off-host."),
+    # a port's error or discard rate orders of magnitude above its own
+    # baseline (#64, ADR-0003 Decision 5); `for` 2 so one bad sample is quiet
+    "port-canary": Rule(
+        category="port",
+        params={"for": CANARY_FOR, "floor": CANARY_FLOOR,
+                "multiplier": CANARY_MULTIPLIER, "clear": CANARY_CLEAR,
+                "warmup_h": CANARY_WARMUP_H},
+        summary="A port's error or discard rate is at least multiplier × its "
+                "own baseline (p95 of the past week, less the last hour) and "
+                "at least floor per second; it clears below clear × baseline. "
+                "A port with under warmup_h hours of samples is judged against "
+                "the floor alone."),
     # an alert transport that failed three polls running (#61); routed by
     # default like any rule, which reaches the other transports when the
     # default is not the one that is failing
@@ -102,8 +115,9 @@ _DEFAULT_RULE = Rule(category="")
 # switch is one alert, not one per cable (ADR-0003, fixed inhibition). The
 # link-down rule names both cable ends in `ports` for this. A tunnel item
 # is held while the firewall that terminates it is in down_devices (down or
-# stale): the device alert already says so.
-_INHIBITED_BY_DOWN_DEVICE = {"link-down", "expected-tunnel-missing"}
+# stale): the device alert already says so. A port canary names its one
+# port, so a flood on a box that then dies holds, not clears.
+_INHIBITED_BY_DOWN_DEVICE = {"link-down", "expected-tunnel-missing", "port-canary"}
 
 # where record_first_seen kept its timestamps before the alerts table; read
 # once so an upgrade does not reset every item's "for" to new
@@ -190,7 +204,7 @@ def _parse_param(key: str, default, raw: str):
         try:
             n = int(raw)
         except ValueError:
-            raise ValueError(f"{key}: a whole number of polls") from None
+            raise ValueError(f"{key}: a whole number") from None
         if n < 1:
             raise ValueError(f"{key}: at least 1")
         return n

@@ -94,7 +94,7 @@
   {% set vp = port_vlans.get(p.name.removeprefix("ethernet")) or port_vlans.get(p.name) %}
   {% set pr = port_roles.get(p.name.removeprefix("ethernet")) or port_roles.get(p.name) %}
   {% set eps = endpoints_by_port.get(p.name) %}
-  <tr>
+  <tr id="port-{{ p.name }}">
     <td class="mono"><a href="#" class="pg" data-if="{{ p.name }}" title="toggle 24h traffic graph">{{ p.name }}</a></td>
     {{ ui.port_cells(p, vp, pr, caps.get(p.name)) }}
     <td class="mono">{% if eps %}<a href="#" class="ep" data-if="{{ p.name }}" title="toggle endpoints seen on this port">{{ eps | length }}</a>{% else %}<span class="muted">·</span>{% endif %}</td>
