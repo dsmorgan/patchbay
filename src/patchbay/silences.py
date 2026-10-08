@@ -112,7 +112,9 @@ def scopes_for(item: dict) -> list[tuple[str, str]]:
     """The scopes a silence button offers for one item, narrowest first:
     the item itself, each port, each device, then its category."""
     out = [("key", item["key"])]
-    out += [("port", f"{d}:{i}") for d, i in item.get("ports") or ()]
+    # an empty interface marks a device-level hold (an expected tunnel's
+    # inhibition), not a port anyone can silence
+    out += [("port", f"{d}:{i}") for d, i in item.get("ports") or () if i]
     out += [("device", d) for d in sorted(item_devices(item))]
     out.append(("category", item["category"]))
     return list(dict.fromkeys(out))

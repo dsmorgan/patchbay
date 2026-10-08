@@ -419,25 +419,39 @@ class WebhookDispatcher:
             outbox = []
         held_down = kuma_alerts(conn, default)
 
+        alert_rows: dict[str, tuple] = {}
+
+        def alert_row(key: str) -> tuple:
+            if key not in alert_rows:
+                row = conn.execute("SELECT id, category, state FROM alerts WHERE key = ? "
+                                   "ORDER BY id DESC LIMIT 1", (key,)).fetchone()
+                alert_rows[key] = ((row["id"], row["category"], row["state"]) if row
+                                   else (None, "", None))
+            return alert_rows[key]
+
         # this cycle's notes, per transport, in the order they arose
         queued: dict[int, list[tuple[alerting.Notification, int]]] = {}
+        events: list[tuple] = []
         for entry in outbox if isinstance(outbox, list) else []:
             n = _note_from(entry.get("note") or {})
-            if n and entry.get("t") in transports:
-                queued.setdefault(entry["t"], []).append((n, int(entry.get("tries") or 0)))
+            if not (n and entry.get("t") in transports):
+                continue
+            # silenced since it was queued (#62): the operator asked not to
+            # hear about it, so the retry is dropped rather than sent late.
+            # A queued clear still goes: it closes a raise the receiver had.
+            if n.kind != "clear" and alert_row(n.key)[2] == "silenced":
+                events.append((n, "dropped", "silenced"))
+                continue
+            queued.setdefault(entry["t"], []).append((n, int(entry.get("tries") or 0)))
         for n in notes:
             route = resolve(n.route, default)
             if route and route.transport_id in transports and meets(n.severity, route):
                 queued.setdefault(route.transport_id, []).append((n, 0))
-        alert_rows = {}
         for n, _ in (x for q in queued.values() for x in q):
-            row = conn.execute("SELECT id, category FROM alerts WHERE key = ? "
-                               "ORDER BY id DESC LIMIT 1", (n.key,)).fetchone()
-            alert_rows[n.key] = (row["id"], row["category"]) if row else (None, "")
+            alert_row(n.key)
 
         started = self.clock()
         updates: dict[int, dict] = {}
-        events: list[tuple] = []
         new_outbox: list[dict] = []
 
         def spent() -> bool:
@@ -512,7 +526,7 @@ class WebhookDispatcher:
                 conn.execute("UPDATE alert_transports SET last_error=?, "
                              "failures=failures+1 WHERE id=?", (u["result"], tid))
         for n, event, detail in events:
-            alert_id, category = alert_rows[n.key]
+            alert_id, category, _ = alert_rows[n.key]
             conn.execute(
                 "INSERT INTO alert_events (alert_id, ts, event, key, rule, category, "
                 "severity, text, href, detail) VALUES (?,?,?,?,?,?,?,?,?,?)",
