@@ -159,7 +159,11 @@ CREATE TABLE IF NOT EXISTS rate_history (
     interface TEXT NOT NULL,   -- topology load view's peak metric
     ts REAL NOT NULL,
     in_bps INTEGER,
-    out_bps INTEGER
+    out_bps INTEGER,
+    in_errors REAL,            -- error and discard counters, per second, for
+    out_errors REAL,           -- the port-canary rule (ADR-0003 Decision 5);
+    in_discards REAL,          -- NULL when the source does not report them
+    out_discards REAL
 );
 CREATE INDEX IF NOT EXISTS idx_rate_hist ON rate_history (device, interface, ts);
 CREATE TABLE IF NOT EXISTS gateways (
@@ -289,6 +293,11 @@ def connect(path: str) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+# rate_history's per-second error and discard counters (#64), in the order
+# the port-canary rule reports them
+RATE_COUNTERS = ("in_errors", "out_errors", "in_discards", "out_discards")
+
+
 def init(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     # lightweight migration: add columns that predate an existing db file
@@ -314,6 +323,10 @@ def init(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE interfaces ADD COLUMN ip TEXT")
     if "ip6" not in icols:  # ...and their IPv6 one (PD subnets are routed too)
         conn.execute("ALTER TABLE interfaces ADD COLUMN ip6 TEXT")
+    hcols = {r[1] for r in conn.execute("PRAGMA table_info(rate_history)")}
+    for col in RATE_COUNTERS:  # #64: port-counter canaries
+        if col not in hcols:
+            conn.execute(f"ALTER TABLE rate_history ADD COLUMN {col} REAL")
     rcols = {r[1] for r in conn.execute("PRAGMA table_info(routes)")}
     if rcols and "flags" not in rcols:  # discard routes must not read as reach
         conn.execute("ALTER TABLE routes ADD COLUMN flags TEXT")
