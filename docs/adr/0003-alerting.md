@@ -381,3 +381,19 @@ Each is answered in the issue that implements the decision it belongs to.
 - *No summary strip.* Decision 8's per-transport delivery state in the
   /alerts summary strip is not built. The Transports tab shows each
   transport's last sent time and last error instead.
+
+## Amendment (2026-10-07): snapshot on critical, issue #66
+
+**Deviations and details in the implementation.**
+
+- *Trigger.* A crit `raise` or an `escalate` to crit counts only when
+  dispatch hands it to the transports. A crit routed `none` (or silenced)
+  takes no snapshot.
+- *Cooldown clock.* The window starts at the attempt, not the success, so a
+  snapshot that keeps failing is one `snapshot failed` event per window
+  rather than one per poll.
+- *Settings.* The cooldown and keep count are on the Rules tab, stored in
+  `app_state`. `/snapshots` names each file's causing alerts from a sidecar
+  record in `app_state` (key, rule, and the alert's text; nothing else).
+- *Latest.* An alert snapshot also refreshes `patchbay-latest.html`: it is
+  the newest picture of the network.

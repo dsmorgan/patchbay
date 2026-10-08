@@ -149,6 +149,16 @@ directory alike, and judges each by its own file names. It governs only
 `patchbay-YYYYMMDD-HHMMSS.html` files: `patchbay-latest.html` and
 alert-triggered copies (`…-alert.html`) are never pruned by the tiers.
 
+A critical alert takes its own snapshot,
+`patchbay-YYYYMMDD-HHMMSS-alert.html`, after the poll that raises or
+escalates it and sends it to a transport. Two settings on the Rules tab of
+`/alerts`, stored in the database, govern these: a cooldown (default 60
+minutes, 0 = none) allows at most one per window whatever raised it, and a
+keep count (default 10, 0 = unlimited) keeps the newest alert snapshots in
+each directory. The keep count never touches tiered files, and the tiers
+never touch alert files. `/snapshots` lists alert snapshots separately, with
+the alerts that took each one.
+
 If the spec fails to parse, patchbay prunes nothing until you fix it, and
 `/ops` and `/snapshots` show the parse warning. A typo in a retention
 setting never deletes history. `/snapshots` lists the tier that keeps each
