@@ -19,7 +19,9 @@ still stored, as `silenced`, and nothing is sent about it while it is:
     expire   silenced and no longer covered, condition still holds -> the
              same row raises as new: raised_at and the `for` count restart
              and the one notification is a `raise`, never a clear first
-    end      silenced and the condition ends -> cleared as history only
+    end      silenced and the condition ends -> cleared; the clear is sent
+             only if a raise was sent before the silence, so a receiver
+             is never left firing and never hears of an unannounced alert
 
 Every transition lands in `alert_events`, which is the History tab. What
 the engine decides to send comes back as `Notification`s; the caller hands
@@ -389,14 +391,16 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
         if row is not None and row["state"] == "silenced":
             # the silence expired or was removed while the condition held:
             # it raises as new on the same row, so the receiver hears one
-            # raise and no clear for a condition that never ended
+            # raise and no clear for a condition that never ended. A pending
+            # re-raise keeps last_notified_at: a receiver that heard the
+            # first raise must still hear the clear if it ends before `for`.
             state = "active" if rule["for"] <= 1 else "pending"
             conn.execute(
                 "UPDATE alerts SET severity=?, text=?, href=?, polls=1, state=?, "
                 "raised_at=?, active_at=?, last_notified_at=? WHERE id=?",
                 (a["severity"], a["text"], a["href"], state, now,
                  now if state == "active" else None,
-                 now if state == "active" else None, row["id"]))
+                 now if state == "active" else row["last_notified_at"], row["id"]))
             _event(conn, row["id"], now, "raised", a, "silence ended")
             if state == "active":
                 _event(conn, row["id"], now, "active", a)
@@ -451,15 +455,17 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
                      (now, row["id"]))
         rule = _rule_for(row["rule"], catalog, config)
         # a disabled rule says nothing about the condition, which may still
-        # hold; a "clear" would tell the receiver it is fixed. Likewise a
-        # pending alert was never announced: its clear is history, not news.
+        # hold; a "clear" would tell the receiver it is fixed. An alert no
+        # receiver heard about (silenced or pending from the start) clears
+        # as history, not news. One that was announced before a silence, or
+        # before a pending re-raise, gets its clear: otherwise a receiver
+        # that heard the raise would be left firing forever.
+        announced = row["last_notified_at"] is not None
         if not rule["enabled"]:
             detail = "rule disabled"
-        elif row["state"] == "silenced":
-            # whatever was announced before the silence, the operator asked
-            # not to hear about this item; the clear is history only
+        elif row["state"] == "silenced" and not announced:
             detail = "silenced"
-        elif row["state"] != "active":
+        elif row["state"] != "active" and not announced:
             detail = "never active"
         else:
             detail = None
