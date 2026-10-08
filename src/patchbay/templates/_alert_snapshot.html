@@ -1,19 +1,14 @@
-{# Snapshot on critical (#66, ADR-0003 Decision 7): the two parameters, on
-   the Rules tab. A plain form posting to /alerts/snapshot. #}
+{# Snapshot on critical (#66, ADR-0003 Decision 7): read-only here. The
+   flag, cooldown, and keep count are PATCHBAY_ALERT_SNAPSHOT* declarations,
+   set in the env file or on /ops like the other snapshot settings. #}
 <section id="alert-snapshot" class="rule" style="max-width: 900px; margin-top: 0.6rem">
-  <div class="rule-head"><strong>snapshot on critical</strong></div>
-  <p class="rule-sum muted">A critical alert that is raised, or escalated to
-  critical, and sent to a transport writes a
-  <span class="mono">-alert</span> snapshot after the poll, at most once per
-  cooldown whatever raised it. Alert snapshots are kept under their own count,
-  never the tiers, and are listed on <a href="/snapshots">Snapshots</a>.</p>
-  <form method="post" action="/alerts/snapshot" class="rule-fields">
-    <label>cooldown (minutes, 0 = none)
-      <input class="mono" name="cooldown" value="{{ alert_snapshot.cooldown }}" size="5"
-             inputmode="numeric"></label>
-    <label>keep (0 = unlimited)
-      <input class="mono" name="keep" value="{{ alert_snapshot.keep }}" size="5"
-             inputmode="numeric"></label>
-    <button type="submit">save</button>
-  </form>
+  <div class="rule-head"><strong>snapshot on critical</strong>
+    <span class="muted">{{ alert_snapshot.text }}</span></div>
+  <p class="rule-sum muted">{% if alert_snapshot.on %}A critical alert that is
+  raised, or escalated to critical, writes a <span class="mono">-alert</span>
+  snapshot after the poll, routed or not; a silenced one never does. They are
+  listed on <a href="/snapshots">Snapshots</a>. Change it with
+  {% else %}Off: turn it on with {% endif %}<span class="mono">PATCHBAY_ALERT_SNAPSHOT</span>
+  (and <span class="mono">_COOLDOWN</span>, <span class="mono">_KEEP</span>) on
+  <a href="/ops">Ops</a>.</p>
 </section>

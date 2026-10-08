@@ -434,11 +434,7 @@ def alerts(request: Request, category: str | None = None,
                     + " ORDER BY ts DESC, id DESC LIMIT ?",
                     (*args, ALERT_HISTORY_ROWS))]
         rules = alerting.rule_settings(conn) if tab == "rules" else []
-        alert_snap = None
-        if tab == "rules":
-            from .snapshot import alert_snapshot_settings
-
-            alert_snap = alert_snapshot_settings(conn)
+        alert_snap = _alert_snapshot_view(settings) if tab == "rules" else None
         for r in rules:   # "default (kuma, warn+)" rather than the stored "1:warn"
             r["route_label"] = transports.route_label(conn, r["route"])
         if rules:
@@ -524,28 +520,6 @@ async def expected_tunnel_remove(request: Request):
     finally:
         conn.close()
     return RedirectResponse("/alerts?tab=tunnels", status_code=303)
-
-
-@app.post("/alerts/snapshot")
-async def alerts_snapshot_settings(request: Request):
-    """Snapshot on critical (#66): the cooldown and keep count, saved from
-    the Rules tab. Validated before anything is written."""
-    from .snapshot import update_alert_snapshot_settings
-
-    form = await _form(request)
-    conn = _conn()
-    try:
-        db.init(conn)
-        try:
-            update_alert_snapshot_settings(conn, form)
-        except ValueError as e:
-            raise HTTPException(400, f"alert snapshots: {e}")
-        conn.commit()
-    finally:
-        conn.close()
-    from fastapi.responses import RedirectResponse
-
-    return RedirectResponse("/alerts?tab=rules#alert-snapshot", status_code=303)
 
 
 # -- alert transports and routes (#61) --------------------------------------
@@ -1562,6 +1536,18 @@ def _config_keep_text(s) -> str:
     return f"{value} per device · {src}"
 
 
+def _alert_snapshot_view(s) -> dict:
+    """Snapshot on critical (#66) as the pages state it: the flag, the
+    cooldown and keep count, and one line saying all three."""
+    cooldown = (f"at most one per {s.alert_snapshot_cooldown} min"
+                if s.alert_snapshot_cooldown else "no cooldown")
+    keep = (f"keeps the newest {s.alert_snapshot_keep}"
+            if s.alert_snapshot_keep else "keeps all")
+    return {"on": s.alert_snapshot, "cooldown": s.alert_snapshot_cooldown,
+            "keep": s.alert_snapshot_keep,
+            "text": f"on · {cooldown} · {keep}" if s.alert_snapshot else "off"}
+
+
 def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
     """The running config as patchbay understood it — values redacted where
     secret, declarations shown parsed (what the code will act on, not what
@@ -1625,6 +1611,9 @@ def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
              if s.snapshot_keep else
              "unknown (stored declarations unreadable) · pruning off"
              if s.snapshot_keep_unknown else "unparsed · pruning off"),
+            ("PATCHBAY_ALERT_SNAPSHOT (+ _COOLDOWN, _KEEP)",
+             _alert_snapshot_view(s)["text"] + " · "
+             + (s.declaration_sources.get("PATCHBAY_ALERT_SNAPSHOT") or "default")),
         ]),
     ]
 
@@ -1816,10 +1805,9 @@ def snapshots(request: Request):
         ages = source_ages(conn)
         # alert snapshots (#66) beside the tiers, not inside them: their own
         # list, each with the alerts that took it, from the sidecar record
-        from .snapshot import alert_log, alert_snapshot_settings
+        from .snapshot import alert_log
 
         log = alert_log(conn)
-        alert_cfg = alert_snapshot_settings(conn)
     finally:
         conn.close()
     alert_found = []
@@ -1852,7 +1840,7 @@ def snapshots(request: Request):
                                if w.startswith("PATCHBAY_SNAPSHOT_KEEP:")
                                or (settings.snapshot_keep_unknown and
                                    w.startswith("could not read stored declarations"))]},
-        "alert_snapshots": alert_found, "alert_cfg": alert_cfg,
+        "alert_snapshots": alert_found, "alert_cfg": _alert_snapshot_view(settings),
         "is_demo": is_demo,
         "ages": ages,
     })
@@ -2026,10 +2014,9 @@ def ops_poll(source: str | None = None):
     finally:
         conn.close()
         _ops_lock.release()
-    sent = []
     try:  # after commit: a receiver never holds the database or the lock
         dispatcher = transports.WebhookDispatcher(settings.db_path)
-        sent = alerting.dispatch(notes, dispatcher)
+        alerting.dispatch(notes, dispatcher)
         lines += dispatcher.lines   # never carries a URL (transports._redact)
     except Exception as e:
         lines.append(f"[warn] alert dispatch: {type(e).__name__}")
@@ -2037,7 +2024,7 @@ def ops_poll(source: str | None = None):
     # a failure is a recorded event and a line, never a failed poll
     from .snapshot import take_alert_snapshot
 
-    lines += take_alert_snapshot(settings, sent)
+    lines += take_alert_snapshot(settings, notes)
     return {"lines": lines}
 
 

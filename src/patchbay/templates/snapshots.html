@@ -70,14 +70,12 @@ for one a day.</p>
   {% endfor %}
 </table></div>
 {% else %}
-<p class="muted">None yet. A critical alert takes one after the poll that
-raises it.</p>
+<p class="muted">None yet.{% if alert_cfg.on %} A critical alert takes one
+after the poll that raises it.{% endif %}</p>
 {% endif %}
-<p class="muted" style="font-size: 0.82rem">At most one per
-{{ alert_cfg.cooldown ~ " minutes" if alert_cfg.cooldown else "poll (no cooldown)" }},
-keeping {{ "the newest " ~ alert_cfg.keep if alert_cfg.keep else "all of them" }},
-apart from the tiers above · set on <a href="/alerts?tab=rules#alert-snapshot">Alerts
-· Rules</a>.</p>
+<p class="muted" style="font-size: 0.82rem">Snapshot on critical:
+{{ alert_cfg.text }}{% if alert_cfg.on %}, apart from the tiers above{% endif %} ·
+set <span class="mono">PATCHBAY_ALERT_SNAPSHOT</span> on <a href="/ops">Ops</a>.</p>
 </div>
 
 <h2>Where they go</h2>

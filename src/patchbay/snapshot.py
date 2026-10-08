@@ -285,20 +285,14 @@ def mark_done(conn) -> None:
 
 
 # -- snapshot on critical (#66, ADR-0003 Decision 7) --------------------------
-# A crit alert that is raised or escalated, and actually sent, takes a
-# snapshot after the poll commits, at most once per cooldown whatever raised
-# it. The settings are edited on the Rules tab of /alerts; the poller is a
-# fresh process each cycle, so the cooldown's clock lives in app_state too.
+# Off unless PATCHBAY_ALERT_SNAPSHOT is on. A crit alert that is raised or
+# escalated takes a snapshot after the poll commits, routed or not (a
+# silenced one produces no notification at all), at most once per
+# PATCHBAY_ALERT_SNAPSHOT_COOLDOWN whatever raised it. The poller is a fresh
+# process each cycle, so the cooldown's clock lives in app_state.
 
-ALERT_COOLDOWN_KEY = "alert_snapshot_cooldown"   # minutes; 0 = none
-ALERT_KEEP_KEY = "alert_snapshot_keep"           # count; 0 = unlimited
 ALERT_LAST_KEY = "alert_snapshot_at"             # epoch of the last attempt
 ALERT_LOG_KEY = "alert_snapshots"                # sidecar: file -> its cause
-ALERT_COOLDOWN_DEFAULT = 60
-ALERT_KEEP_DEFAULT = 10
-# bounds on the form: a week of cooldown, and a count far past any share
-ALERT_COOLDOWN_MAX = 7 * 24 * 60
-ALERT_KEEP_MAX = 1000
 # the sidecar names at most this many causes per file, and remembers at
 # most this many files: an unlimited keep count lists the oldest as unknown
 ALERT_CAUSES_MAX = 5
@@ -306,43 +300,13 @@ ALERT_LOG_MAX = 200
 _TRIGGER_KINDS = ("raise", "escalate")
 
 
-def _state_int(conn, key: str, default: int) -> int:
-    try:
-        return max(0, int(db.get_state(conn, key) or default))
-    except ValueError:
-        return default
-
-
-def alert_snapshot_settings(conn) -> dict[str, int]:
-    """The effective cooldown (minutes) and keep count."""
-    return {"cooldown": _state_int(conn, ALERT_COOLDOWN_KEY, ALERT_COOLDOWN_DEFAULT),
-            "keep": _state_int(conn, ALERT_KEEP_KEY, ALERT_KEEP_DEFAULT)}
-
-
-def _form_int(form: dict[str, str], key: str, label: str, hi: int) -> int:
-    raw = (form.get(key) or "").strip()
-    try:
-        n = int(raw)
-    except ValueError:
-        raise ValueError(f"{label}: a whole number") from None
-    if not 0 <= n <= hi:
-        raise ValueError(f"{label}: from 0 to {hi}")
-    return n
-
-
-def update_alert_snapshot_settings(conn, form: dict[str, str]) -> None:
-    """Apply the Rules-tab form. Raises ValueError before writing anything."""
-    cooldown = _form_int(form, "cooldown", "cooldown", ALERT_COOLDOWN_MAX)
-    keep = _form_int(form, "keep", "keep", ALERT_KEEP_MAX)
-    db.set_state(conn, ALERT_COOLDOWN_KEY, str(cooldown))
-    db.set_state(conn, ALERT_KEEP_KEY, str(keep))
-
-
-def alert_triggers(sent) -> list:
+def alert_triggers(notes) -> list:
     """The notifications that call for a snapshot: a crit raised, or an
-    alert escalated to crit. Pass only what was dispatched, so a note that
-    went nowhere (route none, or silenced) never takes one."""
-    return [n for n in sent if n.kind in _TRIGGER_KINDS and n.severity == "crit"]
+    alert escalated to crit. Pass the engine's notes before routing: a crit
+    routed `none` still takes one (the owner's call on #66), and a silenced
+    alert (#62) yields no note, so it never does."""
+    return [n for n in notes if n.kind in _TRIGGER_KINDS and n.severity == "crit"
+            and not getattr(n, "silenced", False)]
 
 
 def alert_log(conn) -> dict[str, dict]:
@@ -358,47 +322,79 @@ def alert_log(conn) -> dict[str, dict]:
             if isinstance(e, dict) and isinstance(e.get("name"), str)}
 
 
+def _immediate(conn) -> None:
+    """Take the write lock before reading: the poller and /ops/poll can run
+    this at once, and a deferred read-check-write lets both through."""
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+
+
+def _claim_cooldown(conn, now: float, cooldown_min: int) -> float | None:
+    """Atomically check and start the cooldown. Returns None when claimed,
+    or the time the open window closes."""
+    _immediate(conn)
+    try:
+        try:
+            last = float(db.get_state(conn, ALERT_LAST_KEY) or 0)
+        except ValueError:
+            last = 0.0
+        if cooldown_min and now - last < cooldown_min * 60:
+            conn.rollback()
+            return last + cooldown_min * 60
+        # the attempt starts the window, so a snapshot that keeps failing is
+        # one failure event per cooldown, not one per poll
+        db.set_state(conn, ALERT_LAST_KEY, repr(now))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return None
+
+
 def _log_alert_snapshot(conn, name: str, ts: float, triggers: list) -> None:
     # key, rule, severity, and the item's text: what the alerts page already
-    # shows, never a transport or its URL
+    # shows, never a transport or its URL. Under the write lock, so two
+    # writers can't each drop the other's entry.
     causes = [{"key": n.key, "rule": n.rule, "kind": n.kind, "text": n.text[:200]}
               for n in triggers[:ALERT_CAUSES_MAX]]
-    entries = list(alert_log(conn).values())
-    entries.append({"name": name, "ts": ts, "alerts": causes,
-                    "more": max(0, len(triggers) - ALERT_CAUSES_MAX)})
-    db.set_state(conn, ALERT_LOG_KEY, json.dumps(entries[-ALERT_LOG_MAX:]))
+    _immediate(conn)
+    try:
+        entries = [e for e in alert_log(conn).values() if e["name"] != name]
+        entries.append({"name": name, "ts": ts, "alerts": causes,
+                        "more": max(0, len(triggers) - ALERT_CAUSES_MAX)})
+        db.set_state(conn, ALERT_LOG_KEY, json.dumps(entries[-ALERT_LOG_MAX:]))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
 
-def take_alert_snapshot(settings: Settings, sent, *, now: float | None = None) -> list[str]:
-    """Run after dispatch: write an alert snapshot when `sent` holds a crit
-    trigger and the cooldown has passed. Returns poll-output lines and never
+def take_alert_snapshot(settings: Settings, notes, *, now: float | None = None) -> list[str]:
+    """Run after dispatch: when PATCHBAY_ALERT_SNAPSHOT is on, write an alert
+    snapshot if `notes` holds a crit trigger and the cooldown has passed. Returns poll-output lines and never
     raises: a failure is recorded for the snapshot-failed rule (trigger
     `alert`) and the poll goes on."""
-    triggers = alert_triggers(sent)
+    if not settings.alert_snapshot:
+        return []
+    triggers = alert_triggers(notes)
     if not triggers:
         return []
     now = db.now() if now is None else now
     try:
         with db.connect(settings.db_path) as conn:
-            cfg = alert_snapshot_settings(conn)
-            try:
-                last = float(db.get_state(conn, ALERT_LAST_KEY) or 0)
-            except ValueError:
-                last = 0.0
-            if cfg["cooldown"] and now - last < cfg["cooldown"] * 60:
-                until = time.strftime("%H:%M", time.localtime(last + cfg["cooldown"] * 60))
-                return [f"[ok]   alert snapshot: in cooldown until {until}"]
-            # the attempt starts the window, so a snapshot that keeps
-            # failing is one failure event per cooldown, not one per poll
-            db.set_state(conn, ALERT_LAST_KEY, repr(now))
+            until = _claim_cooldown(conn, now, settings.alert_snapshot_cooldown)
     except Exception as e:
         return [f"[warn] alert snapshot: {type(e).__name__}: {e}"]
+    if until is not None:
+        return ["[ok]   alert snapshot: in cooldown until "
+                + time.strftime("%H:%M", time.localtime(until))]
 
     lines: list[str] = []
     path: Path | None = None
     failure = None
     try:
-        path = write_snapshot(settings, alert_keep=cfg["keep"])
+        path = write_snapshot(settings, alert_keep=settings.alert_snapshot_keep)
         lines.append(f"[ok]   alert snapshot: {path}")
     except DeliveryError as e:
         path = e.path
@@ -412,6 +408,7 @@ def take_alert_snapshot(settings: Settings, sent, *, now: float | None = None) -
             if failure:
                 db.record_snapshot_failure(conn, failure[0], kind=failure[1],
                                            trigger="alert")
+                conn.commit()
             if path is not None:
                 _log_alert_snapshot(conn, path.name, now, triggers)
     except Exception as e:

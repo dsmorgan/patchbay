@@ -24,11 +24,19 @@ DECLARATION_VARS = (
     "PATCHBAY_RELATED", "PATCHBAY_VLAN_FILTER", "PATCHBAY_CAPACITY",
     "PATCHBAY_PANELS", "PATCHBAY_WAN_NAME", "PATCHBAY_WAN_PORT",
     "PATCHBAY_EXPECT", "PATCHBAY_SNAPSHOT_AT", "PATCHBAY_SNAPSHOT_KEEP",
-    "PATCHBAY_CONFIG_KEEP",
+    "PATCHBAY_CONFIG_KEEP", "PATCHBAY_ALERT_SNAPSHOT",
+    "PATCHBAY_ALERT_SNAPSHOT_COOLDOWN", "PATCHBAY_ALERT_SNAPSHOT_KEEP",
 )
 
 # Firewall config revisions kept per device when PATCHBAY_CONFIG_KEEP is unset.
 CONFIG_KEEP_DEFAULT = 50
+
+# Snapshot on critical (#66): off unless a site turns it on; at most one per
+# cooldown (minutes), and its own newest-n count beside the tiers.
+ALERT_SNAPSHOT_COOLDOWN_DEFAULT = 60
+ALERT_SNAPSHOT_KEEP_DEFAULT = 10
+_TRUE = ("1", "true", "on", "yes")
+_FALSE = ("0", "false", "off", "no")
 
 # Inline help for /ops (issue #20): what each declaration does, its syntax,
 # and one realistic example — the single source of truth for in-product help.
@@ -120,6 +128,27 @@ DECLARATION_HELP = {
                 "revision. 0 keeps everything.",
         "syntax": "whole number, default 50",
         "example": "200",
+    },
+    "PATCHBAY_ALERT_SNAPSHOT": {
+        "what": "Take a break-glass snapshot when a critical alert is raised "
+                "or escalated, after the poll that notices it. Off by "
+                "default. Alert snapshots are named …-alert.html and kept "
+                "apart from the tiers.",
+        "syntax": "on or off (also true/false, yes/no, 1/0)",
+        "example": "on",
+    },
+    "PATCHBAY_ALERT_SNAPSHOT_COOLDOWN": {
+        "what": "At most one alert snapshot per this many minutes, whatever "
+                "raised it. 0 means no cooldown.",
+        "syntax": "whole number of minutes, default 60",
+        "example": "120",
+    },
+    "PATCHBAY_ALERT_SNAPSHOT_KEEP": {
+        "what": "How many alert snapshots to keep, newest first, in the "
+                "snapshot and delivery directories. 0 keeps all of them. "
+                "The retention tiers never touch these files.",
+        "syntax": "whole number, default 10",
+        "example": "20",
     },
 }
 
@@ -316,6 +345,11 @@ class Settings:
     # Config revisions kept per device (0 = unlimited). Where the value came
     # from is declaration_sources["PATCHBAY_CONFIG_KEEP"], absent = default.
     config_keep: int
+    # Snapshot on critical (#66): the flag, the cooldown in minutes (0 =
+    # none), and the alert snapshots' own keep count (0 = unlimited).
+    alert_snapshot: bool = False
+    alert_snapshot_cooldown: int = ALERT_SNAPSHOT_COOLDOWN_DEFAULT
+    alert_snapshot_keep: int = ALERT_SNAPSHOT_KEEP_DEFAULT
 
     @property
     def snapshot_keep_unknown(self) -> bool:
@@ -515,6 +549,30 @@ def load_settings() -> Settings:
             warnings.append(f"PATCHBAY_CONFIG_KEEP: {raw_keep!r} is not a "
                             "whole number of 0 or more — using "
                             f"{CONFIG_KEEP_DEFAULT}")
+    raw_flag = (env("PATCHBAY_ALERT_SNAPSHOT") or "").strip().lower()
+    alert_snapshot = raw_flag in _TRUE
+    if raw_flag and raw_flag not in _TRUE + _FALSE:
+        warnings.append(f"PATCHBAY_ALERT_SNAPSHOT: {raw_flag!r} is not on or off "
+                        "— alert snapshots are off")
+
+    def whole(var: str, default: int) -> int:
+        raw = (env(var) or "").strip()
+        if not raw:
+            return default
+        try:
+            n = int(raw)
+            if n < 0:
+                raise ValueError(raw)
+            return n
+        except ValueError:
+            warnings.append(f"{var}: {raw!r} is not a whole number of 0 or "
+                            f"more — using {default}")
+            return default
+
+    alert_snapshot_cooldown = whole("PATCHBAY_ALERT_SNAPSHOT_COOLDOWN",
+                                    ALERT_SNAPSHOT_COOLDOWN_DEFAULT)
+    alert_snapshot_keep = whole("PATCHBAY_ALERT_SNAPSHOT_KEEP",
+                                ALERT_SNAPSHOT_KEEP_DEFAULT)
     return Settings(
         db_path=env("PATCHBAY_DB", "patchbay.db"),
         tls_verify=tls_verify,
@@ -580,4 +638,7 @@ def load_settings() -> Settings:
         snapshot_deliver_dir=env("PATCHBAY_SNAPSHOT_DELIVER_DIR") or None,
         snapshot_at=snapshot_at,
         config_keep=config_keep,
+        alert_snapshot=alert_snapshot,
+        alert_snapshot_cooldown=alert_snapshot_cooldown,
+        alert_snapshot_keep=alert_snapshot_keep,
     )
