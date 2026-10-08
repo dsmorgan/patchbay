@@ -6,6 +6,14 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+- Expected tunnels (#63). Declare VPN tunnels on the **Tunnels** tab of
+  `/alerts` by device, type, and name; one that is missing, stale, or down
+  raises a warning. Idle WireGuard counts as down unless the rule's
+  `idle_is_down` setting is off. A down firewall holds its tunnel alerts.
+
 ## [0.19.0] — 2026-10-07
 
 ### Added
