@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import re
 import sqlite3
+from urllib.parse import quote
 
 from . import db
 
@@ -28,7 +30,7 @@ STALE_MIN = 15  # same rule the top bar uses
 # Overview hides `device`: its cards are the device-state UI.
 CATEGORIES = {"device": "devices", "link": "links", "gateway": "gateways",
               "ipam": "IPAM", "source": "sources", "config": "config changes",
-              "tunnel": "tunnels"}
+              "tunnel": "tunnels", "port": "ports"}
 
 # Rule parameter defaults (ADR-0003 Decision 4). They live here, beside the
 # rules that read them; alerting.RULES seeds them into alert_rules, and a
@@ -346,6 +348,7 @@ def attention_items(conn: sqlite3.Connection, settings) -> tuple[list[dict], lis
     items += _config_changed(conn, settings, now)
     items += _snapshot_failed(conn, now)
     items += _expected_tunnel_missing(conn, now, checked)
+    items += _port_canary(conn, settings, now, checked)
 
     # transport-failing: an alert transport whose last three dispatch cycles
     # failed. Silence about a dead receiver is the one failure the receiver
@@ -588,6 +591,154 @@ def _snapshot_failed(conn, now: float) -> list[dict]:
                     f"{f.get('error') or 'no detail'}",
             "href": "/snapshots", "at": f["ts"],
         })
+    return out
+
+
+# --- port-counter canaries (#64, ADR-0003 Decision 5) -----------------------
+# A port whose error or discard rate jumps orders of magnitude above its own
+# baseline. Defaults are the ADR's, provisional until a week of real samples
+# exists to tune them against (the counters start collecting with #64).
+CANARY_FLOOR = 50          # per second: below this nobody notices
+CANARY_MULTIPLIER = 100    # raise at this many times the baseline
+CANARY_CLEAR = 10          # hold until the rate falls below this × baseline
+CANARY_WARMUP_H = 24       # hours of samples before the baseline is trusted
+CANARY_FOR = 2             # polls: one bad sample is not a flood
+CANARY_WINDOW_S = 7 * 86400   # baseline window, rate_history's retention
+CANARY_RECENT_S = 3600        # excluded from the baseline: the flood itself
+
+# rate_history column -> how the item text names it
+CANARY_COUNTERS = {"in_errors": "in errors", "out_errors": "out errors",
+                   "in_discards": "in discards", "out_discards": "out discards"}
+
+
+def _p95(values: list[float]) -> float:
+    """Nearest-rank 95th percentile: a sample that occurred, never an
+    interpolation between two."""
+    v = sorted(values)
+    return v[max(0, math.ceil(0.95 * len(v)) - 1)]
+
+
+def canary_baseline(conn, device: str, iface: str, counter: str, now: float,
+                    warmup_s: float) -> float | None:
+    """p95 of the port's own samples of `counter` over the last week,
+    excluding the last hour so a flood never becomes its own baseline. None
+    while the port is warming up: its first sample is younger than
+    `warmup_s`, or no sample predates the excluded hour."""
+    assert counter in CANARY_COUNTERS  # interpolated into the SQL below
+    first = conn.execute(
+        f"SELECT MIN(ts) FROM rate_history WHERE device = ? AND interface = ? "
+        f"AND {counter} IS NOT NULL", (device, iface)).fetchone()[0]
+    if first is None or now - first < warmup_s:
+        return None
+    vals = [r[0] for r in conn.execute(
+        f"SELECT {counter} FROM rate_history WHERE device = ? AND interface = ? "
+        f"AND ts >= ? AND ts < ? AND {counter} IS NOT NULL",
+        (device, iface, now - CANARY_WINDOW_S, now - CANARY_RECENT_S))]
+    return _p95(vals) if vals else None
+
+
+def _canary_port(key: str) -> tuple[str, str] | None:
+    """(device, interface) from `port:canary:{device}:{iface}:{counter}`.
+    An interface name may hold colons (some platforms number ports that
+    way), so peel the counter off the right; a device name does not."""
+    head, _, counter = key.rpartition(":")
+    parts = head.split(":", 3)
+    if counter not in CANARY_COUNTERS or len(parts) != 4 or parts[:2] != ["port", "canary"]:
+        return None
+    return parts[2], parts[3]
+
+
+def _rate(x: float) -> str:
+    return f"{x:,.0f}" if x >= 100 else f"{x:.3g}"
+
+
+def _port_canary(conn, settings, now: float, checked: list[str]) -> list[dict]:
+    """port-canary: a counter at least `multiplier` × its baseline and at
+    least `floor`, held for `for` polls (the engine's job). The floor is
+    folded into the baseline — effective = max(baseline, floor/multiplier) —
+    so raise is `rate >= multiplier × effective` and hold is `rate >= clear
+    × effective`: one formula, with the same hysteresis on a port whose
+    baseline is zero, and a warming-up port (no baseline yet) is judged
+    against the floor alone.
+
+    Cost scales with offenders, not ports: only counters above the floor
+    this poll, or whose alert is open (hysteresis), get a baseline query.
+    The open-alert set comes from `alerts` by key, so the hold needs no
+    state of its own: the engine already remembers what is raised."""
+    p = rule_params(conn, "port-canary", {
+        "floor": CANARY_FLOOR, "multiplier": CANARY_MULTIPLIER,
+        "clear": CANARY_CLEAR, "warmup_h": CANARY_WARMUP_H})
+    try:
+        floor = float(p["floor"])
+        mult = max(1.0, float(p["multiplier"]))
+        clear = min(mult, max(0.0, float(p["clear"])))
+        warmup_s = float(p["warmup_h"]) * 3600
+    except (TypeError, ValueError):
+        floor, mult, clear = CANARY_FLOOR, CANARY_MULTIPLIER, CANARY_CLEAR
+        warmup_s = CANARY_WARMUP_H * 3600
+    cols = ", ".join(CANARY_COUNTERS)
+    # the newest sample per port, if it is current: a port the poller
+    # stopped sampling says nothing about now
+    latest = conn.execute(
+        f"SELECT r.device, r.interface, {cols} FROM rate_history r JOIN ("
+        "  SELECT device, interface, MAX(ts) AS ts FROM rate_history "
+        "  WHERE ts >= ? GROUP BY device, interface) m "
+        "ON r.device = m.device AND r.interface = m.interface AND r.ts = m.ts "
+        "ORDER BY r.device, r.interface", (now - STALE_MIN * 60,)).fetchall()
+    # open = pending or active; only an active alert earns the hold. A
+    # pending one has not met `for` yet, so it must clear the raise bar
+    # (multiplier and floor) again each poll, or one spike would ride the
+    # clear threshold into a notification.
+    open_ = {r["key"]: r["state"] for r in conn.execute(
+        "SELECT key, state FROM alerts WHERE rule = 'port-canary' "
+        "AND state != 'cleared'")}
+    active = {k for k, st in open_.items() if st == "active"}
+    # an open canary whose port stopped sampling: its device went down (the
+    # engine's inhibition holds the item, keyed by `ports`) or its source
+    # paused. Re-read the last sample for those, so the alert is held rather
+    # than announced as cleared; a port with no sample for longer than a
+    # device takes to go stale, on a device that is up, has really gone.
+    have = {(r["device"], r["interface"]) for r in latest}
+    gone = sorted({p for p in map(_canary_port, open_) if p} - have)
+    for dev, iface in gone:
+        row = conn.execute(
+            f"SELECT device, interface, ts, {cols} FROM rate_history "
+            "WHERE device = ? AND interface = ? ORDER BY ts DESC LIMIT 1",
+            (dev, iface)).fetchone()
+        d = conn.execute("SELECT status, last_seen FROM devices WHERE name = ?",
+                         (dev,)).fetchone()
+        down = d is not None and ((d["last_seen"] or 0) < now - DEVICE_STALE_S
+                                  or (d["status"] or "").lower() in DOWN_STATES)
+        if row is not None and (down or row["ts"] >= now - DEVICE_STALE_S):
+            latest.append(row)
+    latest = [r for r in latest if any(r[c] is not None for c in CANARY_COUNTERS)]
+    if not latest:
+        return []
+    checked.append("no port-counter floods")
+    out = []
+    for r in latest:
+        dev, iface = r["device"], r["interface"]
+        if {dev, f"{dev}:{iface}"} & settings.expected:
+            continue
+        for counter, label in CANARY_COUNTERS.items():
+            rate = r[counter]
+            key = f"port:canary:{dev}:{iface}:{counter}"
+            if rate is None or (rate < floor and key not in active):
+                continue
+            base = canary_baseline(conn, dev, iface, counter, now, warmup_s)
+            eff = max(base or 0.0, floor / mult)
+            limit = (clear if key in active else mult) * eff
+            if rate < limit or rate <= 0:
+                continue
+            said = (f"baseline {_rate(base)}/s" if base is not None
+                    else f"no baseline yet, floor {_rate(floor)}/s")
+            out.append({
+                "rule": "port-canary", "key": key, "category": "port",
+                "severity": "warn",
+                "text": f"{dev} {iface} {label} at {_rate(rate)}/s ({said})",
+                "href": f"/device/{dev}#port-{quote(iface, safe='/')}",
+                "ports": [(dev, iface)],
+            })
     return out
 
 
