@@ -75,9 +75,10 @@ RULES: dict[str, Rule] = {
     "ipam-drift": Rule(
         category="ipam", summary="IPAM records and the network disagree."),
     "expected-tunnel-missing": Rule(
-        category="tunnel",
+        category="tunnel", params={"for": 1, "idle_is_down": True},
         summary="A tunnel declared on the Tunnels tab is absent, not up, or "
-                "has not been reported for two hours."),
+                "has not been reported for two hours. A WireGuard tunnel with a stale "
+                "handshake (idle) counts as down unless idle_is_down is false."),
     "stale-source": Rule(
         category="source",
         summary="A data source has not reported for 15 minutes."),
@@ -99,8 +100,10 @@ _DEFAULT_RULE = Rule(category="")
 
 # Rules whose items an unreachable device would multiply: one unplugged
 # switch is one alert, not one per cable (ADR-0003, fixed inhibition). The
-# link-down rule names both cable ends in `ports` for this.
-_INHIBITED_BY_DOWN_DEVICE = {"link-down"}
+# link-down rule names both cable ends in `ports` for this. A tunnel item
+# is held while the firewall that terminates it is in down_devices (down or
+# stale): the device alert already says so.
+_INHIBITED_BY_DOWN_DEVICE = {"link-down", "expected-tunnel-missing"}
 
 # where record_first_seen kept its timestamps before the alerts table; read
 # once so an upgrade does not reset every item's "for" to new
@@ -176,6 +179,13 @@ def _parse_param(key: str, default, raw: str):
         if not roles:
             raise ValueError(f"{key}: name at least one, or disable the rule")
         return roles
+    if isinstance(default, bool):   # before int: bool subclasses int
+        v = raw.lower()
+        if v in ("1", "true", "on", "yes"):
+            return True
+        if v in ("0", "false", "off", "no"):
+            return False
+        raise ValueError(f"{key}: true or false")
     if isinstance(default, int):
         try:
             n = int(raw)

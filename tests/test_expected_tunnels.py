@@ -80,9 +80,89 @@ def test_tab_add_remove_and_validation(client, clean_env):
     assert r.status_code == 303
     page = client.get("/alerts?tab=tunnels").text
     assert "site-b" in page and "Expected tunnels" in page
-    for bad in ("device=fw1&type=gre&name=x", "device=&type=vpn&name=x",
+    for bad in ("device=fw1&type=vpn&name=x", "device=&type=vpn&name=x",
                 "device=fw1&type=vpn&name="):
         assert client.post("/alerts/tunnels", content=bad).status_code == 400
     r = client.post("/alerts/tunnels/remove", content="device=fw1&type=wireguard&name=site-b")
     assert r.status_code == 303
     assert "No tunnels declared" in client.get("/alerts?tab=tunnels").text
+
+
+def _tunnel_keys(notes):
+    return [n.key for n in notes if n.kind == "raise" and n.key.startswith("tunnel:")]
+
+
+@pytest.mark.parametrize("how", ["down", "stale"])
+def test_down_firewall_holds_tunnel_alerts(clean_env, tmp_path, how):
+    c = _demo(tmp_path)
+    s = load_settings()
+    expected_tunnels.add(c, *WG)
+    alerting.run(c, s)
+    _set(c, "down")
+    if how == "down":
+        c.execute("UPDATE devices SET status = 'down' WHERE name = 'fw1'")
+    else:
+        c.execute("UPDATE devices SET last_seen = last_seen - 3 * 3600 WHERE name = 'fw1'")
+    assert _tunnel_keys(alerting.run(c, s)) == []
+    c.execute("UPDATE devices SET status = 'up', last_seen = ? WHERE name = 'fw1'",
+              (pdb.now(),))
+    assert _tunnel_keys(alerting.run(c, s)) == ["tunnel:fw1:wireguard:site-b · wg-peer"]
+    c.close()
+
+
+def test_idle_is_down_parameter(clean_env, tmp_path):
+    c = _demo(tmp_path)
+    s = load_settings()
+    expected_tunnels.add(c, *WG)
+    alerting.run(c, s)
+    _set(c, "idle")
+    assert len(_tunnel_keys(alerting.run(c, s))) == 1
+    c.close()
+
+
+def test_idle_counts_as_up_when_parameter_false(clean_env, tmp_path):
+    c = _demo(tmp_path)
+    s = load_settings()
+    expected_tunnels.add(c, *WG)
+    alerting.run(c, s)
+    c.execute("UPDATE alert_rules SET params = '{\"idle_is_down\": false}' "
+              "WHERE name = 'expected-tunnel-missing'")
+    _set(c, "idle")
+    assert _tunnel_keys(alerting.run(c, s)) == []
+    c.execute("DELETE FROM tunnels")      # absent still counts
+    assert len(_tunnel_keys(alerting.run(c, s))) == 1
+    c.close()
+
+
+def test_for_two_polls(clean_env, tmp_path):
+    c = _demo(tmp_path)
+    s = load_settings()
+    expected_tunnels.add(c, *WG)
+    alerting.run(c, s)
+    c.execute("UPDATE alert_rules SET params = '{\"for\": 2}' "
+              "WHERE name = 'expected-tunnel-missing'")
+    _set(c, "down")
+    assert _tunnel_keys(alerting.run(c, s)) == []
+    assert len(_tunnel_keys(alerting.run(c, s))) == 1
+    c.close()
+
+
+def test_rules_tab_bool_param(client, clean_env):
+    import json
+    from patchbay import web
+
+    url = "/alerts/rules/expected-tunnel-missing"
+    assert client.post(url, content="enabled=1&param_idle_is_down=false").status_code == 303
+    assert client.post(url, content="enabled=1&param_idle_is_down=maybe").status_code == 400
+
+    def stored():
+        c = web._conn()
+        try:
+            return json.loads(c.execute("SELECT params FROM alert_rules WHERE name = "
+                                        "'expected-tunnel-missing'").fetchone()[0])
+        finally:
+            c.close()
+    assert stored()["idle_is_down"] is False
+    assert client.post(url, content="enabled=1&param_idle_is_down=true").status_code == 303
+    assert stored()["idle_is_down"] is True
+    assert "param_idle_is_down" in client.get("/alerts?tab=rules").text

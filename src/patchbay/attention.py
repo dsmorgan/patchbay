@@ -517,6 +517,8 @@ def _expected_tunnel_missing(conn, now: float, checked: list[str]) -> list[dict]
     declared = expected_tunnels.load(conn)
     if not declared:
         return []
+    idle_is_down = rule_params(conn, "expected-tunnel-missing",
+                               {"idle_is_down": True})["idle_is_down"] is not False
     checked.append("expected tunnels up")
     have = {(r["device"], r["type"], r["name"]): r
             for r in conn.execute("SELECT device, type, name, status, last_seen FROM tunnels")}
@@ -527,7 +529,8 @@ def _expected_tunnel_missing(conn, now: float, checked: list[str]) -> list[dict]
             why = "is not reported"
         elif (row["last_seen"] or 0) < now - DEVICE_STALE_S:
             why = "was last reported over two hours ago"
-        elif (row["status"] or "").lower() != "up":
+        elif (row["status"] or "").lower() != "up" and not (
+                not idle_is_down and (row["status"] or "").lower() == "idle"):
             why = f"is {row['status'] or 'not up'}"
         else:
             continue
@@ -536,6 +539,7 @@ def _expected_tunnel_missing(conn, now: float, checked: list[str]) -> list[dict]
             "key": f"tunnel:{e['device']}:{e['type']}:{e['name']}",
             "category": "tunnel", "severity": "warn",
             "devices": [e["device"]],   # for device-scope silences (#62)
+            "ports": [(e["device"], "")],   # held while the device is down
             "text": f"expected {e['type']} tunnel {e['name']} on {e['device']} {why}",
             "href": "/routed",
         })
