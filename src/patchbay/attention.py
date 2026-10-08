@@ -535,6 +535,7 @@ def _expected_tunnel_missing(conn, now: float, checked: list[str]) -> list[dict]
             "rule": "expected-tunnel-missing",
             "key": f"tunnel:{e['device']}:{e['type']}:{e['name']}",
             "category": "tunnel", "severity": "warn",
+            "devices": [e["device"]],   # for device-scope silences (#62)
             "text": f"expected {e['type']} tunnel {e['name']} on {e['device']} {why}",
             "href": "/routed",
         })
