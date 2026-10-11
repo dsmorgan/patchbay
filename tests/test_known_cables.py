@@ -363,3 +363,67 @@ def test_retire_route_dispatches_the_clear(clean_env, tmp_path, clock, monkeypat
         "a_device": "sw1", "a_interface": "1/0/2",
         "b_device": "sw2", "b_interface": "0/1"}).status_code == 303
     assert [(n.kind, n.key) for n in sent] == [("clear", KEY)]
+
+
+def test_undeclaring_a_down_cable_clears_its_alert(conn, settings, clock):
+    declared = [("sw1", "1/0/2", "sw2", "0/1")]
+    _poll(conn, settings, clock, lldp=False, declared=declared)
+    clock.t += 300
+    notes = _poll(conn, settings, clock, lldp=False, sw1="down", sw2="down",
+                  declared=declared)
+    assert [(n.kind, n.key) for n in notes] == [("raise", KEY)]
+    clock.t += 300
+    notes = _poll(conn, settings, clock, lldp=False, sw1="down", sw2="down", declared=[])
+    assert [(n.kind, n.key) for n in notes] == [("clear", KEY)]
+    assert _known(conn) == []
+
+
+def test_undeclaring_keeps_a_cable_discovery_still_states(conn, settings, clock):
+    declared = [("sw1", "1/0/2", "sw2", "0/1")]
+    _poll(conn, settings, clock, lldp=False, declared=declared)
+    clock.t += 300
+    # LLDP reports the same cable; the declaration goes, the record stays
+    _poll(conn, settings, clock, sw1="down", declared=[])
+    assert len(_known(conn)) == 1
+    assert _open(conn) == {KEY: "active"}
+
+
+def test_retire_dispatches_off_the_event_loop(clean_env, tmp_path, clock, monkeypatch):
+    import threading
+
+    from patchbay import transports
+
+    threads = []
+
+    class Rec:
+        def __init__(self, *a, **k):
+            pass
+
+        def send(self, notes):
+            threads.append(threading.current_thread())
+
+    monkeypatch.setattr(transports, "WebhookDispatcher", Rec)
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        pdb.init(c)
+        _pull(c, load_settings(), clock)
+    import patchbay.web as web
+
+    seen = {}
+    real = web.alerting.dispatch
+
+    def spy(notes, dispatcher=None):
+        import asyncio
+        try:
+            asyncio.get_running_loop()
+            seen["loop"] = True
+        except RuntimeError:
+            seen["loop"] = False
+        return real(notes, dispatcher)
+
+    monkeypatch.setattr(web.alerting, "dispatch", spy)
+    client = TestClient(web.app, follow_redirects=False)
+    assert client.post("/alerts/cables/retire", data={
+        "a_device": "sw1", "a_interface": "1/0/2",
+        "b_device": "sw2", "b_interface": "0/1"}).status_code == 303
+    # dispatch ran in a worker thread, where no event loop is running
+    assert seen == {"loop": False} and len(threads) == 1
