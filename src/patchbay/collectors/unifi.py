@@ -7,6 +7,7 @@ do not support API keys — that is a UniFi OS feature. APs become devices
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -43,16 +44,51 @@ def _bps(entry: dict, key: str, live: bool) -> int | None:
     return int(v * 8) if live and v is not None else None
 
 
+ERR_STATE_KEY = "unifi_port_error_counters"
+
+
+def _error_rates(prev: dict, now_ts: float, key: str, port: dict, live: bool,
+                 seen: dict) -> tuple[float | None, float | None]:
+    """Per-second rx/tx error rates (#70) by delta against the previous
+    poll's absolute `rx_errors`/`tx_errors` counters. Remembers this poll's
+    counters in `seen` and returns (in, out), None for each direction with no
+    rate: first sight of a port, a negative delta (counter wrap or device
+    restart), non-positive elapsed time, or a non-live device (the counters
+    are the controller's cache, and not remembered either, so a device coming
+    back starts fresh instead of averaging over its outage)."""
+    if not live:
+        return None, None
+    cur = [port.get("rx_errors"), port.get("tx_errors")]
+    seen[key] = [now_ts, *cur]
+    old = prev.get(key)
+    if not old or len(old) != 3:
+        return None, None
+    elapsed = now_ts - old[0]
+    out: list[float | None] = []
+    for before, after in zip(old[1:], cur):
+        try:
+            delta = after - before
+        except TypeError:
+            out.append(None)
+            continue
+        out.append(delta / elapsed if elapsed > 0 and delta >= 0 else None)
+    return out[0], out[1]
+
+
 def _sample(conn: sqlite3.Connection, device: str, iface: str,
-            in_bps: int | None, out_bps: int | None) -> None:
+            in_bps: int | None, out_bps: int | None,
+            in_errors: float | None = None,
+            out_errors: float | None = None) -> None:
     """One rate_history row when there is a rate to record: it feeds the
-    load view's 24-hour peak, and the normalizer ages the table out."""
-    if in_bps is None and out_bps is None:
+    load view's 24-hour peak, and the normalizer ages the table out. Error
+    rates feed the port canaries; discards are not collected (#86)."""
+    if (in_bps is None and out_bps is None
+            and in_errors is None and out_errors is None):
         return
     conn.execute(
-        "INSERT INTO rate_history (device, interface, ts, in_bps, out_bps) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (device, iface, db.now(), in_bps, out_bps),
+        "INSERT INTO rate_history (device, interface, ts, in_bps, out_bps, "
+        "in_errors, out_errors) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (device, iface, db.now(), in_bps, out_bps, in_errors, out_errors),
     )
 
 
@@ -92,6 +128,12 @@ class UnifiCollector:
             dr.raise_for_status()
             devices = dr.json().get("data", [])
             db.save_raw(conn, source=NAME, endpoint="stat/device", payload=devices)
+            try:
+                prev_err = json.loads(db.get_state(conn, ERR_STATE_KEY) or "{}")
+            except ValueError:
+                prev_err = {}
+            seen_err: dict[str, list] = {}
+            err_ts = db.now()
             ap_by_mac: dict[str, str] = {}
             sw_mac_to_name: dict[str, str] = {}        # switch chassis MAC → device name
             sw_port_names: dict[str, dict[int, str]] = {}  # device name → {port_idx: port_name}
@@ -142,7 +184,11 @@ class UnifiCollector:
                             in_bps=in_bps,
                             out_bps=out_bps,
                         )
-                        _sample(conn, dev_name, port_name, in_bps, out_bps)
+                        in_err, out_err = _error_rates(
+                            prev_err, err_ts, json.dumps([dev_name, port_name]),
+                            port, live, seen_err)
+                        _sample(conn, dev_name, port_name, in_bps, out_bps,
+                                in_err, out_err)
                     sw_port_names[dev_name] = port_idx_map
                     # Switch-to-switch uplink (same LLDP data as APs). The
                     # remote port name isn't knowable yet — the upstream
@@ -201,6 +247,8 @@ class UnifiCollector:
                     pending_links.append(
                         (dev_name, iface_name, upstream, upstream_port))
                 n_aps += 1
+
+            db.set_state(conn, ERR_STATE_KEY, json.dumps(seen_err))
 
             # uplink_remote_port is a port index; resolve it through the
             # upstream switch's port_table so a renamed port still matches
