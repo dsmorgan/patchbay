@@ -427,3 +427,64 @@ def test_retire_dispatches_off_the_event_loop(clean_env, tmp_path, clock, monkey
         "b_device": "sw2", "b_interface": "0/1"}).status_code == 303
     # dispatch ran in a worker thread, where no event loop is running
     assert seen == {"loop": False} and len(threads) == 1
+
+
+# -- infrastructure only (owner decision on #79) ------------------------------
+
+def _host_cable_poll(conn, settings, clock, *, role, lldp=True, oper="up"):
+    """sw1 1/0/2 to pc1 eth0; pc1's role is `role` (None = unknown)."""
+    did = pdb.upsert_device(conn, name="sw1", source="librenms", role="switch",
+                            status="up")
+    pdb.upsert_interface(conn, device_id=did, name="1/0/2", oper_status=oper,
+                         admin_status="up")
+    did = pdb.upsert_device(conn, name="pc1", source="librenms", role=role, status="up")
+    pdb.upsert_interface(conn, device_id=did, name="eth0", oper_status=oper,
+                         admin_status="up")
+    if lldp:
+        pdb.upsert_link(conn, a_device="sw1", a_interface="1/0/2", b_device="pc1",
+                        b_interface="eth0", source="lldp")
+    normalize.normalize(conn)
+    items = attention.attention_items(conn, settings, now=clock.t)[0]
+    return alerting.evaluate(conn, items, now=clock.t)
+
+
+HOST_KEY = "link-down:pc1:eth0:sw1:1/0/2"
+
+
+@pytest.mark.parametrize("role", ["host", None])
+def test_host_cable_clears_when_its_link_row_expires(conn, settings, clock, role):
+    _host_cable_poll(conn, settings, clock, role=role)
+    clock.t += 300
+    notes = _host_cable_poll(conn, settings, clock, role=role, lldp=False, oper="down")
+    assert [(n.kind, n.key) for n in notes] == [("raise", HOST_KEY)]
+    clock.t += normalize.EVIDENCE_TTL + 300
+    notes = _host_cable_poll(conn, settings, clock, role=role, lldp=False, oper="down")
+    # as before #79: the report expired, so the alert clears
+    assert _links(conn) == 0
+    assert [(n.kind, n.key) for n in notes] == [("clear", HOST_KEY)]
+    assert len(_known(conn)) == 1          # recorded, just not held
+
+
+def test_switch_to_switch_cable_holds(conn, settings, clock):
+    # the infra case, explicitly: both ends are switches
+    assert _pull(conn, settings, clock) == []
+    assert _open(conn) == {KEY: "active"}
+
+
+def test_far_end_role_change_applies_on_the_next_poll(conn, settings, clock):
+    # pulled while the far end's role was unknown: it clears at expiry...
+    _host_cable_poll(conn, settings, clock, role=None)
+    clock.t += 300
+    _host_cable_poll(conn, settings, clock, role=None, lldp=False, oper="down")
+    clock.t += normalize.EVIDENCE_TTL + 300
+    _host_cable_poll(conn, settings, clock, role=None, lldp=False, oper="down")
+    assert _open(conn) == {}
+    # ...and once a source says it is an AP, the remembered cable holds
+    clock.t += 300
+    notes = _host_cable_poll(conn, settings, clock, role="ap", lldp=False, oper="down")
+    assert [(n.kind, n.key) for n in notes] == [("raise", HOST_KEY)]
+    # demoted to a host again: the hold lets go
+    conn.execute("UPDATE devices SET role = 'host' WHERE name = 'pc1'")
+    clock.t += 300
+    notes = _host_cable_poll(conn, settings, clock, role=None, lldp=False, oper="down")
+    assert [(n.kind, n.key) for n in notes] == [("clear", HOST_KEY)]

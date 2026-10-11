@@ -42,6 +42,12 @@ GATEWAY_LOSS_PCT = 5.0
 # inference put on the map going down says nothing reliable about a cable.
 STATED_LINK_SOURCES = ("lldp", "unifi", "declared")
 
+# Roles whose cables a known-cable record (#79) holds past the evidence
+# TTL: the device-down rule's default watch list, fixed here rather than
+# following a site's edits to that rule's `roles`, so tuning device-down
+# never changes what link-down remembers.
+INFRA_ROLES = frozenset(DEVICE_DOWN_ROLES)
+
 # How long a known cable (#79) that is no longer reported and has not been
 # seen up is remembered: a decommissioned switch must not alert forever.
 # The link-down rule's `retain_days` parameter.
@@ -447,15 +453,24 @@ def _link_down(conn, settings, checked: list[str]) -> list[dict]:
     The cables are the stated links rows plus the known cables (#79): a
     pulled cable's LLDP or UniFi row expires at the evidence TTL, but its
     record holds the alert until the port comes back up, the operator
-    retires the cable, or it ages out. A retired cable is skipped unless a
+    retires the cable, or it ages out, when both ends are infrastructure. A retired cable is skipped unless a
     declaration still states it."""
     from . import known_cables
 
     cables = known_cables.stated(conn)
     retired = set()
+    # the long hold is for infrastructure only (owner decision on #79): a
+    # record nobody states any more alerts only while BOTH ends are in an
+    # infrastructure role, read now, so a role learned or changed later
+    # applies on the next evaluation. Unknown roles are not infrastructure;
+    # a desktop's cable behaves as before known cables existed
+    infra = {r["name"] for r in conn.execute("SELECT name, role FROM devices")
+             if (r["role"] or "").lower() in INFRA_ROLES}
     for r in conn.execute("SELECT * FROM known_cables"):
         ends = known_cables.ends_of(r["a_device"], r["a_interface"],
                                     r["b_device"], r["b_interface"])
+        if ends not in cables and not (ends[0][0] in infra and ends[1][0] in infra):
+            continue
         cables.setdefault(ends, set())
         if r["retired_at"] is not None:
             retired.add(ends)
