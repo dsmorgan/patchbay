@@ -2129,3 +2129,86 @@ def test_snapshot_keep_bad_stored_spec_warns_and_prunes_nothing(clean_env):
     s = load_settings()
     assert s.snapshot_keep == parse_keep_spec("7,6m,first")
     assert not any(w.startswith("PATCHBAY_SNAPSHOT_KEEP:") for w in s.parse_warnings)
+
+
+# --- UniFi: port error rates by delta (#70) -----------------------------------
+
+def _usw_errors(rx, tx, state=1):
+    import copy
+    usw = copy.deepcopy(_USW)
+    usw["state"] = state
+    usw["port_table"][0]["rx_errors"] = rx
+    usw["port_table"][0]["tx_errors"] = tx
+    return usw
+
+
+def _poll_unifi(conn, clean_env, monkeypatch, usw, ts):
+    from patchbay.collectors.unifi import UnifiCollector
+
+    class C(_UnifiClient):
+        def get(self, url, **kw):
+            r = super().get(url, **kw)
+            if "stat/device" in url:
+                class R:
+                    status_code = 200
+                    def raise_for_status(self_): pass
+                    def json(self_): return {"data": [usw]}
+                return R()
+            return r
+    monkeypatch.setattr(httpx, "Client", C)
+    monkeypatch.setattr(pdb, "now", lambda: ts)
+    UnifiCollector().collect(_unifi_settings(clean_env), conn)
+
+
+def _err_rows(conn):
+    return conn.execute(
+        "SELECT ts, in_errors, out_errors, in_discards, out_discards "
+        "FROM rate_history WHERE device='sw-access-01' AND interface='Port 1' "
+        "ORDER BY ts").fetchall()
+
+
+def test_unifi_error_rate_by_delta(conn, clean_env, monkeypatch):
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(100, 50), 1000.0)
+    first = _err_rows(conn)
+    assert [(r["in_errors"], r["out_errors"]) for r in first] == [(None, None)]
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(400, 50), 1060.0)
+    rows = _err_rows(conn)
+    assert rows[1]["in_errors"] == pytest.approx(5.0)
+    assert rows[1]["out_errors"] == pytest.approx(0.0)
+    assert rows[1]["in_discards"] is None and rows[1]["out_discards"] is None
+
+
+def test_unifi_error_counter_reset_drops_sample(conn, clean_env, monkeypatch):
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(1000, 1000), 1000.0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(5, 1060), 1060.0)
+    last = _err_rows(conn)[-1]
+    assert last["in_errors"] is None            # reset: no negative, no spike
+    assert last["out_errors"] == pytest.approx(1.0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(65, 1060), 1120.0)
+    assert _err_rows(conn)[-1]["in_errors"] == pytest.approx(1.0)  # remembered
+
+
+def test_unifi_error_rate_nonpositive_elapsed_dropped(conn, clean_env, monkeypatch):
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(0, 0), 1000.0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(99, 99), 1000.0)
+    assert _err_rows(conn)[-1]["in_errors"] is None
+
+
+def test_unifi_non_live_device_stores_no_error_rates(conn, clean_env, monkeypatch):
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(0, 0), 1000.0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(900, 900, state=0), 1060.0)
+    assert len(_err_rows(conn)) == 1            # nothing from the down device
+    # back up: starts fresh rather than averaging over the outage
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(1000, 1000), 1120.0)
+    assert _err_rows(conn)[-1]["in_errors"] is None
+
+
+def test_unifi_error_rates_reach_port_canary(conn, clean_env, monkeypatch):
+    from patchbay import attention
+    t0 = 1_800_000_000.0
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(0, 0), t0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(60 * 500, 0), t0 + 60)
+    items, _ = attention.attention_items(conn, _unifi_settings(clean_env))
+    canary = [i for i in items if i["rule"] == "port-canary"]
+    assert [i["key"] for i in canary] == [
+        "port:canary:sw-access-01:Port 1:in_errors"]
