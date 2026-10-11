@@ -729,3 +729,27 @@ def test_redaction_ignores_hex_case_of_percent_escapes():
     out = _one(url, lambda r: "bad caf%c3%a9Tok and 100%c3 literal")
     assert "caf%c3%a9Tok" not in out
     assert "100%c3 literal" in out            # unrelated text is untouched
+
+
+def test_overlapping_dispatches_failing_the_same_retry_keep_one_copy(dbp):
+    _add(dbp, "hook", "generic", HOOK)
+    c = _c(dbp)
+    pdb.set_state(c, transports.OUTBOX_KEY, json.dumps(
+        [{"t": 1, "note": transports._note_dict(_note("a:1")), "tries": 1}]))
+    c.commit()
+    c.close()
+    inner_done = []
+
+    def handler(request):
+        if not inner_done:
+            inner_done.append(True)
+            transports.WebhookDispatcher(
+                dbp, transport=httpx.MockTransport(handler), now=T0).send([])
+        return httpx.Response(500, text="boom")
+
+    transports.WebhookDispatcher(
+        dbp, transport=httpx.MockTransport(handler), now=T0).send([])
+    c = _c(dbp)
+    kept = json.loads(pdb.get_state(c, transports.OUTBOX_KEY))
+    c.close()
+    assert [e["note"]["key"] for e in kept] == ["a:1"]
