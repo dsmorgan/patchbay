@@ -42,6 +42,11 @@ GATEWAY_LOSS_PCT = 5.0
 # inference put on the map going down says nothing reliable about a cable.
 STATED_LINK_SOURCES = ("lldp", "unifi", "declared")
 
+# How long a known cable (#79) that is no longer reported and has not been
+# seen up is remembered: a decommissioned switch must not alert forever.
+# The link-down rule's `retain_days` parameter.
+CABLE_RETAIN_DAYS = 30
+
 # ifOperStatus values that mean the cable carries nothing. `notPresent`
 # and `dormant` describe hardware and power states, not a pulled cable.
 PORT_DOWN_STATES = {"down", "lowerlayerdown"}
@@ -437,36 +442,51 @@ def _link_down(conn, settings, checked: list[str]) -> list[dict]:
     inhibition holds it while either end's device is down: an unplugged
     switch is one device-down alert, not one per cable. The rule itself
     does not test the device, because the engine holds an open alert under
-    inhibition rather than clearing it."""
-    links = conn.execute(
-        "SELECT * FROM links WHERE source IN (%s) ORDER BY a_device, a_interface"
-        % ",".join("?" * len(STATED_LINK_SOURCES)), STATED_LINK_SOURCES).fetchall()
-    if not links:
+    inhibition rather than clearing it.
+
+    The cables are the stated links rows plus the known cables (#79): a
+    pulled cable's LLDP or UniFi row expires at the evidence TTL, but its
+    record holds the alert until the port comes back up, the operator
+    retires the cable, or it ages out. A retired cable is skipped unless a
+    declaration still states it."""
+    from . import known_cables
+
+    cables = known_cables.stated(conn)
+    retired = set()
+    for r in conn.execute("SELECT * FROM known_cables"):
+        ends = known_cables.ends_of(r["a_device"], r["a_interface"],
+                                    r["b_device"], r["b_interface"])
+        cables.setdefault(ends, set())
+        if r["retired_at"] is not None:
+            retired.add(ends)
+    if not cables:
         return []
     checked.append("no stated link down")
     port = {(r["dev"], r["iface"]): r for r in conn.execute(
         "SELECT d.name AS dev, i.name AS iface, i.oper_status, i.admin_status "
         "FROM interfaces i JOIN devices d ON d.id = i.device_id")}
-    out, seen = [], set()
-    for l in links:
-        ends = sorted([(l["a_device"], l["a_interface"]),
-                       (l["b_device"], l["b_interface"])])
+    out = []
+    for ends in sorted(cables):
+        declared = "declared" in cables[ends]
+        if ends in retired and not declared:
+            continue
         # an admin-down port was shut on purpose; that is a change, not a fault
         down = [e for e in ends if e in port
                 and (port[e]["oper_status"] or "").lower() in PORT_DOWN_STATES
                 and (port[e]["admin_status"] or "").lower() != "down"]
-        # sorted ends: lldp and declared rows for one cable share one key
-        key = "link-down:" + ":".join(f"{d}:{i}" for d, i in ends)
-        if not down or key in seen:
+        if not down:
             continue
-        seen.add(key)
         (ad, ai), (bd, bi) = ends
         out.append({
-            "rule": "link-down", "key": key, "category": "link", "severity": "warn",
+            # sorted ends: lldp and declared rows for one cable share one key
+            "rule": "link-down", "key": known_cables.link_down_key(ends),
+            "category": "link", "severity": "warn",
             "text": f"{ad} {ai} ↔ {bd} {bi} is down ("
                     + ", ".join(f"{d} {i}" for d, i in down) + " reports down)",
             "href": f"/topology?focus={down[0][0]}",
-            "ports": ends,
+            "ports": list(ends),
+            # a declaration is retired by undeclaring it, on /ops
+            "retirable": not declared,
         })
     return out
 

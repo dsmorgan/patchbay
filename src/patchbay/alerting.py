@@ -39,9 +39,9 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from . import db
-from .attention import (CANARY_CLEAR, CANARY_FLOOR, CANARY_FOR, CANARY_MULTIPLIER,
-                        CANARY_WARMUP_H, DEVICE_DOWN_ROLES, DEVICE_STALE_S,
-                        DOWN_STATES, GATEWAY_LOSS_PCT, attention_items)
+from .attention import (CABLE_RETAIN_DAYS, CANARY_CLEAR, CANARY_FLOOR, CANARY_FOR,
+                        CANARY_MULTIPLIER, CANARY_WARMUP_H, DEVICE_DOWN_ROLES,
+                        DEVICE_STALE_S, DOWN_STATES, GATEWAY_LOSS_PCT, attention_items)
 from .silences import describe
 
 # History retention: a quarter covers "has this happened before?", and the
@@ -71,10 +71,15 @@ RULES: dict[str, Rule] = {
         category="device", params={"for": 1, "roles": list(DEVICE_DOWN_ROLES)},
         summary="A device in a watched role reports a down state, or has not "
                 "been reported for two hours."),
+    # a pulled cable keeps alerting after its link row expires (#79): the
+    # known_cables record holds it until the port is up, the cable is
+    # retired, or retain_days pass without it being seen up
     "link-down": Rule(
-        category="link",
+        category="link", params={"for": 1, "retain_days": CABLE_RETAIN_DAYS},
         summary="A port on a stated cable (LLDP, UniFi, or declared) is down "
-                "while its device is up."),
+                "while its device is up. A cable nobody reports any more still "
+                "counts until its port is up again, it is retired from its "
+                "alert, or retain_days pass without it being seen up."),
     "gateway-degraded": Rule(
         category="gateway", params={"for": 1, "loss": GATEWAY_LOSS_PCT},
         summary="Critical when the firewall reports a gateway down; warning "
@@ -509,6 +514,23 @@ def _silenced(conn, it: dict, name: str, rule: dict, row, silence: dict,
                                 row["id"]))
     if row["state"] != "silenced":
         _event(conn, row["id"], now, "silenced", a, why)
+
+
+def clear_quietly(conn: sqlite3.Connection, key: str, detail: str,
+                  now: float | None = None) -> bool:
+    """Clear one open alert because the operator settled it (a retired
+    cable, #79), not because the condition ended. Like a disabled rule's
+    clear, it is history, not news: nothing is sent. False when no alert
+    is open under `key`."""
+    now = db.now() if now is None else now
+    row = conn.execute("SELECT * FROM alerts WHERE key = ? AND state != 'cleared'",
+                       (key,)).fetchone()
+    if row is None:
+        return False
+    conn.execute("UPDATE alerts SET state='cleared', cleared_at=? WHERE id=?",
+                 (now, row["id"]))
+    _event(conn, row["id"], now, "cleared", row, detail)
+    return True
 
 
 def _legacy_first_seen(conn: sqlite3.Connection) -> dict[str, float]:
