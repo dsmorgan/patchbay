@@ -790,7 +790,12 @@ async def cable_retire(request: Request):
         # after commit, as /ops/poll does: a receiver that heard the raise
         # hears the clear; a failed send is queued for the next poll's retry
         try:
-            alerting.dispatch(notes, transports.WebhookDispatcher(load_settings().db_path))
+            # in a worker thread: the receivers' HTTP and SQLite's busy
+            # timeout must not stall the event loop and every other request
+            from starlette.concurrency import run_in_threadpool
+
+            await run_in_threadpool(alerting.dispatch, notes,
+                                    transports.WebhookDispatcher(load_settings().db_path))
         except Exception as e:   # the retirement stands; only the send failed
             import logging
             logging.getLogger(__name__).warning(
