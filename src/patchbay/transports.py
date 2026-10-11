@@ -572,6 +572,10 @@ class WebhookDispatcher:
             if e in consumed:
                 consumed.remove(e)
             elif isinstance(e, dict) and e.get("t") in alive:
+                # both dispatches read the same retry and both failed it:
+                # keep our copy only
+                if any(m["note"] == e.get("note") for m in per.get(e["t"], [])):
+                    continue
                 per.setdefault(e["t"], []).append(e)
         kept = [e for q in per.values() for e in q[-OUTBOX_MAX:]]
         db.set_state(conn, OUTBOX_KEY, json.dumps(kept))
