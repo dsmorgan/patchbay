@@ -2212,3 +2212,12 @@ def test_unifi_error_rates_reach_port_canary(conn, clean_env, monkeypatch):
     canary = [i for i in items if i["rule"] == "port-canary"]
     assert [i["key"] for i in canary] == [
         "port:canary:sw-access-01:Port 1:in_errors"]
+
+
+def test_unifi_error_rate_dropped_after_long_gap(conn, clean_env, monkeypatch):
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(0, 0), 1000.0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(900, 900), 1000.0 + 86400)
+    last = _err_rows(conn)[-1]
+    assert last["in_errors"] is None and last["out_errors"] is None
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(960, 960), 1000.0 + 86460)
+    assert _err_rows(conn)[-1]["in_errors"] == pytest.approx(1.0)

@@ -45,6 +45,9 @@ def _bps(entry: dict, key: str, live: bool) -> int | None:
 
 
 ERR_STATE_KEY = "unifi_port_error_counters"
+# 6x the default 300 s poll interval (Settings doesn't know the interval): a
+# longer gap means missed polls, and a delta across it is not a rate
+ERR_MAX_ELAPSED_S = 1800
 
 
 def _error_rates(prev: dict, now_ts: float, key: str, port: dict, live: bool,
@@ -64,6 +67,8 @@ def _error_rates(prev: dict, now_ts: float, key: str, port: dict, live: bool,
     if not old or len(old) != 3:
         return None, None
     elapsed = now_ts - old[0]
+    if elapsed > ERR_MAX_ELAPSED_S:
+        return None, None
     out: list[float | None] = []
     for before, after in zip(old[1:], cur):
         try:
