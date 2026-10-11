@@ -49,6 +49,9 @@ site-specific leaked into code, tests, or docs.
 - **Evidence ages out**: non-declared links and inferred switches expire after
   `EVIDENCE_TTL` (2h) without a refresh; live evidence is re-upserted every
   poll/normalize. Declared rows live and die by the .env/DB declaration only.
+  The link-down rule remembers stated cables past the TTL in `known_cables`
+  (#79), so a pulled cable keeps alerting without the map drawing it; that
+  table is the alert's memory, never the map's.
 - **Identity vs liveness**: names, MACs, and addresses are stable facts worth
   recording even from a stale/disconnected source (vCenter caches a
   notResponding host's config); speed and oper-status are liveness and must be

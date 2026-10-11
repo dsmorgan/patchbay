@@ -408,3 +408,37 @@ Each is answered in the issue that implements the decision it belongs to.
   else).
 - *Latest.* An alert snapshot also refreshes `patchbay-latest.html`: it is
   the newest picture of the network.
+
+## Amendment (2026-10-11): known cables, issue #79
+
+**Problem.** LLDP and UniFi link rows expire at the evidence TTL (two
+hours). A pulled cable stops being reported, its row expires, and the
+`link down` alert cleared while the cable was still out.
+
+**Decision.** The map and the alert rule keep separate memories. The
+`links` lifecycle is unchanged, so the map still stops drawing a cable
+nobody reports. A `known_cables` table (`known_cables.py`) records every
+stated cable (lldp, unifi, declared) by its sorted ends, with its first
+sighting and the last normalize that saw it with no end down. `link down`
+evaluates the stated links rows plus the known cables, so the alert holds
+until one of these happens:
+
+- *The port comes back up.* Nothing is down, so the alert clears. A cable
+  reported again with no end down refreshes its record.
+- *The operator retires the cable.* A **retire cable** button on the
+  Active row posts to `/alerts/cables/retire`. The record is kept as a
+  tombstone rather than deleted, so a link row the source still reports
+  (LLDP caches neighbors) cannot bring the alert back. The open alert
+  clears with History detail `cable retired` and no notification, the
+  same as a disabled rule's clear: the operator settled it. The tombstone
+  lifts if the cable is reported again with no end down. A declared cable
+  is refused; removing it from `PATCHBAY_LINKS` retires it.
+- *The record ages out.* A cable that is no longer reported and has not
+  been seen up for `retain_days` (a `link down` parameter, default 30) is
+  forgotten, so a decommissioned switch does not alert forever. A cable
+  that is still stated never ages out.
+
+A record also goes when another stated cable claims one of its ports: a
+port has one cable, so a moved cable supersedes its old record. Device
+renames rewrite the records like every other name-keyed table. Items keep
+`ports`, so device-down inhibition and silences apply as before.
