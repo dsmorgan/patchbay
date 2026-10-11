@@ -11,6 +11,11 @@ put.
 ## [0.20.0] — 2026-10-11
 
 ### Added
+- Pulled cables keep alerting (#79). A link-down between two infrastructure
+  devices (switch, AP, firewall, router, hypervisor) now holds until the port
+  comes back, you retire the cable with **retire cable** on its alert, or 30
+  days pass (the rule's `retain_days`). Cables to ordinary hosts clear after
+  about 2 hours as before, and the topology map is unchanged.
 - UniFi switch ports report error rates (#70), so port canaries cover
   UniFi-only sites. Rates come from the change in `rx_errors` and
   `tx_errors` between polls; a counter reset or a gap longer than 30 minutes
