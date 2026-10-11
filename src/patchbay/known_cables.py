@@ -11,6 +11,10 @@ Lifecycle, maintained by `record()` on every normalize:
     record    a stated link row (lldp, unifi, declared) upserts its cable;
               `last_up` refreshes while no end reports oper down
     hold      the row outlives its link row; link-down keeps evaluating it
+              while both ends are infrastructure (attention.INFRA_ROLES).
+              Every stated cable is recorded, so a role learned later
+              applies at once; a cable to a host stops alerting when its
+              link row expires, as before this table existed
     supersede another stated cable claims one of its ports: a port has
               one cable, so the old record goes
     retire    the operator says the cable is gone (`retire()`): the row is

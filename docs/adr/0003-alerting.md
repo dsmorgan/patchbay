@@ -439,6 +439,16 @@ until one of these happens:
   forgotten, so a decommissioned switch does not alert forever. A cable
   that is still stated never ages out.
 
+*Infrastructure only (owner decision on #79).* The hold applies only
+when both ends are infrastructure: devices whose role is switch, ap,
+firewall, router, or hypervisor (`attention.INFRA_ROLES`, the device-down
+rule's default role list, fixed so that tuning device-down does not change
+it). A device with no known role is not infrastructure. A cable with an
+ordinary host at either end behaves as before: once its links row expires,
+it no longer alerts. Every stated cable is still recorded, and the role
+test is made at evaluation time, so a far end whose role is learned or
+changed later applies on the next poll without waiting for a new report.
+
 A record also goes when another stated cable claims one of its ports: a
 port has one cable, so a moved cable supersedes its old record. Device
 renames rewrite the records like every other name-keyed table. Items keep

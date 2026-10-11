@@ -77,9 +77,12 @@ RULES: dict[str, Rule] = {
     "link-down": Rule(
         category="link", params={"for": 1, "retain_days": CABLE_RETAIN_DAYS},
         summary="A port on a stated cable (LLDP, UniFi, or declared) is down "
-                "while its device is up. A cable nobody reports any more still "
-                "counts until its port is up again, it is retired from its "
-                "alert, or retain_days pass without it being seen up."),
+                "while its device is up. A cable between two infrastructure "
+                "devices (switch, ap, firewall, router, hypervisor) still counts "
+                "after nobody reports it, until its port is up again, it is "
+                "retired from its alert, or retain_days pass without it being "
+                "seen up. A cable to any other device clears when its report "
+                "expires."),
     "gateway-degraded": Rule(
         category="gateway", params={"for": 1, "loss": GATEWAY_LOSS_PCT},
         summary="Critical when the firewall reports a gateway down; warning "
