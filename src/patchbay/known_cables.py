@@ -96,6 +96,12 @@ def record(conn: sqlite3.Connection, now: float) -> None:
             _delete(conn, ends)
 
 
+def forget(conn: sqlite3.Connection, ends: Ends) -> None:
+    """Drop a cable's record outright: its declaration was removed, which
+    is the operator retiring it (normalize._apply_declared_links)."""
+    _delete(conn, ends)
+
+
 def _delete(conn: sqlite3.Connection, ends: Ends) -> None:
     conn.execute("DELETE FROM known_cables WHERE a_device = ? AND a_interface = ? "
                  "AND b_device = ? AND b_interface = ?", (*ends[0], *ends[1]))

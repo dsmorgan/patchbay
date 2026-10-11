@@ -807,6 +807,16 @@ def _apply_declared_links(conn: sqlite3.Connection,
             if (r["a_device"], r["a_interface"],
                     r["b_device"], r["b_interface"]) not in keep:
                 conn.execute("DELETE FROM links WHERE id=?", (r["id"],))
+                # ...and its link-down memory (#79): undeclaring is how a
+                # declared cable is retired, unless discovery still states it
+                ends = known_cables.ends_of(r["a_device"], r["a_interface"],
+                                            r["b_device"], r["b_interface"])
+                if not conn.execute(
+                        "SELECT 1 FROM links WHERE source IN ('lldp', 'unifi') AND "
+                        "((a_device=? AND a_interface=? AND b_device=? AND b_interface=?) "
+                        "OR (a_device=? AND a_interface=? AND b_device=? AND b_interface=?))",
+                        (*ends[0], *ends[1], *ends[1], *ends[0])).fetchone():
+                    known_cables.forget(conn, ends)
     for ad, ai, bd, bi in declared:
         db.upsert_link(conn, a_device=ad, a_interface=ai,
                        b_device=bd, b_interface=bi, source="declared")
