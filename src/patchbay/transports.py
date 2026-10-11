@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -218,8 +219,19 @@ def _redact(text: str, url: str, *, kind: str | None = None,
     if sent:
         pieces |= _secret_pieces(sent, kind=kind)
     for p in sorted(pieces, key=len, reverse=True):
-        text = text.replace(p, "<redacted>")
+        text = _hex_insensitive(p).sub("<redacted>", text)
     return text
+
+
+def _hex_insensitive(piece: str) -> "re.Pattern[str]":
+    """A pattern for `piece` that matches %c3 and %C3 alike. Only the hex
+    digits of a percent escape ignore case; the rest stays exact, so
+    unrelated text is never altered."""
+    parts = re.split(r"(%[0-9a-fA-F]{2})", piece)
+    return re.compile("".join(
+        "%" + "".join(f"[{c.lower()}{c.upper()}]" for c in part[1:])
+        if i % 2 else re.escape(part)
+        for i, part in enumerate(parts)))
 
 
 def _error_text(e: Exception, url: str, *, kind: str | None = None,
@@ -311,14 +323,17 @@ def _request(client: httpx.Client, t, *, status: str | None = None, msg: str = "
     from the start, and at most BODY_MAX bytes are read."""
     max_s = max(0.1, min(REQUEST_S, max_s))
     deadline = time.monotonic() + max_s
-    if t["kind"] == "kuma":
-        req = client.build_request("GET", kuma_url(t["url"], status or "up", msg),
-                                   timeout=httpx.Timeout(max_s))
-    else:
-        req = client.build_request("POST", t["url"], json=payload,
-                                   timeout=httpx.Timeout(max_s))
-    sent = str(req.url)
+    sent = ""
     try:
+        # building can fail for a stored URL that passed validate_url, so it
+        # sits inside the try: one bad transport is one failed delivery
+        if t["kind"] == "kuma":
+            req = client.build_request("GET", kuma_url(t["url"], status or "up", msg),
+                                       timeout=httpx.Timeout(max_s))
+        else:
+            req = client.build_request("POST", t["url"], json=payload,
+                                       timeout=httpx.Timeout(max_s))
+        sent = str(req.url)
         r = client.send(req, stream=True)
         try:
             body = b""
@@ -331,7 +346,7 @@ def _request(client: httpx.Client, t, *, status: str | None = None, msg: str = "
         finally:
             r.close()
     except Exception as e:  # any failure is a failed delivery, never a crash
-        return False, _error_text(e, t["url"], kind=t["kind"], sent=sent)
+        return False, _error_text(e, t["url"], kind=t["kind"], sent=sent or None)
     text = body[:BODY_MAX].decode("utf-8", "replace")
     # redact the whole body first, then shorten: cutting first could leave
     # the front half of a token that no longer matches the full one

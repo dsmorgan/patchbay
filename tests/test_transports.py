@@ -691,3 +691,41 @@ def _note(key):
     return alerting.Notification(kind="raise", key=key, rule="stale-source",
                                  severity="warn", text=f"{key} text", href="/ops",
                                  raised_at=T0, route="1:warn")
+
+
+# -- #81: per-delivery build errors, hex-case redaction ---------------------
+
+def _unbuildable(monkeypatch, bad):
+    """Make `bad` pass validate_url but fail while the request is built, as a
+    stored URL httpx or kuma_url rejects would."""
+    real = transports.kuma_url
+
+    def kuma_url(url, *a, **kw):
+        if url == bad:
+            raise ValueError(f"cannot build {url}")
+        return real(url, *a, **kw)
+    monkeypatch.setattr(transports, "kuma_url", kuma_url)
+    assert transports.validate_url(bad) is None
+
+
+def test_unbuildable_url_fails_one_delivery_not_the_cycle(dbp, monkeypatch):
+    bad = "https://kuma.example.com/api/push/badSecret77"
+    _unbuildable(monkeypatch, bad)
+    bad_id = _add(dbp, "bad", "kuma", bad)
+    _add(dbp, "good", "generic", HOOK)
+    _route(dbp, "stale-source", "2:warn")
+    good = Recorder()
+    d = _poll(dbp, [_item("source:stale")], T0, good)
+    assert len(good.seen) == 1                       # the healthy one still delivered
+    row = _transport(dbp, bad_id)
+    assert row["failures"] == 1 and "ValueError" in row["last_error"]
+    assert "badSecret77" not in row["last_error"]
+    assert not any("badSecret77" in line for line in d.lines)
+    assert not any("badSecret77" in (e["detail"] or "") for e in _events(dbp))
+
+
+def test_redaction_ignores_hex_case_of_percent_escapes():
+    url = "https://hooks.example.com/w/caf%C3%A9Tok"
+    out = _one(url, lambda r: "bad caf%c3%a9Tok and 100%c3 literal")
+    assert "caf%c3%a9Tok" not in out
+    assert "100%c3 literal" in out            # unrelated text is untouched
