@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import alerting, db, expected_tunnels, silences, transports
+from . import alerting, db, expected_tunnels, known_cables, silences, transports
 from . import routed
 from .attention import (CATEGORIES, STALE_MIN, attention_items, device_totals, drift_report,
                         human_age, human_speed, ip_sort_key, ipam_link,
@@ -747,6 +747,45 @@ async def silence_delete(sid: int, request: Request):
     finally:
         conn.close()
     return _silence_back(f)
+
+
+# -- retire a cable (#79) -------------------------------------------------------
+# A known cable holds its link-down alert after the link row expires; this is
+# how the operator says it was removed on purpose. Validated before any write.
+
+CABLE_FIELDS = ("a_device", "a_interface", "b_device", "b_interface")
+
+
+@app.post("/alerts/cables/retire")
+async def cable_retire(request: Request):
+    """Retire one cable from its link-down row: the known_cables record is
+    tombstoned, so the rule stops evaluating it, and its open alert clears
+    quietly with History detail "cable retired". A declared cable is
+    refused: undeclaring it on /ops is how a declaration is retired."""
+    from fastapi.responses import RedirectResponse
+
+    f = await _form(request)
+    vals = [f.get(k, "") for k in CABLE_FIELDS]
+    if not all(vals) or any(len(v) > silences.SCOPE_MAX or not v.isprintable()
+                            for v in vals):
+        raise HTTPException(400, "a cable needs both ends: a_device, a_interface, "
+                                 "b_device, b_interface")
+    ends = known_cables.ends_of(*vals)
+    conn = _conn()
+    try:
+        db.init(conn)
+        if "declared" in known_cables.stated(conn).get(ends, ()):
+            raise HTTPException(400, "a declared cable is retired by removing it "
+                                     "from PATCHBAY_LINKS on /ops")
+        now = db.now()
+        if not known_cables.retire(conn, ends, now):
+            raise HTTPException(404, "no such cable")
+        alerting.clear_quietly(conn, known_cables.link_down_key(ends),
+                               "cable retired", now)
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/alerts", status_code=303)
 
 
 TOPO_ROLES = ("firewall", "router", "switch", "hypervisor", "ap", "unmanaged-switch")
