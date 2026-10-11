@@ -60,6 +60,16 @@ CREATE TABLE IF NOT EXISTS links (
     last_seen REAL,
     UNIQUE (a_device, a_interface, b_device, b_interface, source)
 );
+CREATE TABLE IF NOT EXISTS known_cables (
+    a_device TEXT NOT NULL,    -- stated cables (lldp, unifi, declared) kept
+    a_interface TEXT NOT NULL, -- past the evidence TTL for the link-down
+    b_device TEXT NOT NULL,    -- rule (#79, known_cables.py); ends sorted
+    b_interface TEXT NOT NULL, -- like links. The map never reads this.
+    first_seen REAL NOT NULL,
+    last_up REAL,              -- last normalize that saw it with no end down
+    retired_at REAL,           -- operator said it is gone; NULL = live
+    PRIMARY KEY (a_device, a_interface, b_device, b_interface)
+);
 CREATE TABLE IF NOT EXISTS endpoints (
     id INTEGER PRIMARY KEY,
     mac TEXT NOT NULL UNIQUE,

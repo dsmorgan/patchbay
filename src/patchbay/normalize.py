@@ -18,7 +18,7 @@ import json
 import sqlite3
 from collections import Counter
 
-from . import alerting, db
+from . import alerting, db, known_cables
 
 
 def _is_raw_model_code(value: str | None) -> bool:
@@ -192,6 +192,9 @@ def _rename_refs(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE config_revisions SET device=? WHERE device=?", (canon, alias))
         conn.execute("UPDATE OR IGNORE tunnels SET device=? WHERE device=?", (canon, alias))
         conn.execute("DELETE FROM tunnels WHERE device=?", (alias,))
+    # known cables are name-keyed too: a rename that missed them would hold
+    # a link-down alert on a name no port answers to, until it aged out
+    known_cables.rename(conn, lambda n: alias_map.get(n, n))
     # renames can flip a row out of upsert_link's sorted orientation, hiding
     # it from the UNIQUE constraint and from pair-keyed deletes — restore it.
     # A collision with an already-sorted twin merges timestamps (same rule
@@ -912,6 +915,9 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
     conflicts = _check_declarations(conn, declared_links or [])
     db.set_state(conn, "declaration_conflicts", json.dumps(conflicts))
     expired = _expire_stale_evidence(conn)
+    # after expiry, so "stated now" means what the map draws now; the record
+    # outlives an expired row, which is the point (#79)
+    known_cables.record(conn, db.now())
     tagged = _apply_vnic_vlans(conn)
     _propagate_vlans(conn, vlan_filters)
     # housekeeping: raw payloads are a debugging window, not an archive

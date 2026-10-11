@@ -344,7 +344,7 @@ def test_catalog_defaults_per_adr(conn):
     assert json.loads(rows["device-down"]["params"]) == {
         "for": 1, "roles": ["switch", "ap", "firewall", "router", "hypervisor"]}
     assert json.loads(rows["gateway-degraded"]["params"]) == {"for": 1, "loss": 5.0}
-    assert json.loads(rows["link-down"]["params"]) == {"for": 1}
+    assert json.loads(rows["link-down"]["params"]) == {"for": 1, "retain_days": 30}
     # config changed and slow link inform without paging
     assert {n for n, r in rows.items() if r["route"] == "none"} == {
         "config-changed", "slow-link"}
