@@ -517,7 +517,14 @@ class WebhookDispatcher:
                 elif sent:
                     self.lines.append(f"[ok]   notify {t['name']}: {sent} sent")
 
-        # the outcome lands in one short write, after every request is done
+        # the outcome lands in one short write, after every request is done.
+        # BEGIN IMMEDIATE first: another dispatch (the scheduled poll and
+        # /ops/poll can overlap) may have queued notes while our requests
+        # were in flight, and the outbox is merged under the write lock so
+        # neither side's notes are lost (#80)
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
         for tid, u in updates.items():
             if u["ok"]:
                 conn.execute("UPDATE alert_transports SET last_sent_at=?, last_result=?, "
@@ -538,6 +545,19 @@ class WebhookDispatcher:
         per: dict[int, list] = {}
         for e in (e for e in new_outbox if e["t"] in alive):
             per.setdefault(e["t"], []).append(e)
+        # the entries this cycle read are consumed (retried, dropped, or
+        # re-queued in new_outbox); whatever else is stored now was queued
+        # by an overlapping dispatch and stays
+        try:
+            current = json.loads(db.get_state(conn, OUTBOX_KEY) or "[]")
+        except ValueError:
+            current = []
+        consumed = list(outbox) if isinstance(outbox, list) else []
+        for e in current if isinstance(current, list) else []:
+            if e in consumed:
+                consumed.remove(e)
+            elif isinstance(e, dict) and e.get("t") in alive:
+                per.setdefault(e["t"], []).append(e)
         kept = [e for q in per.values() for e in q[-OUTBOX_MAX:]]
         db.set_state(conn, OUTBOX_KEY, json.dumps(kept))
         conn.commit()
