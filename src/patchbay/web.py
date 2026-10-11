@@ -760,7 +760,8 @@ CABLE_FIELDS = ("a_device", "a_interface", "b_device", "b_interface")
 async def cable_retire(request: Request):
     """Retire one cable from its link-down row: the known_cables record is
     tombstoned, so the rule stops evaluating it, and its open alert clears
-    quietly with History detail "cable retired". A declared cable is
+    with History detail "cable retired": a clear is sent only if the raise
+    was, the same rule as a silence. A declared cable is
     refused: undeclaring it on /ops is how a declaration is retired."""
     from fastapi.responses import RedirectResponse
 
@@ -780,11 +781,20 @@ async def cable_retire(request: Request):
         now = db.now()
         if not known_cables.retire(conn, ends, now):
             raise HTTPException(404, "no such cable")
-        alerting.clear_quietly(conn, known_cables.link_down_key(ends),
-                               "cable retired", now)
+        notes = alerting.clear_settled(conn, known_cables.link_down_key(ends),
+                                       "cable retired", now)
         conn.commit()
     finally:
         conn.close()
+    if notes:
+        # after commit, as /ops/poll does: a receiver that heard the raise
+        # hears the clear; a failed send is queued for the next poll's retry
+        try:
+            alerting.dispatch(notes, transports.WebhookDispatcher(load_settings().db_path))
+        except Exception as e:   # the retirement stands; only the send failed
+            import logging
+            logging.getLogger(__name__).warning(
+                "retire cable: clear dispatch failed: %s", type(e).__name__)
     return RedirectResponse("/alerts", status_code=303)
 
 

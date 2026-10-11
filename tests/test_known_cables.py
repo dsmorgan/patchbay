@@ -184,7 +184,7 @@ def test_retired_cable_is_lifted_when_it_comes_back(conn, settings, clock):
     _pull(conn, settings, clock)
     assert known_cables.retire(conn, known_cables.ends_of("sw1", "1/0/2", "sw2", "0/1"),
                                clock.t)
-    alerting.clear_quietly(conn, KEY, "cable retired", clock.t)
+    alerting.clear_settled(conn, KEY, "cable retired", clock.t)
     clock.t += 300
     # LLDP still reports it with the port down: the retirement holds
     pdb.upsert_link(conn, a_device="sw1", a_interface="1/0/2", b_device="sw2",
@@ -317,3 +317,49 @@ def test_a_moved_cable_supersedes_the_old_record(conn, settings, clock):
     _poll(conn, settings, clock, lldp=False, sw2="down")
     assert [(k["b_device"], k["b_interface"]) for k in _known(conn)] == [("sw3", "0/4")]
     assert _open(conn) == {}
+
+
+def test_retire_sends_a_clear_only_if_the_raise_was_sent(conn, settings, clock):
+    _pull(conn, settings, clock)                  # announced: active, notified
+    [n] = alerting.clear_settled(conn, KEY, "cable retired", clock.t)
+    assert (n.kind, n.key, n.rule) == ("clear", KEY, "link-down")
+    ev = conn.execute("SELECT event, detail FROM alert_events ORDER BY id DESC").fetchone()
+    assert (ev["event"], ev["detail"]) == ("cleared", "cable retired")
+    assert alerting.clear_settled(conn, KEY, "cable retired", clock.t) == []
+
+
+def test_retire_of_an_unannounced_alert_is_silent(conn, settings, clock):
+    _poll(conn, settings, clock)
+    conn.execute("UPDATE alert_rules SET params = ? WHERE name = 'link-down'",
+                 (json.dumps({"for": 3}),))
+    clock.t += 300
+    _poll(conn, settings, clock, lldp=False, sw1="down", sw2="down")
+    assert _open(conn) == {KEY: "pending"}
+    assert alerting.clear_settled(conn, KEY, "cable retired", clock.t) == []
+    ev = conn.execute("SELECT event, detail FROM alert_events ORDER BY id DESC").fetchone()
+    assert (ev["event"], ev["detail"]) == ("cleared", "cable retired")
+    assert _open(conn) == {}
+
+
+def test_retire_route_dispatches_the_clear(clean_env, tmp_path, clock, monkeypatch):
+    sent = []
+
+    class Rec:
+        def __init__(self, *a, **k):
+            pass
+
+        def send(self, notes):
+            sent.extend(notes)
+
+    from patchbay import transports
+    monkeypatch.setattr(transports, "WebhookDispatcher", Rec)
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        pdb.init(c)
+        _pull(c, load_settings(), clock)
+    import patchbay.web as web
+
+    client = TestClient(web.app, follow_redirects=False)
+    assert client.post("/alerts/cables/retire", data={
+        "a_device": "sw1", "a_interface": "1/0/2",
+        "b_device": "sw2", "b_interface": "0/1"}).status_code == 303
+    assert [(n.kind, n.key) for n in sent] == [("clear", KEY)]

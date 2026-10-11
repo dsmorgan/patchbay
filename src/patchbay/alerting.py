@@ -516,21 +516,27 @@ def _silenced(conn, it: dict, name: str, rule: dict, row, silence: dict,
         _event(conn, row["id"], now, "silenced", a, why)
 
 
-def clear_quietly(conn: sqlite3.Connection, key: str, detail: str,
-                  now: float | None = None) -> bool:
+def clear_settled(conn: sqlite3.Connection, key: str, detail: str,
+                  now: float | None = None,
+                  catalog: dict[str, Rule] = RULES) -> list[Notification]:
     """Clear one open alert because the operator settled it (a retired
-    cable, #79), not because the condition ended. Like a disabled rule's
-    clear, it is history, not news: nothing is sent. False when no alert
-    is open under `key`."""
+    cable, #79), not because the condition ended. The silence rule applies:
+    an alert a receiver heard about (last_notified_at set) gets its clear,
+    or a generic receiver would stay firing; one never announced clears as
+    history only. Returns the notification due, for the caller to dispatch
+    after commit; empty when nothing is open under `key` or nothing is due."""
     now = db.now() if now is None else now
     row = conn.execute("SELECT * FROM alerts WHERE key = ? AND state != 'cleared'",
                        (key,)).fetchone()
     if row is None:
-        return False
+        return []
     conn.execute("UPDATE alerts SET state='cleared', cleared_at=? WHERE id=?",
                  (now, row["id"]))
     _event(conn, row["id"], now, "cleared", row, detail)
-    return True
+    if row["last_notified_at"] is None:
+        return []
+    rule = _rule_for(row["rule"], catalog, _config(conn, catalog))
+    return [_note("clear", row, row["raised_at"], rule["route"])]
 
 
 def _legacy_first_seen(conn: sqlite3.Connection) -> dict[str, float]:
