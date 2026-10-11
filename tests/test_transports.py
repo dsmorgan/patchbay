@@ -659,3 +659,35 @@ def test_rules_tab_shows_route_labels(clean_env, tmp_path):
     assert "kuma, crit+" in page
     assert "nowhere (attention list only)" in page
     assert f">{tid}:crit<" not in page
+
+
+# -- #80: overlapping dispatches keep every queued note ---------------------
+
+def test_interleaved_dispatches_keep_every_queued_note(dbp):
+    _add(dbp, "hook", "generic", HOOK)
+    inner_done = []
+
+    def handler(request):
+        # while the outer dispatch's request is in flight (no transaction
+        # open), a second dispatch runs to completion and queues its note
+        if not inner_done:
+            inner_done.append(True)
+            inner = transports.WebhookDispatcher(
+                dbp, transport=httpx.MockTransport(handler), now=T0)
+            inner.send([_note("b:2")])
+        return httpx.Response(500, text="boom")
+
+    outer = transports.WebhookDispatcher(
+        dbp, transport=httpx.MockTransport(handler), now=T0)
+    outer.send([_note("a:1")])
+
+    c = _c(dbp)
+    kept = json.loads(pdb.get_state(c, transports.OUTBOX_KEY))
+    c.close()
+    assert sorted(e["note"]["key"] for e in kept) == ["a:1", "b:2"]
+
+
+def _note(key):
+    return alerting.Notification(kind="raise", key=key, rule="stale-source",
+                                 severity="warn", text=f"{key} text", href="/ops",
+                                 raised_at=T0, route="1:warn")
