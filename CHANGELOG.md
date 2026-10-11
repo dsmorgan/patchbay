@@ -6,9 +6,15 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
 ## [0.20.0] — 2026-10-11
 
 ### Added
+- UniFi switch ports report error rates (#70), so port canaries cover
+  UniFi-only sites. Rates come from the change in `rx_errors` and
+  `tx_errors` between polls; a counter reset or a gap longer than 30 minutes
+  stores no rate. Discards are not collected (see #86).
 - Snapshot on critical alert (#66), off by default. Set
   `PATCHBAY_ALERT_SNAPSHOT=on` (env file or /ops) and every new critical alert,
   routed or not, takes a `patchbay-…-alert.html` snapshot, at most one per
