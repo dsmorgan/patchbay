@@ -6,7 +6,7 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.20.0] — 2026-10-11
 
 ### Added
 - Snapshot on critical alert (#66), off by default. Set
