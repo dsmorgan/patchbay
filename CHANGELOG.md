@@ -36,6 +36,12 @@ put.
   raises a warning. Idle WireGuard counts as down unless the rule's
   `idle_is_down` setting is off. A down firewall holds its tunnel alerts.
 
+### Fixed
+- Two overlapping polls no longer lose queued webhook notifications (#80).
+- A webhook URL that can't be turned into a request fails that one delivery
+  instead of the whole cycle, and redaction catches percent-escapes in either
+  letter case (#81).
+
 ## [0.19.0] — 2026-10-07
 
 ### Added
