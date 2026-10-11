@@ -80,7 +80,15 @@ clears; history is kept for 90 days.</p>
     <td class="muted">{{ categories[it.category] }}</td>
     <td><a href="{{ it.href }}">{{ it.text }}</a></td>
     <td class="muted mono" title="how long this has been firing (recorded at poll time)">{{ it.since }}{% if it.alert_state == 'pending' %} · pending{% endif %}</td>
-    <td>{% include "_silence_button.html" %}</td>
+    <td>{% include "_silence_button.html" %}
+      {% if it.retirable %}{# a pulled cable's way out (#79): the operator says it is gone #}
+      <form method="post" action="/alerts/cables/retire" class="retire-form"
+            title="the cable was removed on purpose: stop alerting on it">
+        {% for d, i in [it.ports[0], it.ports[1]] %}{% set side = 'ab'[loop.index0] %}
+        <input type="hidden" name="{{ side }}_device" value="{{ d }}">
+        <input type="hidden" name="{{ side }}_interface" value="{{ i }}">{% endfor %}
+        <button class="retire-go">retire cable</button>
+      </form>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>
@@ -112,6 +120,9 @@ their sources report data. <a href="/ops">Ops</a> shows what is configured.</p>
   .ev-raised { color: var(--warn); }
   .ev-cleared { color: var(--ok); }
   .ev-delivery_failed { color: var(--crit); }
+  .retire-form { margin: 0.3rem 0 0; }
+  button.retire-go { background: none; border: 0; padding: 0; cursor: pointer;
+                     color: var(--accent); font-size: 0.82rem; }
   .attn-clear { margin: 0; font-size: 0.85rem; color: var(--muted); }
   .attn-clear::before { content: "●  "; color: var(--ok); font-size: 0.7rem; }
 </style>
