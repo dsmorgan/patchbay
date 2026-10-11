@@ -429,8 +429,9 @@ until one of these happens:
   Active row posts to `/alerts/cables/retire`. The record is kept as a
   tombstone rather than deleted, so a link row the source still reports
   (LLDP caches neighbors) cannot bring the alert back. The open alert
-  clears with History detail `cable retired` and no notification, the
-  same as a disabled rule's clear: the operator settled it. The tombstone
+  clears with History detail `cable retired`. As with a silence, the
+  clear is sent only if the raise was: a receiver that heard the raise
+  is never left firing, and one that never heard it hears nothing. The tombstone
   lifts if the cable is reported again with no end down. A declared cable
   is refused; removing it from `PATCHBAY_LINKS` retires it.
 - *The record ages out.* A cable that is no longer reported and has not
