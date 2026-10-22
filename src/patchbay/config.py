@@ -350,6 +350,10 @@ class Settings:
     alert_snapshot: bool = False
     alert_snapshot_cooldown: int = ALERT_SNAPSHOT_COOLDOWN_DEFAULT
     alert_snapshot_keep: int = ALERT_SNAPSHOT_KEEP_DEFAULT
+    # Hostnames the UI answers to (PATCHBAY_ALLOWED_HOSTS, each optionally
+    # with :port); empty = any Host, the pre-#94 behavior. localhost and the
+    # loopback addresses are always allowed (auth.LOOPBACK_HOSTS).
+    allowed_hosts: tuple[str, ...] = ()
 
     @property
     def snapshot_keep_unknown(self) -> bool:
@@ -641,4 +645,7 @@ def load_settings() -> Settings:
         alert_snapshot=alert_snapshot,
         alert_snapshot_cooldown=alert_snapshot_cooldown,
         alert_snapshot_keep=alert_snapshot_keep,
+        allowed_hosts=tuple(
+            h.strip().lower() for h in (env("PATCHBAY_ALLOWED_HOSTS") or "").split(",")
+            if h.strip()),
     )

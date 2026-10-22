@@ -2,6 +2,20 @@
 {% block title %}ops — patchbay{% endblock %}
 {% block main %}
 
+{% if host_exposed %}
+<div id="hostwarn" style="border: 1px solid var(--warn); border-radius: 8px;
+            padding: 0.6rem 1rem; margin: 0.8rem 0; max-width: 700px">
+  <div style="color: var(--warn); font-weight: 600; font-size: 0.85rem">
+    ⚠ Open to any web page you visit</div>
+  <div class="muted" style="font-size: 0.78rem; margin-top: 0.3rem">
+    Sign-in is off (<span class="mono">PATCHBAY_AUTH=none</span>) and patchbay
+    answers to any hostname. A malicious site can point its own name at this
+    address and use the UI from your browser. Set
+    <span class="mono">PATCHBAY_ALLOWED_HOSTS</span> in your env file to the
+    names you reach patchbay by, or turn on sign-in.</div>
+</div>
+{% endif %}
+
 <h2>Collect now</h2>
 <p class="muted" style="max-width: 62ch; margin-top: 0.2rem">Run the collectors now
 instead of waiting for the next poll. Each source button runs that source alone.
