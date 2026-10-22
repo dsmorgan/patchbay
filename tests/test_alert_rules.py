@@ -12,7 +12,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
-from patchbay import alerting, attention
+from patchbay import alerting, attention, silences
 from patchbay import db as pdb
 from patchbay.config import load_settings
 
@@ -24,6 +24,11 @@ def settings(clean_env):
 
 def _items(conn, settings, rule):
     return [i for i in attention.attention_items(conn, settings)[0] if i["rule"] == rule]
+
+
+def _silence(conn, kind, scope):
+    silences.add(conn, {"kind": kind, "scope": scope, "until": None, "reason": None,
+                        "created_by": "t", "created_at": pdb.now()})
 
 
 def _dev(conn, name, role, status="up", **kw):
@@ -62,7 +67,7 @@ def test_device_down_counts_stale_as_down(conn, settings):
     assert it["text"] == "ap ap1 has not been reported for 3 h"
 
 
-def test_device_down_roles_parameter_and_expected(conn, clean_env):
+def test_device_down_roles_parameter_and_silence(conn, clean_env):
     _dev(conn, "hyp1", "hypervisor", "down")
     _dev(conn, "sw1", "switch", "down")
     alerting.seed_rules(conn)
@@ -71,7 +76,7 @@ def test_device_down_roles_parameter_and_expected(conn, clean_env):
     assert [i["key"] for i in _items(conn, load_settings(), "device-down")] == ["device:sw1"]
 
     # still computed, but silenced (#62): the engine stores it, quietly
-    clean_env.setenv("PATCHBAY_EXPECT", "sw1")
+    _silence(conn, "device", "sw1")
     [it] = _items(conn, load_settings(), "device-down")
     assert it["silenced"]["scope"] == "sw1"
 
@@ -98,7 +103,10 @@ def test_overview_attention_lists_a_crit_device_item(clean_env, tmp_path):
     assert "switch sw1 is down" in client.get("/alerts").text
 
     # silenced, it leaves the box (and the chip) like any other item
-    clean_env.setenv("PATCHBAY_EXPECT", "sw1")
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    c.row_factory = sqlite3.Row
+    _silence(c, "device", "sw1")
+    c.commit(); c.close()
     body = client.get("/").text
     assert "switch sw1 is down" not in body[body.index('class="attention"'):]
 
@@ -145,7 +153,7 @@ def test_link_down_one_item_per_stated_cable(conn, settings):
     assert "ap1 eth0, sw1 1/0/2 reports down" in it["text"]
 
 
-def test_link_down_skips_admin_down_and_expected(conn, clean_env):
+def test_link_down_skips_admin_down_and_silenced(conn, clean_env):
     _dev(conn, "sw1", "switch")
     _dev(conn, "ap1", "ap")
     _cable(conn, "sw1", "1/0/2", "ap1", "eth0", a_oper="down")
@@ -154,7 +162,7 @@ def test_link_down_skips_admin_down_and_expected(conn, clean_env):
 
     conn.execute("UPDATE interfaces SET admin_status = 'up' WHERE name = '1/0/2'")
     assert len(_items(conn, load_settings(), "link-down")) == 1
-    clean_env.setenv("PATCHBAY_EXPECT", "sw1:1/0/2")
+    _silence(conn, "port", "sw1:1/0/2")
     [it] = _items(conn, load_settings(), "link-down")
     assert it["silenced"]["kind"] == "port"
 

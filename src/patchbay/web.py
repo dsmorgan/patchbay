@@ -540,7 +540,7 @@ def alerts(request: Request, category: str | None = None,
             "silenced_items": silenced, "silence_kinds": silences.KINDS,
             "durations": silences.DURATIONS, "default_hours": silences.DEFAULT_HOURS,
             **(transports.page_context(conn) if tab == "transports" else {}),
-            **(silences.page_context(conn, settings) if tab == "silences" else {}),
+            **(silences.page_context(conn) if tab == "silences" else {}),
         })
     finally:
         conn.close()
@@ -833,8 +833,7 @@ def silence_add(request: Request, f: dict[str, str] = Depends(_form)):
 @app.post("/alerts/silences/{sid}/delete")
 def silence_delete(sid: int, f: dict[str, str] = Depends(_form)):
     """Remove a silence. What it covered returns on the next poll, as a
-    new raise if the condition still holds. PATCHBAY_EXPECT rows have no
-    numeric id and cannot be addressed here; they are edited on /ops."""
+    new raise if the condition still holds."""
     conn = _conn()
     try:
         db.init(conn)
@@ -848,10 +847,11 @@ def silence_delete(sid: int, f: dict[str, str] = Depends(_form)):
 
 @app.post("/ops/expect/import")
 def ops_expect_import(request: Request):
-    """Import PATCHBAY_EXPECT as permanent silences (#69, stage 1 of its
-    deprecation): the one-click action beside the variable on /ops. Answers
-    {"lines": [...]} for the action pane. Safe to repeat: an entry a
-    permanent silence already covers is reported, not duplicated."""
+    """Import PATCHBAY_EXPECT as permanent silences (#69): the one-click
+    action beside the variable on /ops, available while the variable is set,
+    though the variable itself is ignored. Answers {"lines": [...]} for the
+    action pane. Safe to repeat: an entry a permanent silence already covers
+    is reported, not duplicated."""
     settings = load_settings()
     if not settings.expected:
         return {"lines": ["[ok]   PATCHBAY_EXPECT is not set: nothing to import"]}
@@ -878,12 +878,12 @@ def ops_expect_import(request: Request):
 
 def _expect_removal_text(source: str | None) -> str:
     """How the operator finishes the migration: patchbay never edits the env
-    file, so the removal is theirs."""
+    file, so the removal is theirs. The variable is ignored either way."""
     if source == "env":
         return ("To finish, delete the PATCHBAY_EXPECT line from your env file "
-                "and restart patchbay. Coverage does not change.")
+                "and restart patchbay.")
     return ("To finish, clear the PATCHBAY_EXPECT field under Declarations "
-            "and click save. Coverage does not change.")
+            "and click save.")
 
 
 # -- retire a cable (#79) -------------------------------------------------------
@@ -1910,7 +1910,7 @@ def ops(request: Request):
                      and not w.startswith("could not read stored declarations")],
         "unreadable": not readable,
         "decls": decls,
-        # the PATCHBAY_EXPECT deprecation notice (#69): only while it is set
+        # the PATCHBAY_EXPECT import notice (#69): only while it is set
         "expect": ({"count": len(settings.expected), "pending": expect_pending,
                     "invalid": silences.expect_invalid(settings),
                     "removal": _expect_removal_text(

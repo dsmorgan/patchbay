@@ -657,19 +657,26 @@ def test_overview_attention_list_is_flat_and_below_the_counts(clean_env, tmp_pat
     assert body.index('class="statgrid"') < body.index('class="attention"')
 
 
-def test_overview_expected_declaration_silences_an_item(clean_env, tmp_path, client):
+def test_overview_silence_hides_an_item(clean_env, tmp_path, client):
     dbp = str(tmp_path / "test.db")
     seed(dbp)
     c = sqlite3.connect(dbp)
     c.execute("UPDATE interfaces SET speed_bps = 10000000 WHERE name IN ('1/0/1', 'vmnic0')")
     c.commit(); c.close()
 
-    clean_env.setenv("PATCHBAY_EXPECT", "sw1:1/0/1")
+    assert "runs at 10M" in client.get("/").text
+    c = sqlite3.connect(dbp)
+    c.execute("INSERT INTO alert_silences (kind, scope, until, created_by, created_at) "
+              "VALUES ('port', 'sw1:1/0/1', NULL, 't', 0)")
+    c.commit()
     body = client.get("/").text
-    assert "runs at 10M" not in body                 # the declared port is quiet
+    assert "runs at 10M" not in body                 # the silenced port is quiet
     assert "All clear" in body                       # and the list can go clear
 
-    clean_env.setenv("PATCHBAY_EXPECT", "hyp1")      # bare device silences too
+    c.execute("DELETE FROM alert_silences")          # a device silences too
+    c.execute("INSERT INTO alert_silences (kind, scope, until, created_by, created_at) "
+              "VALUES ('device', 'hyp1', NULL, 't', 0)")
+    c.commit(); c.close()
     assert "runs at 10M" not in client.get("/").text
 
 
