@@ -22,7 +22,7 @@ curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/docker-compose.
 curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/.env.example
 mkdir -p data oxidized
 cp .env.example data/.env
-sudo chown 10001:10001 data      # patchbay runs as uid 10001, not root
+sudo chown -R 10001:10001 data && sudo chmod 600 data/.env   # patchbay runs as uid 10001, not root
 printf 'TZ=UTC\nMYSQL_PASSWORD=%s\n' "$(openssl rand -hex 16)" > .env
 ```
 
@@ -110,7 +110,7 @@ port graphs and LLDP links populate on its schedule, not patchbay's.
 
 ## 5. Point patchbay at the containers
 
-In `data/.env`, find the three lines (they ship commented out), uncomment
+In `data/.env` (`sudoedit data/.env`; the file is private to uid 10001), find the three lines (they ship commented out), uncomment
 them, and set — edit in place rather than adding new lines, because on a
 duplicate key the *last* occurrence silently wins:
 
@@ -339,11 +339,15 @@ container refuses to start and prints the fix.
 ```sh
 docker compose down
 sudo chown -R 10001:10001 data
+sudo chmod 600 data/.env
 docker compose pull && docker compose up -d
 ```
 
-Use your compose file's `-f` flag where you need it. Afterward, editing
-`data/.env` on the host needs `sudo`.
+Use your compose file's `-f` flag where you need it. `data/.env` holds
+every collector credential, so it stays mode 600 and owned by 10001; edit it
+with `sudoedit data/.env`. patchbay only reads that file: the declarations
+you save on /ops go to the database, so the file never needs to be writable
+by the container.
 
 **Alternative: run as your own user.** To keep `./data` owned by you, set
 `user:` on both patchbay services (web and poller) to your uid:gid, and
@@ -352,6 +356,7 @@ re-own the files the old image created as root:
 ```sh
 docker compose down
 sudo chown -R "$(id -u):$(id -g)" data
+chmod 600 data/.env
 ```
 
 ```yaml
