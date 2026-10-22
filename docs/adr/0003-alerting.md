@@ -462,8 +462,7 @@ collector now stores error rates for switch ports from the change in
 `rx_errors` and `tx_errors` between polls. A counter reset (a negative
 delta) or a gap of more than 30 minutes since the previous poll stores no
 rate, so a canary never reads a delta across missed polls. Errors only:
-discards stay uncollected, tracked in #83 (LibreNMS) and #86 (the canary's
-discard half).
+discards stay uncollected, tracked in #83 (collect) and #86 (decide).
 
 **Summary strip.** Decision 8 promised /alerts a summary strip with active
 counts by severity and each transport's delivery state. It did not ship in
