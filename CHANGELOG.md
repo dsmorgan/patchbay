@@ -6,7 +6,7 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.22.0] — 2026-10-22
 
 ### Added
 - Reminders (#99). Each non-event rule on the **Rules** tab has a
