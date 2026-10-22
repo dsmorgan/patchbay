@@ -159,14 +159,21 @@ def retire_source_names(conn: sqlite3.Connection, source: str,
     The collector's old device row goes, and the old name is retired with
     the one new name as heir. Two hosts that both cut to the old name had
     their rows mixed under it, so they get none and those rows are dropped.
-    A name another source's device still holds, or one an alias already
-    hands elsewhere, is left alone."""
+    Only an all-digit old name qualifies: a first octet is the one name
+    #98 changed for these collectors (a dotted name with a letter in its
+    last label still strips to the same name). A name another source's
+    device holds, by its canonical name (a row not yet normalized, such as
+    a just-added "SW-3", counts), or one an alias already hands elsewhere,
+    is left alone."""
+    held = None
     for old, news in renames.items():
         news = news - {old}
-        if not old or not news:
+        if not old or not old.isdigit() or not news:
             continue
         conn.execute("DELETE FROM devices WHERE name = ? AND source = ?", (old, source))
-        if conn.execute("SELECT 1 FROM devices WHERE name = ?", (old,)).fetchone():
+        if held is None:
+            held = {canonical_name(r[0]) for r in conn.execute("SELECT name FROM devices")}
+        if canonical_name(old) in held:
             continue
         heir = next(iter(news)) if len(news) == 1 else None
         prev = conn.execute("SELECT canonical FROM aliases WHERE alias = ?",

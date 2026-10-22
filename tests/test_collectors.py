@@ -2110,6 +2110,30 @@ def test_oxidized_first_octet_rows_follow_or_go(conn, clean_env, monkeypatch,
     assert pins == ({heir} if heir else set())
 
 
+def test_oxidized_dotted_name_never_takes_a_new_devices_name(conn, clean_env,
+                                                           monkeypatch):
+    """Review of #98: an Oxidized node "sw-3.2" cut to "sw-3" under the old
+    rule, but that is no first octet. A LibreNMS switch just added as
+    "SW-3" (not yet normalized) keeps its link and pin."""
+    from patchbay.collectors.oxidized import OxidizedCollector
+    from patchbay.normalize import normalize
+    pdb.upsert_device(conn, name="SW-3", source="librenms", role="switch")
+    pdb.upsert_link(conn, a_device="sw-3", a_interface="1/1/1", b_device="core",
+                    b_interface="1/0/3", source="lldp")
+    conn.execute("INSERT INTO positions (name, x, y) VALUES ('sw-3', 1, 2)")
+    monkeypatch.setattr(_OxClient, "nodes", [
+        {"name": "sw-3.2", "full_name": "sw-3.2", "model": "ironware",
+         "last": {"status": "success"}}])
+    monkeypatch.setattr(httpx, "Client", _OxClient)
+    OxidizedCollector().collect(_ox_settings(clean_env), conn)
+    normalize(conn)
+    assert not conn.execute("SELECT * FROM aliases WHERE canonical = 'sw-3.2'").fetchall()
+    assert {r[0] for r in conn.execute("SELECT name FROM positions")} == {"sw-3"}
+    assert ("core", "1/0/3", "sw-3", "1/1/1", "lldp") in [
+        tuple(r) for r in conn.execute(
+            "SELECT a_device, a_interface, b_device, b_interface, source FROM links")]
+
+
 def test_oxidized_vlan_prune_claim_aware(conn, clean_env, monkeypatch):
     """A VLAN removed from every parsed config is pruned — own rows only,
     claims protect it (including a skipped device's surviving port_vlans)."""
