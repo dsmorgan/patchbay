@@ -1630,6 +1630,7 @@ def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
              (f" · cert {s.tls_cert} · key {s.tls_key}" if s.tls_mode == "direct" else "")),
             ("PATCHBAY_AUTH", s.auth_mode +
              (f" · session {s.session_hours:g}h" if s.auth_mode != "none" else "")),
+            ("PATCHBAY_ALLOWED_HOSTS", ", ".join(s.allowed_hosts) or "any host"),
         ]),
         ("sources", [
             (name, (url or "—") + (" · credentials " + onoff(cred) if url else ""))
@@ -1741,6 +1742,9 @@ def ops(request: Request):
                             if stored.get(v)),
         "last_poll": last_poll,
         "conflicts": conflicts,
+        # open UI + any Host accepted: a web page the operator visits can
+        # rebind its own name to this address and drive the UI
+        "host_exposed": settings.auth_mode == "none" and not settings.allowed_hosts,
     })
 
 

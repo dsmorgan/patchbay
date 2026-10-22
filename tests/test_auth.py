@@ -133,54 +133,6 @@ OIDC_ENV = dict(PATCHBAY_AUTH="oidc",
                 PATCHBAY_OIDC_TOKEN_URL="https://idp.example/token")
 
 
-def _jwt(claims: dict) -> str:
-    return ".".join([auth._b64(b'{"alg":"none"}'),
-                     auth._b64(json.dumps(claims).encode()), "sig"])
-
-
-def _oidc_callback(clean_env, monkeypatch, claims, **env):
-    """Run the callback against a fake token endpoint answering claims in
-    an id_token; return the callback response."""
-    def handler(request):
-        return httpx.Response(200, json={"id_token": _jwt(claims)})
-
-    real_client = httpx.Client
-    monkeypatch.setattr(auth.httpx, "Client", lambda **kw: real_client(
-        transport=httpx.MockTransport(handler)))
-    c = _client(clean_env, **{**OIDC_ENV, **env})
-    r = c.get("/auth/oidc/login")
-    state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
-    return c, c.get(f"/auth/oidc/callback?code=abc&state={state}")
-
-
-def test_oidc_denied_identity_stays_off_the_url(clean_env, monkeypatch):
-    _, r = _oidc_callback(clean_env, monkeypatch,
-                          {"email": "mallory@example.com", "email_verified": True},
-                          PATCHBAY_OIDC_ALLOWED="alice@example.com")
-    assert r.headers["location"] == "/login?error=denied"
-
-
-def test_oidc_missing_claim(clean_env, monkeypatch):
-    _, r = _oidc_callback(clean_env, monkeypatch, {"sub": "123"})
-    assert r.headers["location"] == "/login?error=noclaim"
-
-
-def test_login_page_shows_only_known_messages(clean_env):
-    c = _client(clean_env, PATCHBAY_AUTH="password", PATCHBAY_PASSWORD="pw")
-    spoof = "Session expired, re-enter your password at https://evil.example"
-    page = c.get("/login", params={"error": spoof}).text
-    assert "evil.example" not in page and "Session expired" not in page
-    assert "wrong password" in c.get("/login?error=password").text
-    r = c.post("/login", data={"password": "nope", "next": "/"})
-    assert "error=password" in r.headers["location"]
-
-
-def test_oidc_provider_error_text_is_not_reflected(clean_env):
-    c = _client(clean_env, **OIDC_ENV)
-    r = c.get("/auth/oidc/callback", params={"error": "visit https://evil.example"})
-    assert r.headers["location"] == "/login?error=incomplete"
-
-
 @pytest.fixture()
 def fresh_login_queue(monkeypatch):
     """Login pacing is process state; start each test with an empty queue."""
@@ -344,6 +296,26 @@ def test_session_without_fingerprint_is_rejected(clean_env):
     assert c.get("/").status_code == 303
 
 
+def _jwt(claims: dict) -> str:
+    return ".".join([auth._b64(b'{"alg":"none"}'),
+                     auth._b64(json.dumps(claims).encode()), "sig"])
+
+
+def _oidc_callback(clean_env, monkeypatch, claims, **env):
+    """Run the callback against a fake token endpoint answering claims in
+    an id_token; return the callback response."""
+    def handler(request):
+        return httpx.Response(200, json={"id_token": _jwt(claims)})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(auth.httpx, "Client", lambda **kw: real_client(
+        transport=httpx.MockTransport(handler)))
+    c = _client(clean_env, **{**OIDC_ENV, **env})
+    r = c.get("/auth/oidc/login")
+    state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
+    return c, c.get(f"/auth/oidc/callback?code=abc&state={state}")
+
+
 @pytest.mark.parametrize("verified", [True, "true", "TRUE"])
 def test_oidc_accepts_a_verified_email(clean_env, monkeypatch, verified):
     c, r = _oidc_callback(clean_env, monkeypatch,
@@ -368,3 +340,98 @@ def test_oidc_other_identity_claims_need_no_email_verified(clean_env, monkeypatc
     c, r = _oidc_callback(clean_env, monkeypatch, {"preferred_username": "alice"},
                           PATCHBAY_OIDC_IDENTITY_PATH="preferred_username")
     assert r.headers["location"] == "/"
+
+
+def test_oidc_denied_identity_stays_off_the_url(clean_env, monkeypatch):
+    _, r = _oidc_callback(clean_env, monkeypatch,
+                          {"email": "mallory@example.com", "email_verified": True},
+                          PATCHBAY_OIDC_ALLOWED="alice@example.com")
+    assert r.headers["location"] == "/login?error=denied"
+
+
+def test_oidc_missing_claim(clean_env, monkeypatch):
+    _, r = _oidc_callback(clean_env, monkeypatch, {"sub": "123"})
+    assert r.headers["location"] == "/login?error=noclaim"
+
+
+def test_login_page_shows_only_known_messages(clean_env):
+    c = _client(clean_env, PATCHBAY_AUTH="password", PATCHBAY_PASSWORD="pw")
+    spoof = "Session expired, re-enter your password at https://evil.example"
+    page = c.get("/login", params={"error": spoof}).text
+    assert "evil.example" not in page and "Session expired" not in page
+    assert "wrong password" in c.get("/login?error=password").text
+    r = c.post("/login", data={"password": "nope", "next": "/"})
+    assert "error=password" in r.headers["location"]
+
+
+def test_oidc_provider_error_text_is_not_reflected(clean_env):
+    c = _client(clean_env, **OIDC_ENV)
+    r = c.get("/auth/oidc/callback", params={"error": "visit https://evil.example"})
+    assert r.headers["location"] == "/login?error=incomplete"
+
+
+def test_split_host():
+    assert auth._split_host("Patchbay.Example.NET.:8080") == ("patchbay.example.net", "8080")
+    assert auth._split_host("patchbay.example.net") == ("patchbay.example.net", None)
+    assert auth._split_host("[2001:db8::1]:8443") == ("2001:db8::1", "8443")
+    assert auth._split_host("[2001:db8::1]") == ("2001:db8::1", None)
+    assert auth._split_host("2001:db8::1") == ("2001:db8::1", None)
+
+
+def test_host_allowed_matching(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("PATCHBAY_ALLOWED_HOSTS",
+                     "patchbay.example.net, 192.0.2.10:8080,[2001:db8::10]")
+    s = load_settings()
+    assert auth.host_allowed(s, "patchbay.example.net:8443")   # any port
+    assert auth.host_allowed(s, "PATCHBAY.example.net")
+    assert auth.host_allowed(s, "192.0.2.10:8080")
+    assert not auth.host_allowed(s, "192.0.2.10:9000")          # port pinned
+    assert not auth.host_allowed(s, "192.0.2.10")
+    assert auth.host_allowed(s, "[2001:db8::10]:8080")
+    for loop in ("localhost:8080", "127.0.0.1", "[::1]:8080"):
+        assert auth.host_allowed(s, loop)
+    assert not auth.host_allowed(s, "attacker.example")
+    assert not auth.host_allowed(s, "patchbay.example.net.attacker.example")
+    assert not auth.host_allowed(s, "")
+
+
+def test_any_host_accepted_without_allowlist(clean_env):
+    import patchbay.web as web
+    c = TestClient(web.app, base_url="http://attacker.example:8080")
+    assert c.get("/").status_code == 200
+
+
+def test_allowlist_refuses_other_hosts(clean_env):
+    import patchbay.web as web
+    clean_env.setenv("PATCHBAY_ALLOWED_HOSTS", "patchbay.example.net")
+    ok = TestClient(web.app, base_url="http://patchbay.example.net:8080")
+    assert ok.get("/").status_code == 200
+    assert TestClient(web.app, base_url="http://localhost:8080").get("/").status_code == 200
+    assert TestClient(web.app, base_url="http://127.0.0.1").get("/").status_code == 200
+    rebound = TestClient(web.app, base_url="http://attacker.example:8080")
+    assert rebound.get("/").status_code == 400
+    assert rebound.get("/static/d3.v7.min.js").status_code == 400
+    assert rebound.post("/api/positions/reset",
+                        headers={"origin": "http://attacker.example:8080"}
+                        ).status_code == 400
+    # every host the request names must pass, forwarded ones included
+    assert ok.get("/", headers={"x-forwarded-host": "attacker.example"}).status_code == 400
+    assert rebound.get("/", headers={"x-forwarded-host": "patchbay.example.net"}
+                       ).status_code == 400
+    assert ok.get("/", headers={"x-forwarded-host": "patchbay.example.net, localhost"}
+                  ).status_code == 200
+
+
+def test_ops_warns_when_open_to_any_host(clean_env):
+    c = _client(clean_env)
+    assert 'id="hostwarn"' in c.get("/ops").text
+    assert "any host" in c.get("/ops").text   # the serving row
+    clean_env.setenv("PATCHBAY_ALLOWED_HOSTS", "testserver")
+    page = c.get("/ops").text
+    assert 'id="hostwarn"' not in page and "PATCHBAY_ALLOWED_HOSTS" in page
+    clean_env.delenv("PATCHBAY_ALLOWED_HOSTS")
+    clean_env.setenv("PATCHBAY_AUTH", "password")
+    clean_env.setenv("PATCHBAY_PASSWORD", "pw")
+    c.post("/login", data={"password": "pw", "next": "/"})
+    assert 'id="hostwarn"' not in c.get("/ops").text

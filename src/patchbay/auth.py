@@ -37,6 +37,10 @@ STATE_COOKIE = "patchbay_oidc_state"
 PUBLIC_PATHS = {"/login", "/logout", "/auth/oidc/login", "/auth/oidc/callback"}
 PUBLIC_PREFIXES = ("/static/",)
 
+# Hosts every deployment answers to whatever PATCHBAY_ALLOWED_HOSTS says:
+# local use, and a healthcheck that probes the container from inside.
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
 # The sign-in page shows only these messages, chosen by a code in ?error=.
 # Free text from the query string would let any link put words on the page.
 LOGIN_ERRORS = {
@@ -224,9 +228,47 @@ def authenticated_identity(request: Request, settings: Settings) -> str | None:
     return identity
 
 
+def _split_host(value: str) -> tuple[str, str | None]:
+    """(host, port or None) from a Host-style value, lowercased, trailing
+    dot dropped. Handles [v6]:port; a bare v6 literal has no port."""
+    v = value.strip().lower()
+    if v.startswith("["):
+        host, _, rest = v[1:].partition("]")
+        port = rest[1:] if rest.startswith(":") else ""
+    elif v.count(":") == 1:
+        host, _, port = v.partition(":")
+    else:
+        host, port = v, ""
+    return host.rstrip("."), port or None
+
+
+def host_allowed(settings: Settings, value: str) -> bool:
+    """Whether a Host (or X-Forwarded-Host) value names this deployment.
+    An allowlist entry without a port matches any port."""
+    host, port = _split_host(value)
+    if not host:
+        return False
+    if host in LOOPBACK_HOSTS:
+        return True
+    for entry in settings.allowed_hosts:
+        want_host, want_port = _split_host(entry)
+        if host == want_host and want_port in (None, port):
+            return True
+    return False
+
+
 def gate(request: Request, settings: Settings) -> Response | None:
     """Middleware body: None = let the request through (request.state.auth is
     set for templates), a Response = intercept with it."""
+    # with an allowlist, every host the request names must be on it: Host,
+    # and each X-Forwarded-Host hop. Checking only the forwarded one would let
+    # a page served from a rebound name set the header itself.
+    if settings.allowed_hosts:
+        named = [request.headers.get("host", "")] + [
+            h for v in request.headers.getlist("x-forwarded-host")
+            for h in v.split(",") if h.strip()]
+        if not all(host_allowed(settings, h) for h in named):
+            return Response("host not allowed", status_code=400)
     # cross-origin writes are rejected in every auth mode: patchbay has no
     # cross-site API consumers, and this closes CSRF (layout reset, poll
     # triggers) even when the UI runs open on a trusted LAN
