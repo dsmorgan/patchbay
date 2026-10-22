@@ -325,32 +325,48 @@ goes down on its own.
 
 ## Container user and upgrading
 
-The image does not run as root. It starts as root only to fix the ownership
-of `/data`, then drops to an unprivileged user:
+The image runs as an unprivileged user, uid/gid `10001`, and never changes
+file ownership. A fresh named volume works as is. A bind-mounted `./data`
+must be writable by that uid, and one created by an earlier release is
+root-owned: the container then refuses to start and prints the fix.
 
-- A root-owned `./data` (every install from before this change, and a
-  directory Docker creates for a missing bind mount) is handed to uid/gid
-  `10001`, the image's `patchbay` user. You can still read the files on the
-  host, but editing `data/.env` then needs `sudo`, or
-  `sudo chown -R "$USER" data` after you stop the stack.
-- A `./data` you created yourself (`mkdir data`) keeps its owner, and
-  patchbay runs as that user, so you keep editing `data/.env` normally.
-- In both cases, the files an older release left root-owned (`.env`,
-  `patchbay.db` and its SQLite sidecars, and the top level of `snapshots/`)
-  are re-owned automatically on the next start. Only those known paths are
-  touched, and symlinks and multiply linked files are skipped; anything else
-  you keep under `data/` stays as it is, so `chown` it yourself. **Upgrading
-  needs no manual step**: `docker compose pull && docker compose up -d`.
+**One-time step when upgrading** from a release that ran as root:
 
-To pick the user yourself, set `user: "1000:1000"` (any uid:gid) on both
-patchbay services. The entrypoint then does no chown, so `./data` must
-already be writable by that user: `sudo chown -R 1000:1000 data`.
+```sh
+docker compose down
+sudo chown -R 10001:10001 data
+docker compose pull && docker compose up -d
+```
 
-Anything else you mount into the patchbay services must be writable by that
-user as well. This includes the off-host snapshot share of
-[step 7](#7-verify-snapshot-delivery): if delivery starts failing with
-`Permission denied` after an upgrade, `chown` the share to the same uid or
-loosen its mode.
+Use your compose file's `-f` flag where you need it. Afterward, editing
+`data/.env` on the host needs `sudo` (or `sudo chown -R "$USER" data` with
+the stack stopped, followed by the `user:` setting below).
+
+**Alternative: keep the existing owner.** Set `user:` on both patchbay
+services (web and poller) to the uid:gid that already owns `./data`, and
+skip the `chown`:
+
+```yaml
+    user: "1000:1000"      # stat -c %u:%g ./data
+```
+
+`user: "0:0"` keeps the old behavior of running as root, so nothing needs
+re-owning. It also drops the hardening: a code-execution bug in the web UI
+then runs as root in the container, and `docker compose exec` creates
+root-owned files. Use it as a stopgap, not a destination.
+
+**Rootless Docker and Podman.** The container's root maps to your host
+user, so `user: "0:0"` is the right setting there: files in `./data` stay
+owned by you and the process has no real privilege on the host. The
+default 10001 maps to a subordinate uid you cannot edit without
+`podman unshare`.
+
+**Other mounts.** Anything else you mount into the patchbay services must be
+writable by the same uid: a custom `PATCHBAY_SNAPSHOT_DIR`, and the off-host
+snapshot share of [step 7](#7-verify-snapshot-delivery). If delivery fails
+with `Permission denied` after an upgrade, `chown` the share to that uid or
+loosen its mode. The startup check covers `/data` and the snapshot
+directory only.
 
 The stack publishes Oxidized's REST port on `127.0.0.1:8888` only, for
 debugging from the host. patchbay never needs it (it uses
