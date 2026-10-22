@@ -1,0 +1,26 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+
+      # the same lock the image installs from, so a Dependabot bump is
+      # tested against exactly what would ship
+      - name: Install
+        run: uv sync --locked --extra web --extra dev
+
+      - name: Test
+        run: uv run --no-sync pytest -q

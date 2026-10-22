@@ -19,6 +19,10 @@ put.
   `tx_errors` between polls; a counter reset or a gap longer than 30 minutes
   stores no rate. Discards are not collected (see #86).
 
+### Changed
+- CI runs the test suite on every pull request and push to main, installed
+  from `uv.lock`, so Dependabot bumps are tested, not only built.
+
 ### Fixed
 - Two overlapping polls no longer lose queued webhook notifications (#80).
 - A webhook URL that can't be turned into a request fails that one delivery
