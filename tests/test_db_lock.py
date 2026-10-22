@@ -269,3 +269,26 @@ def test_poll_releases_the_lease(clean_env, tmp_path, monkeypatch):
     with pdb.connect(path) as c:
         assert pdb.get_state(c, pdb.POLL_LEASE) is None
         assert c.execute("SELECT name FROM devices").fetchone()[0] == "sw1"
+
+
+def test_a_save_that_outwaits_the_busy_timeout_is_a_503(clean_env, tmp_path, monkeypatch):
+    import patchbay.web as web
+
+    path = _db(tmp_path)
+    real = web._conn
+
+    def quick():   # the 5 s busy timeout, shortened for the test
+        conn = real()
+        conn.execute("PRAGMA busy_timeout = 200")
+        return conn
+
+    monkeypatch.setattr(web, "_conn", quick)
+    holder = _hold(path)
+    try:
+        r = TestClient(web.app, raise_server_exceptions=False).post(
+            "/alerts/silences", data={"kind": "device", "scope": "sw1"})
+        assert r.status_code == 503
+        assert r.headers["retry-after"] == "5"
+    finally:
+        holder.rollback()
+        holder.close()
