@@ -301,9 +301,39 @@ Facts no protocol can discover. All optional; all use the pattern
 | `PATCHBAY_RELATED` | `component=owner,…` | Out-of-band component ties (a BMC/CIMC/iDRAC and the server it manages) |
 | `PATCHBAY_VLAN_FILTER` | `dev:iface=1+24+73,…` | Trunks with a restricted VLAN list (defaults assume trunks carry every VLAN — allowed-lists aren't readable via SNMP) |
 | `PATCHBAY_CAPACITY` | `dev:iface=3G,…` | Real service capacity below the port speed; load math divides by it and the map shows both: "10G (3G)". `G`/`M` suffixes |
-| `PATCHBAY_EXPECT` | `dev:iface` or `dev`,… | Legacy input to the silence list: each entry is a permanent, read-only silence on the alerts page (**Alerts > Silences**), which hides it from the Overview and from every alert transport. A port whose link is legitimately slow (`core1:1/0/16`), or a whole device (`hyp1`) to quiet every item naming it. Add new silences, with an expiry and a reason, on that page instead |
+| `PATCHBAY_EXPECT` | `dev:iface` or `dev`,… | **Deprecated.** Each entry is a permanent, read-only silence on the alerts page (**Alerts > Silences**): a port whose link is legitimately slow (`core1:1/0/16`), or a whole device (`hyp1`) to quiet every item naming it. A later release ignores the variable. To migrate, [import the entries as silences](#migrate-patchbay_expect-to-silences) on **Ops**, then remove the variable |
 | `PATCHBAY_ROUTED_ORDER` | `name-or-vid,…` | Routed-view rail order override (ADR-0002): named networks (VLAN id or name) pin to the left in the declared order; the rest keep the computed order |
 | `PATCHBAY_PANELS` | `name:size=regex,…` | Patch panels. The regex's first capture group is the panel position claimed by a port description; distinct prefixes keep panels apart; size `0` = sized by the highest position seen |
+
+### Migrate PATCHBAY_EXPECT to silences
+
+`PATCHBAY_EXPECT` is deprecated. Silences replace it: a silence can expire
+and carry a reason, and you manage it on the **Alerts > Silences** tab
+instead of in the env file. The variable still works in this release. A
+later release ignores it with a warning that names the alerts page, so
+migrate before you upgrade past that point.
+
+1. Open **Ops**. While `PATCHBAY_EXPECT` is set, a deprecation notice
+   appears under it.
+1. Click **import as silences**. patchbay creates one permanent silence for
+   each entry, with the reason "imported from PATCHBAY_EXPECT". A bare name,
+   a MAC address, or an IP address becomes a device silence, and
+   `device:interface` becomes a port silence, so each silence covers what
+   the entry covered.
+1. Check **Alerts > Silences**. Each imported entry shows once, as an
+   ordinary silence. Importing again creates no duplicates: patchbay skips
+   an entry that a permanent silence of the same kind and scope already
+   covers, and says which. A silence that expires does not count, because
+   the entry would go unsilenced when it ended.
+1. Remove the variable. If your env file sets it, delete the
+   `PATCHBAY_EXPECT` line and restart patchbay: patchbay never edits the
+   env file. If you set it on **Ops**, clear the field and click **save**.
+
+Coverage does not change at any step. An alert that was silenced before the
+import stays silenced after it, and after you remove the variable. To stop
+silencing an entry, end its silence on the **Silences** tab. Until you
+remove the variable, ending an imported silence brings the read-only entry
+back, because the variable still silences.
 
 ### More than one internet connection
 

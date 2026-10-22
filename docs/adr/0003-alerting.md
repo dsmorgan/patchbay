@@ -496,3 +496,21 @@ since"): a receiver never hears a stale raise after its clear. An outcome
 the database will not take waits in a private file beside it and is
 written once by the next dispatch. `REQUEST_S` bounds each request in
 wall-clock time.
+
+## Amendment (2026-10-22): deprecating `PATCHBAY_EXPECT`, issue #69
+
+Decision 6 chose option C: drop the variable after a deprecation release.
+Stage 1 is that release. /ops shows a notice beside `PATCHBAY_EXPECT`,
+and **import as silences** creates one permanent silence per entry with the
+reason "imported from PATCHBAY_EXPECT", under the legacy row's scope (a
+bare name, MAC, or IP is a device; `dev:iface` is a port).
+
+An entry counts as covered, and the import skips it, only when a
+*permanent* silence of the same kind and scope exists. A timed silence
+ends, and the entry would go unsilenced once the operator removed the
+variable. Once a covering silence exists, the legacy row drops out of the
+list, so the Silences tab and the engine see each scope once; ending the
+silence brings the row back while the variable is set. patchbay never edits
+the env file, so removing the variable is the operator's step. Stage 2, the
+next release, ignores the variable with a parse warning naming the alerts
+page.
