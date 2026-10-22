@@ -7,7 +7,9 @@ on. Each entry is {device, type, name}. Never key material, not even public
 keys: the validators below accept only those three fields.
 
 A declaration matches the device name literally. It does not follow
-renames or aliases: re-declare the tunnel after a device is renamed.
+renames or aliases: re-declare the tunnel after a device is renamed. The
+one exception is a name patchbay itself retires (#98: a firewall once
+named after its address's first octet), which rename() carries over.
 """
 
 from __future__ import annotations
@@ -62,3 +64,17 @@ def add(conn: sqlite3.Connection, device: str, type_: str, name: str) -> None:
 def remove(conn: sqlite3.Connection, device: str, type_: str, name: str) -> None:
     entry = {"device": device, "type": type_, "name": name}
     _save(conn, [e for e in load(conn) if e != entry])
+
+
+def rename(conn: sqlite3.Connection, old: str, new: str) -> None:
+    """Move declarations from a device name patchbay retired to its heir
+    (normalize.retire_name); one already declared under the new name wins."""
+    entries = load(conn)
+    if not any(e["device"] == old for e in entries):
+        return
+    moved = []
+    for e in entries:
+        e = {**e, "device": new} if e["device"] == old else e
+        if e not in moved:
+            moved.append(e)
+    _save(conn, moved)

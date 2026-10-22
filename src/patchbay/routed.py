@@ -317,8 +317,11 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # WireGuard peers sharing one wg0 — are told apart by the peer whose
     # allowed-ips hold the destination; with no single such peer nothing
     # is guessed.
-    tun_rows = conn.execute(
+    # a tunnel whose firewall is no device (a name since retired) has no
+    # router to hang off; the topology skips those too
+    tun_rows = [t for t in conn.execute(
         "SELECT * FROM tunnels ORDER BY device, type, name").fetchall()
+        if t["device"] in devices]
     tunnels: list[dict] = []
     if tun_rows:
         type_label = {"wireguard": "WireGuard", "openvpn": "OpenVPN",

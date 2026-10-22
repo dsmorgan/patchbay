@@ -1052,7 +1052,9 @@ def test_synthesized_name_alias_from_the_old_rule_is_retired(conn):
     conn.execute("INSERT INTO aliases VALUES ('Rack-Switch', 'rack-switch')")
     conn.execute("INSERT INTO positions (name, x, y) VALUES ('rack-switch', 10, 20)")
     normalize(conn, declared_unmanaged=decl)
-    assert not conn.execute("SELECT * FROM aliases").fetchall()
+    # the lowercase name now resolves to the declared one, never the reverse
+    assert [tuple(r) for r in conn.execute("SELECT * FROM aliases")] == \
+        [("rack-switch", "Rack-Switch")]
     assert [tuple(r) for r in conn.execute("SELECT * FROM positions")] == \
         [("Rack-Switch", 10, 20)]
     assert links(conn) == [("Rack-Switch", "?", "sw1", "1/0/12", "fdb-inference")]
@@ -1176,26 +1178,77 @@ def test_ap_owns_its_monitored_wireless_client(conn):
     assert links(conn) == [("ap1", "eth0", "core", "p3", "fdb-uplink")]
 
 
-def _old_merge(conn, survivor_seen):
+def _keyed_rows(conn, name):
+    """Rows of every name-keyed kind under one device name."""
+    conn.execute("INSERT INTO positions (name, x, y) VALUES (?, 5, 6)", (name,))
+    conn.execute("INSERT INTO tunnels (device, type, name, interface, source, "
+                 "last_seen) VALUES (?, 'wireguard', 'site-b', 'wg0', 'opnsense', ?)",
+                 (name, NOW))
+    conn.execute("INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                 "VALUES (?, 'vmnic0', 20, 1, 'oxidized')", (name,))
+    conn.execute("INSERT INTO config_revisions (device, fetched_at, sha, text) "
+                 "VALUES (?, ?, 'abc', 'cfg')", (name, NOW))
+    from patchbay.known_cables import ends_of
+    a, b = ends_of(name, "vmnic0", "sw1", "1/0/1")
+    conn.execute("INSERT INTO known_cables (a_device, a_interface, b_device, "
+                 "b_interface, first_seen) VALUES (?, ?, ?, ?, ?)", (*a, *b, NOW))
+    pdb.upsert_link(conn, a_device=name, a_interface="vmnic0", b_device="sw1",
+                    b_interface="1/0/1", source="lldp")
+    from patchbay import expected_tunnels
+    expected_tunnels.add(conn, name, "wireguard", "site-b")
+
+
+def _keyed_names(conn):
+    from patchbay import expected_tunnels
+    return {
+        "positions": {r[0] for r in conn.execute("SELECT name FROM positions")},
+        "tunnels": {r[0] for r in conn.execute("SELECT device FROM tunnels")},
+        "port_vlans": {r[0] for r in conn.execute("SELECT device FROM port_vlans")},
+        "config": {r[0] for r in conn.execute("SELECT device FROM config_revisions")},
+        "known_cables": {n for r in conn.execute(
+            "SELECT a_device, b_device FROM known_cables") for n in r} - {"sw1"},
+        "links": {n for r in conn.execute(
+            "SELECT a_device, b_device FROM links") for n in r} - {"sw1"},
+        "expected": {e["device"] for e in expected_tunnels.load(conn)},
+    }
+
+
+def _old_merge(conn, survivor_seen, survivor_ip="192.0.2.22"):
     """A database from before #98: two hosts added by address merged into
     one hypervisor "192", now reported again under their own names."""
     dev(conn, "192", "vsphere", last_seen=survivor_seen, role="hypervisor",
-        mgmt_ip="192.0.2.22")
+        mgmt_ip=survivor_ip)
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
     conn.executemany("INSERT INTO aliases (alias, canonical) VALUES (?, ?)",
                      [("192.0.2.21", "192"), ("192.0.2.22", "192")])
-    conn.execute("INSERT INTO positions (name, x, y) VALUES ('192', 5, 6)")
+    _keyed_rows(conn, "192")
     for ip in ("192.0.2.21", "192.0.2.22"):
         dev(conn, ip, "vsphere", last_seen=NOW, role="hypervisor", mgmt_ip=ip)
 
 
 def test_merge_survivor_from_the_old_rule_is_removed(conn):
+    """Review of #98: everything keyed by the survivor's name — not just
+    its pin — goes to the host that carried its address."""
     _old_merge(conn, survivor_seen=NOW - 3600)
     normalize(conn)
     names = {r["name"] for r in conn.execute("SELECT name FROM devices")}
-    assert names == {"192.0.2.21", "192.0.2.22"}
-    # the pin goes to the host that carried the survivor's address
-    assert [tuple(r) for r in conn.execute("SELECT * FROM positions")] == \
-        [("192.0.2.22", 5, 6)]
+    assert names == {"192.0.2.21", "192.0.2.22", "sw1"}
+    assert dict(conn.execute("SELECT alias, canonical FROM aliases")) == \
+        {"192": "192.0.2.22"}
+    assert all(v == {"192.0.2.22"} for v in _keyed_names(conn).values()), \
+        _keyed_names(conn)
+
+
+def test_merge_survivor_without_an_heir_takes_its_rows_along(conn):
+    """No member carries the survivor's address: nothing says which host it
+    was, so what was keyed by it is dropped (the config history stays as a
+    record), and the routed view draws no tunnel for a vanished firewall."""
+    _old_merge(conn, survivor_seen=NOW - 3600, survivor_ip="192.0.2.99")
+    normalize(conn)
+    assert get_dev(conn, "192") is None
+    assert not conn.execute("SELECT * FROM aliases").fetchall()
+    kept = {k: v for k, v in _keyed_names(conn).items() if v}
+    assert kept == {"config": {"192"}, "expected": {"192"}}
 
 
 def test_merge_survivor_waits_out_the_grace(conn):
@@ -1253,3 +1306,46 @@ def test_guest_only_port_never_infers_a_switch(conn):
     assert get_dev(conn, "unmanaged@core:p2") is None
     assert {l[0] for l in links(conn) if l[2] == "core" or l[0] == "core"} \
         <= {"core", "hyp1", "hyp2"}
+
+
+
+def test_orphaned_merge_name_goes_to_its_only_member(conn):
+    """The alias path: a merged name no device holds any more, with one
+    name merged into it, hands everything to that name."""
+    dev(conn, "ubuntu-22.04", "vsphere", last_seen=NOW, role="vm")
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    conn.execute("INSERT INTO aliases VALUES ('ubuntu-22.04', 'ubuntu-22')")
+    _keyed_rows(conn, "ubuntu-22")
+    normalize(conn)
+    assert dict(conn.execute("SELECT alias, canonical FROM aliases")) == \
+        {"ubuntu-22": "ubuntu-22.04"}
+    assert all(v == {"ubuntu-22.04"} for v in _keyed_names(conn).values()), \
+        _keyed_names(conn)
+
+
+def test_orphaned_merge_name_of_two_members_is_dropped(conn):
+    """Two names merged into it and no device left to compare addresses:
+    no heir (and never the alias processed last), so its rows go."""
+    for ip in ("192.0.2.21", "192.0.2.22"):
+        dev(conn, ip, "vsphere", last_seen=NOW, role="hypervisor", mgmt_ip=ip)
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    conn.executemany("INSERT INTO aliases (alias, canonical) VALUES (?, ?)",
+                     [("192.0.2.21", "192"), ("192.0.2.22", "192")])
+    _keyed_rows(conn, "192")
+    normalize(conn)
+    assert not conn.execute("SELECT * FROM aliases").fetchall()
+    kept = {k: v for k, v in _keyed_names(conn).items() if v}
+    assert kept == {"config": {"192"}, "expected": {"192"}}
+
+
+def test_an_alias_never_captures_a_live_device(conn):
+    """An heir alias ("ubuntu-22" -> "ubuntu-22.04") must not hijack a VM
+    later created under the old name itself."""
+    conn.execute("INSERT INTO aliases VALUES ('ubuntu-22', 'ubuntu-22.04')")
+    dev(conn, "ubuntu-22.04", "vsphere", last_seen=NOW, role="vm")
+    dev(conn, "ubuntu-22", "vsphere", last_seen=NOW, role="vm")
+    pdb.upsert_link(conn, a_device="ubuntu-22", a_interface="eth0",
+                    b_device="sw1", b_interface="1/0/2", source="lldp")
+    normalize(conn)
+    assert not conn.execute("SELECT * FROM aliases").fetchall()
+    assert links(conn) == [("sw1", "1/0/2", "ubuntu-22", "eth0", "lldp")]
