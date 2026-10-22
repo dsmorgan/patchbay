@@ -45,6 +45,7 @@ LOGIN_ERRORS = {
     "incomplete": "sign-in was not completed",
     "idp": "identity provider unreachable",
     "noclaim": "provider response had no identity claim",
+    "unverified": "the identity provider has not verified this email address",
     "denied": "this account is not on the allowed list",
 }
 
@@ -287,8 +288,27 @@ def _decode_jwt_claims(token: str) -> dict:
         return {}
 
 
-def oidc_exchange(request: Request, settings: Settings, code: str) -> str | None:
-    """Exchange the auth code; return the identity claim or None."""
+class OIDCRejected(Exception):
+    """The provider answered, but its answer can't sign anyone in. code is
+    a LOGIN_ERRORS key."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def email_verified(claims: dict) -> bool:
+    """The provider vouches for the email claim. A missing claim is not a
+    yes. Some providers send the string "true" rather than a boolean."""
+    v = claims.get("email_verified")
+    return v is True or (isinstance(v, str) and v.strip().lower() == "true")
+
+
+def oidc_exchange(request: Request, settings: Settings, code: str) -> str:
+    """Exchange the auth code; return the identity claim. Raises
+    OIDCRejected when there is none, or when it is an email address the
+    provider has not marked verified (an unverified email is whatever the
+    account holder typed, so it can't be matched against the allowlist)."""
     verify = settings.tls_verify
     with httpx.Client(timeout=15, verify=verify) as client:
         token_resp = client.post(settings.oidc_token_url, data={
@@ -310,7 +330,11 @@ def oidc_exchange(request: Request, settings: Settings, code: str) -> str | None
         elif tokens.get("id_token"):
             claims = _decode_jwt_claims(tokens["id_token"])
     identity = claim_path(claims, settings.oidc_identity_path)
-    return identity if isinstance(identity, str) and identity else None
+    if not (isinstance(identity, str) and identity):
+        raise OIDCRejected("noclaim")
+    if settings.oidc_identity_path.strip() == "email" and not email_verified(claims):
+        raise OIDCRejected("unverified")
+    return identity
 
 
 def oidc_allowed(settings: Settings, identity: str) -> bool:
@@ -424,8 +448,8 @@ def build_router(templates, get_settings) -> APIRouter:
             identity = oidc_exchange(request, settings, code)
         except httpx.HTTPError:
             return RedirectResponse("/login?error=idp", status_code=303)
-        if not identity:
-            return RedirectResponse("/login?error=noclaim", status_code=303)
+        except OIDCRejected as e:
+            return RedirectResponse(f"/login?error={e.code}", status_code=303)
         if not oidc_allowed(settings, identity):
             log.warning("OIDC sign-in refused: %r is not on PATCHBAY_OIDC_ALLOWED",
                         identity)
