@@ -439,14 +439,16 @@ def _log_alert_snapshot(conn, name: str, ts: float, triggers: list) -> None:
 
 def take_alert_snapshot(settings: Settings, notes, *, now: float | None = None) -> list[str]:
     """Run after dispatch: when PATCHBAY_ALERT_SNAPSHOT is on, write an alert
-    snapshot if `notes` holds a crit trigger and the cooldown has passed. Returns poll-output lines and never
-    raises: a failure is recorded for the snapshot-failed rule (trigger
-    `alert`) and the poll goes on."""
-    if not settings.alert_snapshot:
-        return []
+    snapshot if `notes` holds a crit trigger and the cooldown has passed.
+    When it is off, a crit trigger says so ("alert snapshot: off") rather
+    than leaving no snapshot and no explanation (#118). Returns poll-output
+    lines and never raises: a failure is recorded for the snapshot-failed
+    rule (trigger `alert`) and the poll goes on."""
     triggers = alert_triggers(notes)
     if not triggers:
         return []
+    if not settings.alert_snapshot:
+        return ["[ok]   alert snapshot: off (PATCHBAY_ALERT_SNAPSHOT)"]
     now = db.now() if now is None else now
     try:
         with db.connect(settings.db_path) as conn:

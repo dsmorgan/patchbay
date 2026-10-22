@@ -252,7 +252,11 @@ def test_off_by_default_takes_nothing(env, clean_env):
     clean_env.delenv("PATCHBAY_ALERT_SNAPSHOT")
     s = load_settings()
     assert s.alert_snapshot is False
-    assert snapshot.take_alert_snapshot(s, [_note()], now=T0) == []
+    # a crit says why nothing was written (#118); anything less says nothing
+    assert snapshot.take_alert_snapshot(s, [_note()], now=T0) == [
+        "[ok]   alert snapshot: off (PATCHBAY_ALERT_SNAPSHOT)"]
+    assert snapshot.take_alert_snapshot(s, [_note(severity="warn")], now=T0) == []
+    assert snapshot.take_alert_snapshot(s, [], now=T0) == []
     assert _alert_files(env / "snaps") == []
     assert _state(env, snapshot.ALERT_LAST_KEY) is None   # no cooldown claim
 
