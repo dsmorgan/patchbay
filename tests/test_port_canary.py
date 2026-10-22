@@ -311,9 +311,9 @@ def test_migration_adds_counter_columns_to_an_old_rate_history():
     pdb.init(c)
     pdb.init(c)                                   # idempotent
     cols = [r[1] for r in c.execute("PRAGMA table_info(rate_history)")]
-    assert cols[-4:] == list(pdb.RATE_COUNTERS)
+    assert cols[-5:] == [*pdb.RATE_COUNTERS, "src_ts"]   # src_ts: #117
     row = c.execute("SELECT * FROM rate_history").fetchone()
-    assert (row["in_bps"], row["out_errors"]) == (8, None)
+    assert (row["in_bps"], row["out_errors"], row["src_ts"]) == (8, None, None)
 
 
 def test_catalog_row_and_category(conn):

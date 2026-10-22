@@ -77,6 +77,27 @@ COUNTER_RATES = {"ifInErrors_rate": "in_errors", "ifOutErrors_rate": "out_errors
 PORTS_COLUMNS = ("port_id,ifName,ifIndex,ifAdminStatus,ifOperStatus,ifSpeed,"
                  "ifPhysAddress,ifAlias,ifInOctets_rate,ifOutOctets_rate,"
                  "ifInErrors_rate,ifOutErrors_rate")
+# `poll_time` (epoch seconds of the port's last SNMP poll, a `ports` column)
+# says which polling window a rate belongs to: a second patchbay poll inside
+# the same window reads the same figures, and must not store them again
+# (#117). Requested separately so a LibreNMS that refuses it (an unknown
+# column fails the whole request) degrades to the old behavior.
+POLL_TIME_COLUMN = "poll_time"
+
+
+def _last_source_ts(conn: sqlite3.Connection, names: set[str],
+                    iface: str) -> float | None:
+    """The newest LibreNMS poll_time stored for this port, under the name as
+    reported or its canonical form (the normalizer renames rate_history)."""
+    best = None
+    for n in names:
+        row = conn.execute(
+            "SELECT src_ts FROM rate_history WHERE device = ? AND interface = ? "
+            "AND src_ts IS NOT NULL ORDER BY ts DESC LIMIT 1", (n, iface)
+        ).fetchone()
+        if row is not None and (best is None or row[0] > best):
+            best = row[0]
+    return best
 
 
 def _rate_sample(p: dict) -> tuple | None:
@@ -120,6 +141,22 @@ class LibreNmsCollector:
         r.raise_for_status()
         return r.json()
 
+    def _ports(self, client: httpx.Client, settings: Settings,
+               device_id: int, with_poll_time: bool) -> tuple[list, bool]:
+        """One device's ports, and whether poll_time was in the answer. A 400
+        or 422 on the request that names poll_time means this LibreNMS
+        refuses the column: retry without it, and report False so the caller
+        stops asking."""
+        path = f"devices/{device_id}/ports?columns={PORTS_COLUMNS}"
+        if with_poll_time:
+            try:
+                return self._get(client, settings,
+                                 f"{path},{POLL_TIME_COLUMN}").get("ports", []), True
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code not in (400, 422):
+                    raise
+        return self._get(client, settings, path).get("ports", []), False
+
     def _fetch(self, settings: Settings) -> dict[str, Any]:
         """Every API call the collection needs, before anything is written:
         the caller's transaction takes SQLite's write lock at the first
@@ -128,12 +165,11 @@ class LibreNmsCollector:
         with httpx.Client(verify=settings.tls_verify, timeout=30) as client:
             devices = self._get(client, settings, "devices").get("devices", [])
             ports = {}
+            with_poll_time = True
             for d in devices:
                 if d.get("sysName") or d.get("hostname"):
-                    ports[d["device_id"]] = self._get(
-                        client, settings,
-                        f"devices/{d['device_id']}/ports?columns={PORTS_COLUMNS}",
-                    ).get("ports", [])
+                    ports[d["device_id"]], with_poll_time = self._ports(
+                        client, settings, d["device_id"], with_poll_time)
             return {
                 "devices": devices, "ports": ports,
                 "links": self._get(client, settings, "resources/links").get("links", []),
@@ -142,6 +178,7 @@ class LibreNmsCollector:
             }
 
     def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
+        from ..normalize import canonical_name
         fetched = self._fetch(settings)
         n_devices = n_ports = n_links = 0
         # the write phase: no network I/O from here on
@@ -187,13 +224,24 @@ class LibreNmsCollector:
                 )
                 n_ports += 1
                 sample = _rate_sample(p)
-                if sample is not None:
-                    conn.execute(
-                        "INSERT INTO rate_history (device, interface, ts, in_bps, "
-                        f"out_bps, {', '.join(db.RATE_COUNTERS)}) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (name, p["ifName"], db.now(), *sample),
-                    )
+                if sample is None:
+                    continue
+                # a poll_time that hasn't moved is the same measurement
+                # again (#117); no poll_time (older LibreNMS, or a port
+                # never polled) can't be told apart, so it is stored
+                src_ts = p.get("poll_time")
+                if src_ts is not None:
+                    last = _last_source_ts(conn, {name, canonical_name(name)},
+                                           p["ifName"])
+                    if last is not None and src_ts <= last:
+                        continue
+                conn.execute(
+                    "INSERT INTO rate_history (device, interface, ts, in_bps, "
+                    f"out_bps, {', '.join(db.RATE_COUNTERS)}, src_ts) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (name, p["ifName"], db.now(), *sample,
+                     float(src_ts) if src_ts is not None else None),
+                )
 
         # Retire devices removed from LibreNMS — they stayed on every page
         # with frozen status forever (disabled devices still appear in the
@@ -201,7 +249,6 @@ class LibreNmsCollector:
         # this collector owns; guarded on a non-empty listing. Stored
         # names are post-normalize canonical, so match both forms.
         if devices:
-            from ..normalize import canonical_name
             seen_names: set[str] = set()
             for d in devices:
                 n = d.get("sysName") or d.get("hostname")
