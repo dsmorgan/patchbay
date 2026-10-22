@@ -160,3 +160,12 @@ def test_creates_a_private_missing_directory(clean_env, tmp_path):
     _live(clean_env)
     assert _run(str(tmp_path / "backups" / "out.db")) == 0
     assert _mode(tmp_path / "backups") == 0o700
+
+
+def test_trailing_separator_means_a_directory(clean_env, tmp_path):
+    _live(clean_env)
+    target = tmp_path / "backups"  # does not exist yet: a first cron run
+    assert _run(str(target) + "/") == 0
+    made = list(target.iterdir())
+    assert len(made) == 1 and made[0].name.startswith("patchbay-")
+    assert _mode(target) == 0o700 and _mode(made[0]) == 0o600
