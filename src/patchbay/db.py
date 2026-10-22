@@ -375,6 +375,29 @@ def backup(src_path: str, dest_path: str, *, force: bool = False) -> int:
 RATE_COUNTERS = ("in_errors", "out_errors", "in_discards", "out_discards")
 
 
+def record_rates(conn: sqlite3.Connection, device: str, iface: str, *,
+                 in_bps: int | None = None, out_bps: int | None = None,
+                 in_errors: float | None = None, out_errors: float | None = None,
+                 in_discards: float | None = None, out_discards: float | None = None,
+                 ts: float | None = None) -> bool:
+    """Append one rate_history sample for a port: the load view's peak and
+    the port canaries read it (docs/collectors.md). Rates are per second,
+    bits for `*_bps`; pass None for a figure the source did not report, and
+    for all of them when the port is not live, so a stale reading is never
+    written as current. Returns False, writing nothing, when every figure
+    is None. `ts` defaults to now. Never commits: the caller owns the
+    transaction, like every collector write."""
+    vals = (in_bps, out_bps, in_errors, out_errors, in_discards, out_discards)
+    if all(v is None for v in vals):
+        return False
+    conn.execute(
+        "INSERT INTO rate_history (device, interface, ts, in_bps, out_bps, "
+        "in_errors, out_errors, in_discards, out_discards) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (device, iface, now() if ts is None else ts, *vals))
+    return True
+
+
 def init(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     # lightweight migration: add columns that predate an existing db file

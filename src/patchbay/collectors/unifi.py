@@ -110,14 +110,8 @@ def _sample(conn: sqlite3.Connection, device: str, iface: str,
     """One rate_history row when there is a rate to record: it feeds the
     load view's 24-hour peak, and the normalizer ages the table out. Error
     rates feed the port canaries; discards are not collected (#86)."""
-    if (in_bps is None and out_bps is None
-            and in_errors is None and out_errors is None):
-        return
-    conn.execute(
-        "INSERT INTO rate_history (device, interface, ts, in_bps, out_bps, "
-        "in_errors, out_errors) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (device, iface, db.now(), in_bps, out_bps, in_errors, out_errors),
-    )
+    db.record_rates(conn, device, iface, in_bps=in_bps, out_bps=out_bps,
+                    in_errors=in_errors, out_errors=out_errors)
 
 
 def _temperature(d: dict) -> float | None:
