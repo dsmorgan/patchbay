@@ -259,11 +259,11 @@ form; leaving the field empty keeps the stored URL.
 
 ### Repeat a notification while an alert stays active
 
-By default, patchbay notifies once when an alert raises and once when it
-clears. To hear about an alert that stays active, open **Alerts → Rules** and
+By default, patchbay notifies when an alert raises, when it escalates to a
+higher severity, and when it clears. To hear about an alert that stays active, open **Alerts → Rules** and
 set **remind every (minutes, 0 = never)** on the rule. patchbay then sends
-the notification again each time that many minutes pass since the last one,
-until the alert clears. The default is 0, which never repeats. Event rules
+the notification again each time that many minutes pass since the last notification for that alert
+(a raise, an escalation, or an earlier remind), until the alert clears. The default is 0, which never repeats. Event rules
 (`config-changed`, `snapshot-failed`) have no field, because they fire once.
 
 Reminds reach `generic` transports. A Kuma monitor needs none: patchbay

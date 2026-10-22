@@ -143,8 +143,9 @@ and renders one navigable picture:
   baseline. Send alerts to an Uptime Kuma push monitor or a generic webhook,
   set how often an active alert repeats, silence an alert with an expiry and
   a reason, and let a critical alert take a snapshot of the network as it
-  was. You edit all of it on the Alerts page; see
-  [Notifications](docs/deployment.md#8-notifications).
+  was. You edit rules, transports, and silences on the Alerts page, and turn
+  on snapshot on critical with `PATCHBAY_ALERT_SNAPSHOT` in the env file or
+  on the Ops page; see [Notifications](docs/deployment.md#8-notifications).
 - **Config history** — one timeline of config diffs across every device, so you
   can answer "what changed since it last worked". Rendered from Oxidized's git
   repository and from the firewall's stored config revisions.
