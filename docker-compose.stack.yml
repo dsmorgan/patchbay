@@ -114,8 +114,27 @@ services:
       # container's local time, so without TZ a nightly "03:30" fires at
       # 03:30 UTC.
       - TZ=${TZ:-UTC}
+      # how stale /healthz tolerates the poller being: three of these
+      - PATCHBAY_POLL_INTERVAL=${PATCHBAY_POLL_INTERVAL:-}
     volumes:
       - ./data:/data                          # .env + patchbay.db live here
+    # Reports, never restarts: compose leaves an unhealthy container running.
+    # /healthz answers 503 when the poller has not finished a poll in three
+    # poll intervals, so `docker ps` shows (unhealthy) when polling stops.
+    # urlopen raises on a 503, which is what fails the check. The probe
+    # connects to 127.0.0.1, which PATCHBAY_ALLOWED_HOSTS always allows. Change
+    # the port to match --port under host networking, and the scheme to
+    # https if PATCHBAY_TLS=direct (the probe must then skip verification).
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=5)"
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: always
 
   patchbay-poller:
@@ -129,29 +148,16 @@ services:
     # block the poller until LibreNMS is healthy, so a genuinely broken
     # LibreNMS would also stop every other source from being collected —
     # one outage becoming a blackout. The bound is the point: wait for the
-    # common case, never depend on it.
-    command:
-      - sh
-      - -c
-      - |
-        python - <<'PY'
-        import socket, time
-        host, port, tries = "librenms", 8000, 60      # 60 x 5s = 5 min ceiling
-        for i in range(tries):
-            try:
-                socket.create_connection((host, port), 2).close()
-                if i:
-                    print(f"[wait]  {host}:{port} up after {i * 5}s", flush=True)
-                break
-            except OSError:
-                time.sleep(5)
-        else:
-            print(f"[wait]  {host}:{port} still down after {tries * 5}s — "
-                  f"polling without it", flush=True)
-        PY
-        while true; do patchbay poll; sleep "${PATCHBAY_POLL_INTERVAL:-300}"; done
+    # common case, never depend on it. `--wait` is that bound: it checks
+    # librenms:8000 every 5 seconds for up to 5 minutes, then polls anyway.
+    # `patchbay poller` polls, sleeps PATCHBAY_POLL_INTERVAL, and repeats, and
+    # exits within a second of SIGTERM between polls. A stop during a poll lets
+    # it finish, so stop_grace_period covers a long one; a second signal aborts.
+    command: ["patchbay", "poller", "--wait", "librenms:8000"]
+    stop_grace_period: 1m
     environment:
       - TZ=${TZ:-UTC}
+      - PATCHBAY_POLL_INTERVAL=${PATCHBAY_POLL_INTERVAL:-}   # empty = 300
     volumes:
       - ./data:/data
     restart: always
