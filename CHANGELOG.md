@@ -8,8 +8,6 @@ put.
 
 ## [Unreleased]
 
-## [0.20.0] — 2026-10-11
-
 ### Added
 - Pulled cables keep alerting (#79). A link-down between two infrastructure
   devices (switch, AP, firewall, router, hypervisor) now holds until the port
@@ -20,6 +18,16 @@ put.
   UniFi-only sites. Rates come from the change in `rx_errors` and
   `tx_errors` between polls; a counter reset or a gap longer than 30 minutes
   stores no rate. Discards are not collected (see #86).
+
+### Fixed
+- Two overlapping polls no longer lose queued webhook notifications (#80).
+- A webhook URL that can't be turned into a request fails that one delivery
+  instead of the whole cycle, and redaction catches percent-escapes in either
+  letter case (#81).
+
+## [0.20.0] — 2026-10-11
+
+### Added
 - Snapshot on critical alert (#66), off by default. Set
   `PATCHBAY_ALERT_SNAPSHOT=on` (env file or /ops) and every new critical alert,
   routed or not, takes a `patchbay-…-alert.html` snapshot, at most one per
@@ -40,12 +48,6 @@ put.
   `/alerts` by device, type, and name; one that is missing, stale, or down
   raises a warning. Idle WireGuard counts as down unless the rule's
   `idle_is_down` setting is off. A down firewall holds its tunnel alerts.
-
-### Fixed
-- Two overlapping polls no longer lose queued webhook notifications (#80).
-- A webhook URL that can't be turned into a request fails that one delivery
-  instead of the whole cycle, and redaction catches percent-escapes in either
-  letter case (#81).
 
 ## [0.19.0] — 2026-10-07
 
