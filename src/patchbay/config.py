@@ -415,14 +415,24 @@ class Settings:
         return self.wan_ports[0] if self.wan_ports else None
 
 
-def load_settings() -> Settings:
+def load_settings(*, read_db: bool = True) -> Settings:
+    """Settings from the environment (the env file fills what is unset)
+    plus the declarations stored on /ops.
+
+    read_db=False skips the database: for callers that use only env-only
+    fields, like the auth gate on every request (#109), which must not wait
+    on SQLite. Such a Settings has no stored declarations and says they are
+    unreadable, so it can never drive a pruning poll."""
     load_dotenv(os.environ.get("PATCHBAY_ENV", ".env"))
     _env = os.environ.get
     declarations_readable = True
-    try:
-        stored = _db_declarations(_env("PATCHBAY_DB", "patchbay.db"))
-    except DeclarationReadError:
-        stored = {}
+    stored: dict[str, str] = {}
+    if read_db:
+        try:
+            stored = _db_declarations(_env("PATCHBAY_DB", "patchbay.db"))
+        except DeclarationReadError:
+            declarations_readable = False
+    else:
         declarations_readable = False
     declaration_sources: dict[str, str] = {}
 
@@ -452,7 +462,7 @@ def load_settings() -> Settings:
     def warn(var: str, spec: str) -> None:
         warnings.append(f"{var}: skipped malformed entry {spec.strip()!r}")
 
-    if not declarations_readable:
+    if not declarations_readable and read_db:
         warnings.append("could not read stored declarations from the database "
                         "(locked or corrupt) — using env-file declarations only; "
                         "the poll will not prune links this cycle")

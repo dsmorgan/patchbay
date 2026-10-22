@@ -435,7 +435,9 @@ def build_router(templates, get_settings) -> APIRouter:
 
     @router.post("/login")
     async def login_submit(request: Request):
-        settings = get_settings()
+        # async for the awaited throttle; the settings read (env file and
+        # SQLite) and the session secret run in worker threads (#109)
+        settings = await run_in_threadpool(get_settings)
         if settings.auth_mode != "password":
             return Response("password login not enabled", status_code=403)
         # one tiny urlencoded form — parse it directly rather than pulling in
@@ -453,7 +455,7 @@ def build_router(templates, get_settings) -> APIRouter:
                 f"/login?error=password&next={nxt}", status_code=303)
         resp = RedirectResponse(safe_next(form.get("next") or "/"),
                                 status_code=303)
-        set_session(resp, request, settings, "operator")
+        await run_in_threadpool(set_session, resp, request, settings, "operator")
         return resp
 
     @router.get("/logout")
