@@ -412,13 +412,48 @@ def _monitor_ports(conn: sqlite3.Connection) -> set[tuple[str, str]]:
         "SELECT device, interface FROM port_roles WHERE role = 'monitor-dst'")}
 
 
+def _learned_behind(x: str, macs: set[str], toward_macs: set[str],
+                    fdb_at: dict[tuple[str, str], set[str]],
+                    clients_of: dict[str, set[str]]) -> bool:
+    """Does device x put one of `macs` behind itself? Yes when x's own MAC
+    table learned it on a port other than the one facing the asking switch
+    (the port where x learned that switch's MACs), or x reports it as its
+    own client (an AP's wireless station)."""
+    toward = {p for m in toward_macs for p in fdb_at.get((x, m), ())}
+    return any(m in clients_of.get(x, ())
+               or any(p not in toward for p in fdb_at.get((x, m), ()))
+               for m in macs)
+
+
+def _hung_behind(conn: sqlite3.Connection, ghost: str) -> set[str]:
+    """The known devices an inferred switch's links hang behind it."""
+    return {r[0] for r in conn.execute(
+        "SELECT CASE WHEN a_device = ? THEN b_device ELSE a_device END "
+        "FROM links WHERE source = 'fdb-uplink' AND "
+        "((a_device = ? AND a_interface = '?') OR (b_device = ? AND b_interface = '?'))",
+        (ghost, ghost, ghost))}
+
+
+def _retract_uplinks(conn: sqlite3.Connection, dev: str, iface: str,
+                     keep: str | None) -> None:
+    """Withdraw fdb-uplink rows on one switch port that lead anywhere but
+    `keep`: the port's MAC table was just read and named its one cable."""
+    conn.execute(
+        "DELETE FROM links WHERE source = 'fdb-uplink' AND "
+        "((a_device = ? AND a_interface = ? AND b_device IS NOT ?) OR "
+        " (b_device = ? AND b_interface = ? AND a_device IS NOT ?))",
+        (dev, iface, keep, dev, iface, keep))
+
+
 def _place_endpoints_and_infer(conn: sqlite3.Connection,
                                declared: list[tuple[str | None, str, str]] | None = None,
                                prune_declared: bool = True) -> int:
     """FDB placement, in evidence order:
     1. a port carrying a MAC that belongs to a known device's interface links
        to that device on that interface (catches hypervisor multi-uplinks that
-       don't speak LLDP);
+       don't speak LLDP). Several known devices on one port are one managed
+       switch with the rest behind it, else an inferred unmanaged switch
+       with all of them hung behind it — never one cable per device;
     2. otherwise, many MACs on a non-linked port => inferred unmanaged switch;
     3. otherwise, a uniquely-seen MAC is a wired endpoint on that port."""
     from .ports import port_kind
@@ -495,6 +530,23 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
     # would hang a phantom switch (or a wrong uplink) off the probe port.
     down_ports |= _monitor_ports(conn)
 
+    # what each device's own MAC table says, for telling a managed switch
+    # from the hosts behind it (see _learned_behind); a mirror port's table
+    # describes the whole fabric and says nothing about where a MAC lives
+    monitor = _monitor_ports(conn)
+    fdb_at: dict[tuple[str, str], set[str]] = {}
+    for r in conn.execute("SELECT DISTINCT device, interface, mac FROM fdb"):
+        if (r["device"], r["interface"]) not in monitor:
+            fdb_at.setdefault((r["device"], canon_mac(r["mac"])),
+                              set()).add(r["interface"])
+    dev_macs: dict[str, set[str]] = {}
+    for m, (d, _) in if_by_mac.items():
+        dev_macs.setdefault(d, set()).add(m)
+    clients_of: dict[str, set[str]] = {}
+    for r in conn.execute("SELECT device, mac FROM endpoints "
+                          "WHERE source != 'fdb' AND device IS NOT NULL"):
+        clients_of.setdefault(r["device"], set()).add(canon_mac(r["mac"]))
+
     edge: dict[str, list[tuple[str, str]]] = {}   # mac -> [(device, port)]
     per_port: dict[tuple[str, str], set[str]] = {}
     # DISTINCT: two sources can each own a row for the same triple, but one
@@ -546,7 +598,9 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
                  and (port not in declared_set or r["node"] != expected)) or \
                 (r["dsrc"] == "inference" and port in declared_set)
         if stale:
-            conn.execute("DELETE FROM links WHERE id = ?", (r["lid"],))
+            # every link: an inferred switch also hangs known hosts behind it
+            conn.execute("DELETE FROM links WHERE a_device = ? OR b_device = ?",
+                         (r["node"], r["node"]))
             conn.execute("DELETE FROM devices WHERE name = ?", (r["node"],))
             conn.execute("DELETE FROM endpoints WHERE device = ?", (r["node"],))
     for dev, iface in declared_set:
@@ -575,18 +629,63 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
             # port (vmk0…) means the same for the host itself — and since no
             # cable ends on a vSwitch-backed port, the far end is '?', which
             # also collapses several vmks on one uplink into ONE cable.
-            resolved = set()
-            for od, oif in owners:
+            resolved: set[tuple[str, str]] = set()
+            seen_by: dict[str, set[str]] = {}    # far device -> its MACs here
+            for m in macs:
+                hit = if_by_mac.get(canon_mac(m))
+                if hit is None or hit[0] == dev:
+                    continue
+                od, oif = hit
                 parent = parent_of.get(od)
-                if parent:
-                    resolved.add((parent, "?"))
+                end = (parent, "?") if parent else \
+                    (od, oif if port_kind(oif) == "physical" else "?")
+                if end[0] != dev:
+                    resolved.add(end)
+                    seen_by.setdefault(end[0], set()).add(canon_mac(m))
+            ends = set(resolved)
+            # A port has one cable. Several known devices behind it are
+            # either one managed switch and what hangs off it (it learned
+            # the others on its own downlinks: link to it alone), or a dumb
+            # switch with all of them behind it — writing a link per owner
+            # drew N cables out of one port (#98).
+            ghost = f"unmanaged@{dev}:{iface}"
+            if len(seen_by) > 1:
+                near = [x for x in seen_by
+                        if all(_learned_behind(x, ys, dev_macs.get(dev, set()),
+                                               fdb_at, clients_of)
+                               for y, ys in seen_by.items() if y != x)]
+                if len(near) == 1:
+                    resolved = {e for e in resolved if e[0] == near[0]}
+                    _retract_uplinks(conn, dev, iface, keep=near[0])
                 else:
-                    resolved.add((od, oif if port_kind(oif) == "physical" else "?"))
-            for owner_dev, owner_if in resolved:
-                if owner_dev != dev:
-                    db.upsert_link(conn, a_device=dev, a_interface=iface,
+                    resolved = set()
+            elif seen_by:
+                # an inferred dumb switch whose other hosts went quiet (their
+                # MACs aged out of the table) stays until its evidence does
+                hung = _hung_behind(conn, ghost)
+                if len(hung) > 1 and hung >= set(seen_by):
+                    resolved = set()
+            if seen_by and not resolved:
+                plain = [m for m in macs if canon_mac(m) not in self_macs]
+                db.upsert_device(conn, name=ghost, source="inference",
+                                 role="unmanaged-switch", status="up",
+                                 model=f"~{len(macs)} MACs behind {dev} {iface}")
+                db.upsert_link(conn, a_device=dev, a_interface=iface,
+                               b_device=ghost, b_interface="?", source="fdb-inference")
+                _retract_uplinks(conn, dev, iface, keep=None)
+                for owner_dev, owner_if in ends:
+                    db.upsert_link(conn, a_device=ghost, a_interface="?",
                                    b_device=owner_dev, b_interface=owner_if,
                                    source="fdb-uplink")
+                for mac in plain:
+                    db.upsert_endpoint(conn, mac=mac, source="fdb", device=ghost,
+                                       interface="?")
+                inferred += 1
+                continue
+            for owner_dev, owner_if in resolved:
+                db.upsert_link(conn, a_device=dev, a_interface=iface,
+                               b_device=owner_dev, b_interface=owner_if,
+                               source="fdb-uplink")
             continue
         plain = [m for m in macs if canon_mac(m) not in self_macs]
         if len(plain) >= UNMANAGED_MAC_THRESHOLD:
@@ -772,7 +871,9 @@ def _drop_superseded_inference(conn: sqlite3.Connection) -> None:
         row = conn.execute("SELECT source FROM devices WHERE name = ?",
                            (ghost,)).fetchone()
         if row and row["source"] == "inference":
-            conn.execute("DELETE FROM links WHERE id = ?", (r["id"],))
+            # with the hosts it hung behind itself (fdb-uplink from '?')
+            conn.execute("DELETE FROM links WHERE a_device = ? OR b_device = ?",
+                         (ghost, ghost))
             conn.execute("DELETE FROM devices WHERE name = ?", (ghost,))
             conn.execute("DELETE FROM endpoints WHERE device = ?", (ghost,))
 
