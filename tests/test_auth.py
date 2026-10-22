@@ -342,3 +342,29 @@ def test_session_without_fingerprint_is_rejected(clean_env):
                              "alice@example.com", hours=1)
     c.cookies.set(auth.SESSION_COOKIE, legacy)
     assert c.get("/").status_code == 303
+
+
+@pytest.mark.parametrize("verified", [True, "true", "TRUE"])
+def test_oidc_accepts_a_verified_email(clean_env, monkeypatch, verified):
+    c, r = _oidc_callback(clean_env, monkeypatch,
+                          {"email": "alice@example.com", "email_verified": verified})
+    assert r.headers["location"] == "/"
+    assert c.get("/").status_code == 200
+
+
+@pytest.mark.parametrize("claims", [
+    {"email": "alice@example.com", "email_verified": False},
+    {"email": "alice@example.com", "email_verified": "false"},
+    {"email": "alice@example.com"},                  # provider omits the claim
+])
+def test_oidc_rejects_an_unverified_email(clean_env, monkeypatch, claims):
+    c, r = _oidc_callback(clean_env, monkeypatch, claims)
+    assert r.headers["location"] == "/login?error=unverified"
+    assert not c.cookies.get(auth.SESSION_COOKIE)
+    assert c.get("/").status_code == 303
+
+
+def test_oidc_other_identity_claims_need_no_email_verified(clean_env, monkeypatch):
+    c, r = _oidc_callback(clean_env, monkeypatch, {"preferred_username": "alice"},
+                          PATCHBAY_OIDC_IDENTITY_PATH="preferred_username")
+    assert r.headers["location"] == "/"
