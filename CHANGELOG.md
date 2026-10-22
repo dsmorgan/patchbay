@@ -6,7 +6,7 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.23.0] — 2026-10-22
 
 ### Added
 - `patchbay backup PATH` (#112) writes a consistent copy of the database
