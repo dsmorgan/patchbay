@@ -323,6 +323,40 @@ any other rule. When the failing transport is the default, the attention
 list still shows the item, and a Kuma monitor that stops receiving pushes
 goes down on its own.
 
+## Container user and upgrading
+
+The image does not run as root. It starts as root only to fix the ownership
+of `/data`, then drops to an unprivileged user:
+
+- A root-owned `./data` (every install from before this change, and a
+  directory Docker creates for a missing bind mount) is handed to uid/gid
+  `10001`, the image's `patchbay` user. You can still read the files on the
+  host, but editing `data/.env` then needs `sudo`, or
+  `sudo chown -R "$USER" data` after you stop the stack.
+- A `./data` you created yourself (`mkdir data`) keeps its owner, and
+  patchbay runs as that user, so you keep editing `data/.env` normally.
+- In both cases, files an older release left root-owned (`patchbay.db`,
+  snapshots) are re-owned automatically on the next start. **Upgrading
+  needs no manual step**: `docker compose pull && docker compose up -d`.
+
+To pick the user yourself, set `user: "1000:1000"` (any uid:gid) on both
+patchbay services. The entrypoint then does no chown, so `./data` must
+already be writable by that user: `sudo chown -R 1000:1000 data`.
+
+Anything else you mount into the patchbay services must be writable by that
+user as well. This includes the off-host snapshot share of
+[step 7](#7-verify-snapshot-delivery): if delivery starts failing with
+`Permission denied` after an upgrade, `chown` the share to the same uid or
+loosen its mode.
+
+The stack publishes Oxidized's REST port on `127.0.0.1:8888` only, for
+debugging from the host. patchbay never needs it (it uses
+`http://oxidized:8888` on the compose network), and oxidized-web has no
+authentication, so keep it off other interfaces. An upgrade that changes
+this recreates the `oxidized` container; if you reached its API from another
+machine, put an authenticating reverse proxy in front or use an SSH tunnel
+to the host.
+
 ## Where the state lives
 
 | Data | Where | Survives `compose down`? |
