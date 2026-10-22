@@ -6,7 +6,7 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
-## [Unreleased]
+## [0.21.0] — 2026-10-22
 
 ### Added
 - Pulled cables keep alerting (#79). A link-down between two infrastructure
@@ -22,12 +22,18 @@ put.
 ### Changed
 - CI runs the test suite on every pull request and push to main, installed
   from `uv.lock`, so Dependabot bumps are tested, not only built.
+- Dependencies: FastAPI 0.148.0 (the `web` extra now requires at least
+  that), and uv 0.13.5 in the image build.
 
 ### Fixed
 - Two overlapping polls no longer lose queued webhook notifications (#80).
 - A webhook URL that can't be turned into a request fails that one delivery
   instead of the whole cycle, and redaction catches percent-escapes in either
   letter case (#81).
+
+### Security
+- The image's CA bundle (certifi 2026.10.19) drops emSign root certificates
+  whose intermediate keys were compromised (GHSA-6q48-6c7w-9gw2).
 
 ## [0.20.0] — 2026-10-11
 
