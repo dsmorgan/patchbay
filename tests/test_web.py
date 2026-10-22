@@ -1654,3 +1654,11 @@ def test_ops_survives_really_corrupt_db(clean_env, client):
     assert "sw1:p1=nas:lan1" in r.text and "env file" in r.text
     r = client.post("/ops/config", json={"var": "PATCHBAY_CAPACITY", "value": "x=1G"})
     assert r.status_code == 409
+
+
+def test_graph_proxy_answers_502_when_librenms_is_down(clean_env, tmp_path, client):
+    seed(str(tmp_path / "test.db"))
+    clean_env.setenv("LIBRENMS_URL", "http://127.0.0.1:9")   # nothing listens
+    clean_env.setenv("LIBRENMS_TOKEN", "t0ken")
+    r = client.get("/graph", params={"device": "sw1", "iface": "1/0/1"})
+    assert r.status_code == 502
