@@ -30,6 +30,21 @@ put.
   a drag pins. Selecting a node or a panel peer, pressing Escape, dragging,
   and shift-click unpin keep your zoom and pan. The map re-fits on first
   load, a filter change, or the fit button.
+- Device identity (#98). A name is shortened only at a real domain suffix,
+  so IP-named devices and names such as `ubuntu-22.04` no longer merge into
+  one device; firewalls set by IP in `OPNSENSE_HOST`/`PFSENSE_HOST` and
+  IP-named Oxidized nodes are named by their full address. A port with
+  several known devices behind it draws one cable, to the switch that learned
+  the others or to an inferred unmanaged switch, instead of one cable per
+  device. Inferred unmanaged switches keep names with dots or capitals, and
+  their pins. Tunnel routes attach only to tunnels on their own firewall,
+  and peers sharing `wg0` are told apart by allowed IPs.
+
+  **Upgrade notes:** devices the old rule merged split on the first poll.
+  Leftover merged rows disappear within about 20 minutes; their pins, links,
+  tunnels, and config history move to the matching device, or are dropped
+  when no single device matches. Routes over a shared `wg0` attach to their
+  peer after the first OPNsense poll.
 
 ### Security
 - Web sign-in hardening (#94). A failed password sign-in no longer stalls
