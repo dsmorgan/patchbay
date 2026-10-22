@@ -37,13 +37,33 @@ from .redact import hide_userinfo
 app = FastAPI(title="patchbay")
 
 
+BUSY_TEXT = "the database is busy (a poll is writing) — try again"
+
+
+def _is_busy(exc: sqlite3.OperationalError) -> bool:
+    return "locked" in str(exc) or "busy" in str(exc)
+
+
+def _busy_response(request: Request) -> Response:
+    """503 with Retry-After, in the shape the caller reads: text for a
+    page load or a form post (the browser shows it), JSON `{"detail": …}`
+    for the script-driven POSTs, which read the body with r.json()."""
+    from fastapi.responses import JSONResponse
+
+    headers = {"Retry-After": "5"}
+    form = request.headers.get("content-type", "").startswith(
+        ("application/x-www-form-urlencoded", "multipart/form-data"))
+    if request.method in ("GET", "HEAD") or form:
+        return Response(BUSY_TEXT, status_code=503, headers=headers)
+    return JSONResponse({"detail": BUSY_TEXT}, status_code=503, headers=headers)
+
+
 @app.exception_handler(sqlite3.OperationalError)
 async def _database_busy(request: Request, exc: sqlite3.OperationalError):
     """A write that waited out the busy timeout is a retry, not a crash:
     503 says so (#109). Any other database error stays a 500."""
-    if "locked" in str(exc) or "busy" in str(exc):
-        return Response("the database is busy (a poll is writing) — try again",
-                        status_code=503, headers={"Retry-After": "5"})
+    if _is_busy(exc):
+        return _busy_response(request)
     raise exc
 
 
@@ -259,7 +279,14 @@ async def auth_gate(request: Request, call_next):
     # allowlist or auth setting still takes effect without a restart.
     from starlette.concurrency import run_in_threadpool
 
-    intercept = await run_in_threadpool(_gate, request)
+    try:
+        intercept = await run_in_threadpool(_gate, request)
+    except sqlite3.OperationalError as e:
+        # a cold session-secret cache reads the database; a poll's commit
+        # can hold it past the timeout, and that is a retry, not a 500
+        if not _is_busy(e):
+            raise
+        intercept = _busy_response(request)
     response = intercept if intercept else await call_next(request)
     auth.forbid_framing(response)  # every response, refusals included
     return response
@@ -2122,14 +2149,19 @@ def ops_poll(source: str | None = None):
 
     owner = db.lease_owner("web")
     heartbeat = ExitStack()
+    claimed = False
     conn = _conn()
     try:
         db.init(conn)
         # _ops_lock covers this process; the lease covers the scheduled
         # poller too, a separate process (#109). Answer now rather than
         # hold the request open for a poll that is already running.
-        if not db.claim_poll_lease(conn, owner):
+        answer = db.claim_poll_lease(conn, owner)
+        if answer == db.LEASE_HELD:
             raise HTTPException(409, "a poll is already running — wait for it")
+        if answer == db.LEASE_BUSY:
+            raise HTTPException(503, BUSY_TEXT, headers={"Retry-After": "5"})
+        claimed = True
         heartbeat.enter_context(db.lease_heartbeat(settings.db_path, owner))
         for name, collector in sorted(collectors.items()):
             try:
@@ -2155,7 +2187,8 @@ def ops_poll(source: str | None = None):
     finally:
         try:
             heartbeat.close()
-            db.release_poll_lease(conn, owner)
+            if claimed:   # never wait on the write lock for a lease not ours
+                db.release_poll_lease(conn, owner)
         finally:
             conn.close()
             _ops_lock.release()

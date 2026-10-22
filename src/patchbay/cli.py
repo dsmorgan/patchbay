@@ -27,10 +27,17 @@ POLL_LEASE_WAIT = 900.0
 POLL_LEASE_RETRY = 2.0
 
 
+# The signal `patchbay poller` sends its child on a stop (#109): a poll that
+# is still waiting for the lease holds nothing, so it gives up and exits;
+# one that holds the lease ignores it and finishes (a second stop aborts).
+STOP_WAITING = getattr(signal, "SIGUSR1", None)   # None on Windows
+
+
 @contextmanager
-def _poll_lease(conn: sqlite3.Connection, path: str, owner: str) -> Iterator[bool]:
+def _poll_lease(conn: sqlite3.Connection, path: str, owner: str) -> Iterator[str]:
     """Ready the database, then hold the cross-process poll lease for the
-    with body: yields False when another poll kept it past POLL_LEASE_WAIT.
+    with body. Yields "claimed", "timeout" (another poll kept it past
+    POLL_LEASE_WAIT), or "stopped" (STOP_WAITING arrived while waiting).
     The web app's Poll button and this poller are separate processes, and
     two polls at once fail each other's collectors on SQLite's write lock.
     On exit the poll's work is committed (or, on an error, rolled back)
@@ -46,19 +53,36 @@ def _poll_lease(conn: sqlite3.Connection, path: str, owner: str) -> Iterator[boo
     except sqlite3.OperationalError:
         time.sleep(3)
         db.init(conn)
-    deadline = time.monotonic() + POLL_LEASE_WAIT
-    waiting = False
-    while not db.claim_poll_lease(conn, owner):
-        if time.monotonic() >= deadline:
-            yield False
-            return
-        if not waiting:
-            print("[wait] another poll is running; waiting for it", file=sys.stderr)
-            waiting = True
-        time.sleep(POLL_LEASE_RETRY)
+    stopped = threading.Event()
+    # signal handlers can only be set from the main thread (tests run polls
+    # on others); elsewhere the wait just can't be interrupted
+    handles_stop = (STOP_WAITING is not None
+                    and threading.current_thread() is threading.main_thread())
+    if handles_stop:
+        signal.signal(STOP_WAITING, lambda signum, frame: stopped.set())
+    try:
+        deadline = time.monotonic() + POLL_LEASE_WAIT
+        waiting = False
+        while db.claim_poll_lease(conn, owner) != db.LEASE_CLAIMED:
+            if time.monotonic() >= deadline:
+                yield "timeout"
+                return
+            if not waiting:
+                print("[wait] another poll is running; waiting for it",
+                      file=sys.stderr, flush=True)
+                waiting = True
+            step_end = time.monotonic() + POLL_LEASE_RETRY
+            while not stopped.is_set() and time.monotonic() < step_end:
+                time.sleep(0.1)
+            if stopped.is_set():
+                yield "stopped"
+                return
+    finally:
+        if handles_stop:   # leased (or leaving): a stop no longer ends this poll
+            signal.signal(STOP_WAITING, signal.SIG_IGN)
     try:
         with db.lease_heartbeat(path, owner):
-            yield True
+            yield "claimed"
     except BaseException:
         conn.rollback()
         raise
@@ -94,7 +118,10 @@ def cmd_poll(args: argparse.Namespace) -> int:
         say(f"[warn] {w}", err=True)
     owner = db.lease_owner("cli")
     with db.connect(settings.db_path) as conn, _poll_lease(conn, settings.db_path, owner) as leased:
-        if not leased:
+        if leased == "stopped":
+            print("[ok]   poll: stopped while waiting for another poll; nothing ran")
+            return 0
+        if leased == "timeout":
             print(f"[fail] poll: another poll held the lease for over "
                   f"{POLL_LEASE_WAIT:.0f}s; skipped this cycle", file=sys.stderr)
             return 1
@@ -265,6 +292,14 @@ def cmd_poller(args: argparse.Namespace) -> int:
         if seen == 1 and busy:
             print("[wait]  stopping after this poll (signal again to abort it)",
                   flush=True)
+            # a child still waiting for another poll's lease holds nothing:
+            # it gives up at once, or `docker stop` would sit out someone
+            # else's poll. A child holding the lease ignores this (#109).
+            if STOP_WAITING is not None:
+                try:
+                    child.send_signal(STOP_WAITING)
+                except OSError:
+                    pass
         elif seen > 1 and busy:
             print("[warn] aborting the poll", file=sys.stderr, flush=True)
             child.terminate()

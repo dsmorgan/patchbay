@@ -141,13 +141,13 @@ def test_poll_lease_claim_renew_release(tmp_path):
     a = sqlite3.connect(path)
     b = sqlite3.connect(path)
     try:
-        assert pdb.claim_poll_lease(a, "a")
-        assert not pdb.claim_poll_lease(b, "b")        # held
-        assert pdb.claim_poll_lease(a, "a")             # renewal
+        assert pdb.claim_poll_lease(a, "a") == pdb.LEASE_CLAIMED
+        assert pdb.claim_poll_lease(b, "b") == pdb.LEASE_HELD        # held
+        assert pdb.claim_poll_lease(a, "a") == pdb.LEASE_CLAIMED             # renewal
         pdb.release_poll_lease(b, "b")                  # not b's to release
-        assert not pdb.claim_poll_lease(b, "b")
+        assert pdb.claim_poll_lease(b, "b") == pdb.LEASE_HELD
         pdb.release_poll_lease(a, "a")
-        assert pdb.claim_poll_lease(b, "b")
+        assert pdb.claim_poll_lease(b, "b") == pdb.LEASE_CLAIMED
     finally:
         a.close()
         b.close()
@@ -156,11 +156,11 @@ def test_poll_lease_claim_renew_release(tmp_path):
 def test_a_dead_pollers_lease_lapses(tmp_path):
     path = _db(tmp_path)
     with pdb.connect(path) as c:
-        assert pdb.claim_poll_lease(c, "dead", ttl=-1)   # already lapsed
-        assert pdb.claim_poll_lease(c, "next")
+        assert pdb.claim_poll_lease(c, "dead", ttl=-1) == pdb.LEASE_CLAIMED   # already lapsed
+        assert pdb.claim_poll_lease(c, "next") == pdb.LEASE_CLAIMED
         pdb.set_state(c, pdb.POLL_LEASE, "not json")      # damaged: holds nothing
         c.commit()
-        assert pdb.claim_poll_lease(c, "after")
+        assert pdb.claim_poll_lease(c, "after") == pdb.LEASE_CLAIMED
 
 
 def test_lease_claim_does_not_wait_forever_on_a_locked_database(tmp_path):
@@ -168,7 +168,7 @@ def test_lease_claim_does_not_wait_forever_on_a_locked_database(tmp_path):
     holder = _hold(path)
     c = sqlite3.connect(path, timeout=0.2)
     try:
-        assert not pdb.claim_poll_lease(c, "x")
+        assert pdb.claim_poll_lease(c, "x") == pdb.LEASE_BUSY
     finally:
         holder.rollback()
         holder.close()
@@ -253,7 +253,7 @@ def test_poll_gives_up_on_a_lease_that_never_frees(clean_env, tmp_path, monkeypa
 
     path = _db(tmp_path)
     with pdb.connect(path) as c:
-        assert pdb.claim_poll_lease(c, "web:1:busy")
+        assert pdb.claim_poll_lease(c, "web:1:busy") == pdb.LEASE_CLAIMED
     monkeypatch.setattr(cli, "POLL_LEASE_WAIT", 0.2)
     monkeypatch.setattr(cli, "POLL_LEASE_RETRY", 0.05)
     assert _poll(monkeypatch, _SlowCollector(seconds=0)) == 1
@@ -271,22 +271,81 @@ def test_poll_releases_the_lease(clean_env, tmp_path, monkeypatch):
         assert c.execute("SELECT name FROM devices").fetchone()[0] == "sw1"
 
 
+def _quick(monkeypatch):
+    """SQLite's 5 s busy timeout, shortened for the tests."""
+    from contextlib import contextmanager
+
+    import patchbay.web as web
+
+    real_conn, real_connect = web._conn, pdb.connect
+
+    def conn():
+        c = real_conn()
+        c.execute("PRAGMA busy_timeout = 200")
+        return c
+
+    @contextmanager
+    def connect(path):
+        with real_connect(path) as c:
+            c.execute("PRAGMA busy_timeout = 200")
+            yield c
+
+    monkeypatch.setattr(web, "_conn", conn)
+    monkeypatch.setattr(pdb, "connect", connect)
+
+
 def test_a_save_that_outwaits_the_busy_timeout_is_a_503(clean_env, tmp_path, monkeypatch):
     import patchbay.web as web
 
     path = _db(tmp_path)
-    real = web._conn
-
-    def quick():   # the 5 s busy timeout, shortened for the test
-        conn = real()
-        conn.execute("PRAGMA busy_timeout = 200")
-        return conn
-
-    monkeypatch.setattr(web, "_conn", quick)
+    _quick(monkeypatch)
     holder = _hold(path)
     try:
         r = TestClient(web.app, raise_server_exceptions=False).post(
             "/alerts/silences", data={"kind": "device", "scope": "sw1"})
+        assert r.status_code == 503
+        assert r.headers["retry-after"] == "5"
+        assert r.text == web.BUSY_TEXT           # a form post: the page says it
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_a_busy_503_to_a_script_is_json(clean_env, tmp_path, monkeypatch):
+    """ops.html reads /ops/config's answer with r.json() and alerts its
+    detail: a plain-text 503 alerted a SyntaxError instead."""
+    import patchbay.web as web
+
+    path = _db(tmp_path)
+    _quick(monkeypatch)
+    holder = _hold(path)
+    try:
+        r = TestClient(web.app, raise_server_exceptions=False).post(
+            "/ops/config", json={"var": "PATCHBAY_ALIASES", "value": "a=b"})
+        assert r.status_code == 503
+        assert r.json() == {"detail": web.BUSY_TEXT}
+        assert r.headers["retry-after"] == "5"
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_auth_gate_cold_secret_under_a_lock_is_a_503(clean_env, tmp_path, monkeypatch):
+    """The gate's one database read, the session secret on a process's
+    first signed-in request, answers 503 rather than 500 when a commit
+    holds the database."""
+    import patchbay.web as web
+    from patchbay import auth
+
+    path = _db(tmp_path)
+    clean_env.setenv("PATCHBAY_AUTH", "password")
+    clean_env.setenv("PATCHBAY_PASSWORD", "pw")
+    monkeypatch.setattr(auth, "_secret_cache", {})
+    _quick(monkeypatch)
+    holder = _hold(path, "EXCLUSIVE")
+    try:
+        r = TestClient(web.app, raise_server_exceptions=False).get(
+            "/ops", follow_redirects=False)
         assert r.status_code == 503
         assert r.headers["retry-after"] == "5"
     finally:
@@ -299,11 +358,55 @@ def test_the_heartbeat_keeps_a_long_poll_leased(tmp_path):
     lease meanwhile, and stops when the poll does."""
     path = _db(tmp_path)
     with pdb.connect(path) as c:
-        assert pdb.claim_poll_lease(c, "long", ttl=0.3)
+        assert pdb.claim_poll_lease(c, "long", ttl=0.3) == pdb.LEASE_CLAIMED
     with pdb.lease_heartbeat(path, "long", every=0.05):
         time.sleep(0.6)                         # twice the TTL
         with pdb.connect(path) as c:
-            assert not pdb.claim_poll_lease(c, "other")
+            assert pdb.claim_poll_lease(c, "other") == pdb.LEASE_HELD
     with pdb.connect(path) as c:
         until = pdb._lease_holder(c)["until"]
     assert until - time.time() > pdb.POLL_LEASE_TTL - 5   # renewed at full TTL
+
+
+def test_ops_poll_409_never_waits_on_the_write_lock(clean_env, tmp_path, monkeypatch):
+    """The 409 path used to release a lease it never claimed, and the
+    release waited out the busy timeout behind the writing poll."""
+    import patchbay.web as web
+    from patchbay import collectors
+
+    path = _db(tmp_path)
+    with pdb.connect(path) as c:
+        assert pdb.claim_poll_lease(c, "cli:1:other") == pdb.LEASE_CLAIMED
+    monkeypatch.setattr(collectors, "available", lambda s: {"slow": _SlowCollector()})
+    holder = _hold(path)                 # the other poll, mid-write
+    try:
+        t0 = time.monotonic()
+        r = TestClient(web.app).post("/ops/poll")
+        assert r.status_code == 409 and "already running" in r.json()["detail"]
+        assert time.monotonic() - t0 < 1
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_ops_poll_on_a_busy_database_is_503_not_already_running(clean_env, tmp_path,
+                                                                 monkeypatch):
+    """No poll holds the lease; the database is merely locked. That is a
+    retry (503), not "a poll is already running"."""
+    import patchbay.web as web
+    from patchbay import collectors
+
+    path = _db(tmp_path)
+    _quick(monkeypatch)
+    monkeypatch.setattr(collectors, "available", lambda s: {"slow": _SlowCollector()})
+    holder = _hold(path)
+    try:
+        r = TestClient(web.app, raise_server_exceptions=False).post("/ops/poll")
+        assert r.status_code == 503
+        assert r.json()["detail"] == web.BUSY_TEXT
+        assert r.headers["retry-after"] == "5"
+    finally:
+        holder.rollback()
+        holder.close()
+    with pdb.connect(path) as c:
+        assert pdb.get_state(c, pdb.POLL_LEASE) is None     # nothing claimed
