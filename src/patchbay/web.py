@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 from . import alerting, db, expected_tunnels, known_cables, silences, transports
 from . import routed
 from .attention import (CATEGORIES, STALE_MIN, attention_items, device_totals, drift_report,
-                        human_age, human_speed, ip_sort_key, ipam_link,
+                        gateway_state, human_age, human_speed, ip_sort_key, ipam_link,
                         source_ages, speed_tier, stamp_first_seen)
 from .config import load_settings
 
@@ -107,6 +107,7 @@ templates.env.globals["BUILD"] = BUILD
 
 templates.env.filters["speed"] = human_speed
 templates.env.filters["age"] = human_age
+templates.env.filters["gateway_state"] = gateway_state
 
 
 def hardware(d) -> str:
@@ -1077,7 +1078,7 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
             "name": wan_name, "role": "cloud", "rank": -1,
             "w": max(len(wan_name), len(sub)) * 7.2 + 34,
             "sub": sub,
-            "status": ("up" if gw["status"] == "Online" else "down") if gw else "unknown",
+            "status": gateway_state(gw["status"]) if gw else "unknown",
             # the internet lives on whatever VLAN its landing ports carry
             "vlans": sorted(set().union(set(), *(
                 settings.vlan_filters.get(k) or pv_all.get(k) or set() for k in ports))),

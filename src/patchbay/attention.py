@@ -63,6 +63,22 @@ PORT_DOWN_STATES = {"down", "lowerlayerdown"}
 # than a critical alert would.
 GATEWAY_DOWN_STATES = {"down", "offline"}
 
+# The matching "healthy" words: OPNsense stores its translated status
+# verbatim (`Online`), pfSense's collector normalizes to `up`.
+GATEWAY_UP_STATES = {"online", "up"}
+
+
+def gateway_state(status: str | None) -> str:
+    """`up`, `down`, or `unknown` for a stored gateway status, whichever
+    firewall wrote it. The UI draws from this and the alert rule from
+    GATEWAY_DOWN_STATES, so the two can't read the same row differently."""
+    s = (status or "").lower()
+    if s in GATEWAY_UP_STATES:
+        return "up"
+    if s in GATEWAY_DOWN_STATES:
+        return "down"
+    return "unknown"
+
 # How long an event (config changed, snapshot failed) stays on the attention
 # list. The alert engine notifies it once; the list keeps it readable for a
 # day so the person who missed the notification still sees it.

@@ -37,7 +37,7 @@
   {% endfor %}
   {% for g in gateways %}
   <div class="stat" title="{{ g.name }} via {{ g.address }} — loss {{ g.loss }}, delay {{ g.delay }}">
-    <div class="n"><span class="dot {{ 'up' if g.status == 'Online' else 'down' }}"></span>{{ g.status }}</div>
+    <div class="n"><span class="dot {{ g.status | gateway_state }}"></span>{{ g.status }}</div>
     <div class="l">{{ g.name }}</div>
     <div class="s">{{ g.address }}</div>
   </div>
