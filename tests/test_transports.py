@@ -931,3 +931,159 @@ def test_a_burst_over_the_outbox_cap_is_all_sent(dbp, monkeypatch):
     rec = Recorder()
     _poll(dbp, [_item(f"a:{i}") for i in range(5)], T0, rec)
     assert len(rec.seen) == 5
+
+
+# -- #110 review round 1: lease waiters, side-file hygiene ---------------------
+
+def _cleared_alert(p, key="link:sw1:1"):
+    c = _c(p)
+    c.execute("INSERT INTO alerts (key, rule, category, severity, state, raised_at, "
+              "cleared_at, last_notified_at) VALUES (?, 'link-down', 'link', 'warn', "
+              "'cleared', ?, ?, ?)", (key, T0, T0 + 30, T0))
+    c.commit()
+    c.close()
+
+
+@pytest.mark.parametrize("first", ["raise", "clear"])
+def test_lease_waiters_never_send_a_stale_raise_after_its_clear(dbp, first):
+    # a third dispatch holds the lease; the raise's and the clear's
+    # dispatches both wait, and either may take it first. The raise's alert
+    # has cleared by then, so it is dropped wherever it lands.
+    import threading
+    import time
+
+    _add(dbp, "hook", "generic", HOOK)
+    _cleared_alert(dbp)
+    c = _c(dbp)
+    pdb.set_state(c, transports.LEASE_KEY,
+                  json.dumps({"owner": "H", "until": time.time() + 60}))
+    c.commit(); c.close()
+    seen, lock = [], threading.Lock()
+
+    def ok(request):
+        with lock:
+            seen.append(json.loads(request.content)["event"])
+        return httpx.Response(200)
+
+    def go(kind, at):
+        transports.WebhookDispatcher(dbp, transport=httpx.MockTransport(ok),
+                                     now=at).send([_kind_note(kind, at)])
+
+    order = [("raise", T0), ("clear", T0 + 30)]
+    if first == "clear":
+        order.reverse()
+    threads = [threading.Thread(target=go, args=a) for a in order]
+    threads[0].start(); time.sleep(0.1); threads[1].start(); time.sleep(0.1)
+    c = _c(dbp)
+    c.execute("DELETE FROM app_state WHERE key = ?", (transports.LEASE_KEY,))
+    c.commit(); c.close()
+    for t in threads:
+        t.join(10)
+    assert seen == ["clear"]
+    [ev] = _events(dbp, "dropped")
+    assert (ev["detail"], ev["key"]) == ("cleared since", "link:sw1:1")
+
+
+def test_a_queued_raise_whose_alert_cleared_is_dropped(dbp):
+    _add(dbp, "hook", "generic", HOOK)
+    _cleared_alert(dbp)
+    c = _c(dbp)
+    pdb.set_state(c, transports.OUTBOX_KEY, json.dumps(
+        [transports._entry(1, _kind_note("raise", T0))]))
+    c.commit(); c.close()
+    rec = Recorder()
+    transports.WebhookDispatcher(dbp, transport=rec.transport, now=T0 + 60).send(
+        [_kind_note("clear", T0 + 30)])
+    assert [json.loads(r.content)["event"] for r in rec.seen] == ["clear"]
+
+
+def _locked_cycle(dbp, monkeypatch):
+    """One cycle whose outcome the database refuses: a held-over file."""
+    monkeypatch.setattr(transports, "OUTCOME_TRIES", 1)
+    monkeypatch.setattr(transports, "LEASE_TTL_S", -1)
+    monkeypatch.setattr(transports, "DB_TIMEOUT_S", 0.05)
+    blocker = sqlite3.connect(dbp, check_same_thread=False)
+
+    def locked(request):
+        blocker.execute("BEGIN IMMEDIATE")
+        return httpx.Response(503)
+
+    transports.WebhookDispatcher(dbp, transport=httpx.MockTransport(locked),
+                                 now=T0).send([_note("a:1")])
+    blocker.rollback()
+    blocker.close()
+    [path] = transports._pending_paths(dbp)
+    return path
+
+
+def test_held_over_outcome_is_private(dbp, monkeypatch):
+    import os
+    import stat
+
+    _add(dbp, "hook", "generic", HOOK)
+    path = _locked_cycle(dbp, monkeypatch)
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert not os.path.exists(path + ".tmp")
+
+
+def test_a_crash_before_unlink_replays_nothing_twice(dbp, monkeypatch):
+    import shutil
+
+    tid = _add(dbp, "hook", "generic", HOOK)
+    path = _locked_cycle(dbp, monkeypatch)
+    keep = path + ".copy"
+    shutil.copy(path, keep)
+    rec = Recorder(status=503)
+    transports.WebhookDispatcher(dbp, transport=rec.transport, now=T0 + 300).send([])
+    shutil.move(keep, path)                  # as if the unlink never happened
+    transports.WebhookDispatcher(dbp, transport=rec.transport, now=T0 + 600).send([])
+    assert transports._pending_paths(dbp) == []
+    # one failure per cycle that really ran: the held-over, then two retries
+    assert _transport(dbp, tid)["failures"] == 3
+    assert [e["event"] for e in _events(dbp)] == ["delivery_failed"] * 3
+
+
+def test_a_file_folded_into_another_is_not_replayed(dbp, monkeypatch):
+    import shutil
+
+    tid = _add(dbp, "hook", "generic", HOOK)
+    first = _locked_cycle(dbp, monkeypatch)
+    keep = first + ".copy"
+    shutil.copy(first, keep)
+    # a second locked cycle folds the first into its own file...
+    blocker = sqlite3.connect(dbp, check_same_thread=False)
+
+    def locked(request):
+        blocker.execute("BEGIN IMMEDIATE")
+        return httpx.Response(503)
+
+    transports.WebhookDispatcher(dbp, transport=httpx.MockTransport(locked),
+                                 now=T0 + 300).send([])
+    blocker.rollback(); blocker.close()
+    shutil.move(keep, first)                 # ...and crashed before unlinking it
+    assert len(transports._pending_paths(dbp)) == 2
+    transports.WebhookDispatcher(dbp, transport=Recorder().transport, now=T0 + 600).send([])
+    assert transports._pending_paths(dbp) == []
+    assert [e["event"] for e in _events(dbp)] == ["delivery_failed"] * 2 + ["notified"]
+    assert _transport(dbp, tid)["failures"] == 0
+
+
+def test_corrupt_and_stale_side_files_are_removed(dbp):
+    import os
+    import time
+
+    _add(dbp, "hook", "generic", HOOK)
+    bad = f"{dbp}-dispatch-1-1-deadbeef.json"
+    with open(bad, "w") as f:
+        f.write("{not json")
+    stale = f"{dbp}-dispatch-2-1-cafecafe.json.tmp"
+    fresh = f"{dbp}-dispatch-3-1-feedfeed.json.tmp"
+    for p in (stale, fresh):
+        open(p, "w").close()
+    old = time.time() - 2 * transports.TMP_STALE_S
+    os.utime(stale, (old, old))
+    d = transports.WebhookDispatcher(dbp, transport=Recorder().transport, now=T0)
+    d.send([])
+    assert not os.path.exists(bad) and not os.path.exists(stale)
+    assert os.path.exists(fresh)            # may be a writer at work
+    assert any("unreadable held-over outcome" in line for line in d.lines)
