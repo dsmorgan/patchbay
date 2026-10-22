@@ -52,9 +52,15 @@
     {% set on = (path == "/" or path.startswith("/device/")
                 or path in ("/ports", "/clients", "/guests")) if href == "/"
                 else (path == href or path.startswith(href ~ "/")) %}
-    <a class="rail-tab{{ ' on' if on }}" href="{{ href }}" title="{{ desc }}"
-       data-name="{{ name }}" data-desc="{{ desc }}"{% if on %} aria-current="page"{% endif %}>
-      {{ ui.nicon(icon) }}<span class="rail-label">{{ name }}</span></a>
+    {# The Alerts count (#118): text, so it reads without colour, and the
+       link's own name carries it because the label is hidden when the rail
+       collapses. Severity is the worst open one. #}
+    {% set badge = alert_badge if href == "/alerts" else none %}
+    <a class="rail-tab{{ ' on' if on }}{{ ' has-badge' if badge }}" href="{{ href }}" title="{{ desc }}"
+       data-name="{{ name }}" data-desc="{{ desc }}"{% if on %} aria-current="page"{% endif %}
+       {%- if badge %} aria-label="{{ name }}, {{ badge.n }} active{% if badge.crit %}, {{ badge.crit }} critical{% endif %}"{% endif %}>
+      {{ ui.nicon(icon) }}<span class="rail-label">{{ name }}</span>
+      {%- if badge %}<span class="rail-badge {{ badge.sev }}">{{ badge.n }}</span>{% endif %}</a>
     {% endfor %}
   </div>
   {% endfor %}

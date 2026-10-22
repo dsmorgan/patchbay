@@ -640,6 +640,27 @@ def dispatch(notes: list[Notification], dispatcher: Dispatcher | None = None) ->
     (dispatcher or NullDispatcher()).send([n for n in notes if n.route != "none"])
 
 
+def open_count(conn: sqlite3.Connection) -> dict[str, int]:
+    """The rail badge's number (#118): the engine's own open alerts, one
+    cheap read of the `alerts` table — never an `attention_items` run, since
+    the rail renders on every page. Counted by severity (the site's
+    override applied, as the Rules tab saves it): pending and active, the
+    states the Active tab lists; silenced rows, and rows of a rule that has
+    been switched off since the last poll, are not.
+
+    It is the engine's view, so it differs from the Active tab in three
+    ways, all deliberate: the tab also lists one-shot events (config-changed,
+    snapshot-failed) for 24 hours, which the engine records as already
+    cleared; it also lists link and canary items the engine holds back while
+    their device is down (`inhibited`); and the tab is live where this is
+    as of the last poll. Returns {severity: n}, empty when nothing is open."""
+    return {r["sev"]: r["n"] for r in conn.execute(
+        "SELECT COALESCE(NULLIF(r.severity, ''), a.severity) AS sev, COUNT(*) AS n "
+        "FROM alerts a LEFT JOIN alert_rules r ON r.name = a.rule "
+        "WHERE a.state IN ('pending', 'active') AND COALESCE(r.enabled, 1) = 1 "
+        "GROUP BY sev")}
+
+
 def prune_history(conn: sqlite3.Connection, now: float | None = None) -> None:
     """Retention for the history: events older than EVENT_KEEP_DAYS go, then
     all but the newest EVENT_KEEP_MAX. Cleared alerts age out on the same
