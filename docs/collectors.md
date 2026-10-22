@@ -23,10 +23,11 @@ class Collector(Protocol):
   your first write and holds it until the caller commits, so make every
   network call before your first write and keep the write phase free of
   I/O. Reads (`SELECT`) don't take the lock and may come at any point.
-  While a collector holds the lock, every save in the web UI and the other
-  process's poll wait on it. A collector that interleaves requests and
-  writes still works, but it locks the UI out for the length of its
-  collection. The built-in collectors each fetch into memory, then write.
+  While a collector holds the lock, every save in the web UI waits on it
+  (polls never overlap: a lease in the database keeps them apart). A
+  collector that interleaves requests and writes still works, but it locks
+  the UI out for the length of its collection. The built-in collectors each
+  fetch into memory, then write.
 - Return a one-line human summary (`"5 devices, 209 ports"`); it shows on
   `/ops` and in poll logs.
 - Timeouts on every network call. A hung collector stops the whole poll.
