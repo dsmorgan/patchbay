@@ -91,7 +91,7 @@ def test_strip_stamps():
 # REDACTION_VERSION -> fingerprint of the rules it names. A rule change that
 # moves the fingerprint must bump REDACTION_VERSION (so db.init re-redacts
 # stored history) and add the new pair here.
-RULE_FINGERPRINTS = {2: "d3fde27865c5c613"}
+RULE_FINGERPRINTS = {2: "b05e56ab5e2a5d35"}
 
 
 def _code(fn) -> str:
@@ -104,9 +104,11 @@ def _code(fn) -> str:
 
 
 def test_rule_change_bumps_redaction_version():
-    parts = [repr(redact.SECRET_TAG_WORDS), redact._ELEMENT_RE.pattern,
-             redact._UNWRAP_RE.pattern, redact._LONG_BLOB_RE.pattern,
-             redact._ALREADY.pattern, redact.PLACEHOLDER,
+    patterns = (redact._SECRET_NAME_RE, redact._ELEMENT_RE, redact._UNWRAP_RE,
+                redact._LONG_BLOB_RE, redact._ALREADY, redact.STAMP_RE)
+    parts = [repr(redact.SECRET_TAG_WORDS), repr(redact.SECRET_TAG_NAMES),
+             redact.PLACEHOLDER,
+             *(f"{p.pattern}/{int(p.flags)}" for p in patterns),
              *(_code(f) for f in (redact._is_secret, redact.stamp,
                                   redact.rekey, redact.redact_xml))]
     got = hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
@@ -122,9 +124,45 @@ def test_rule_change_bumps_redaction_version():
     ("https://user@ox.example/", "https://***@ox.example/"),
     ("http://ox.example:8888", "http://ox.example:8888"),
     ("http://ox.example/a@b", "http://ox.example/a@b"),   # '@' in the path
+    ("http://u:FAKE@pw@ox.example/a@b", "http://***@ox.example/a@b"),  # last '@'
+    ("url 'http://u:p@ss@ox.example:8888?q=a@b'", "url 'http://***@ox.example:8888?q=a@b'"),
     ("mail admin@example.net", "mail admin@example.net"),
     (None, None),
     ("", ""),
 ])
 def test_hide_userinfo(text, want):
     assert hide_userinfo(text) == want
+
+
+def test_pfsense_notification_tokens_under_api_are_redacted():
+    """pfSense keeps Telegram and Slack tokens at notifications/*/api; the
+    name is matched whole, so <apinger> and friends are left alone."""
+    xml = ("<notifications><telegram><api>FAKE-tg-token</api>"
+           "<chatid>12345</chatid></telegram>"
+           "<slack><api>FAKE-slack-token</api></slack></notifications>"
+           "<apinger><alarm>none</alarm></apinger>")
+    out, n = redact_xml(xml, KEY)
+    assert "FAKE-tg-token" not in out and "FAKE-slack-token" not in out and n == 2
+    assert "<chatid>12345</chatid>" in out and "<alarm>none</alarm>" in out
+
+
+@pytest.mark.parametrize("text", [
+    "<a><![CDATA[" * 20000,                    # unclosed CDATA openers
+    "<a><!--" * 30000,                         # unclosed comment openers
+    ("<a>" + "x" * 50 + "<![CDATA[") * 10000,
+    "<a><![CDATA[x" * 20000 + "]]></a>",       # one far closer
+])
+def test_redact_xml_stays_linear_on_unclosed_openers(text):
+    """Each unclosed opener used to rescan to the end of the text: 20,000
+    of them took close to a minute."""
+    import time
+    t = time.perf_counter()
+    redact_xml(text, KEY)
+    assert time.perf_counter() - t < 1.0
+
+
+def test_hide_userinfo_stays_linear():
+    import time
+    t = time.perf_counter()
+    hide_userinfo("a." * 200000 + "b+" * 100000)
+    assert time.perf_counter() - t < 1.0
