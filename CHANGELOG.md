@@ -23,6 +23,15 @@ put.
   restart, or clear the field on `/ops` and save). See "Migrate
   PATCHBAY_EXPECT to silences" in `docs/configuration.md`.
 
+### Fixed
+- A second poll inside one LibreNMS polling window, such as **Poll now**,
+  no longer stores a duplicate rate sample (#117): patchbay stores a sample
+  only when the port's LibreNMS `poll_time` has advanced. UniFi ports store
+  at most one sample every 30 seconds, and a quick repoll keeps the
+  error-counter baseline. Duplicates no longer count toward a canary, skew
+  its 7-day baseline, or show in graphs. The first poll after upgrading can
+  still store one duplicate per port.
+
 ## [0.23.0] — 2026-10-22
 
 ### Added
