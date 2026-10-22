@@ -52,6 +52,27 @@ Reverse-proxy termination (nginx, Caddy, a NAS's built-in proxy) is equally
 supported: leave `PATCHBAY_TLS=off` and bind patchbay to localhost or a
 container network.
 
+### Allowed hosts
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PATCHBAY_ALLOWED_HOSTS` | any | Comma-separated hostnames or addresses patchbay answers to, each with an optional `:port` (without one, any port matches). A request naming any other host gets `400`. `localhost`, `127.0.0.1`, and `::1` are always allowed |
+
+Set this whenever `PATCHBAY_AUTH=none`. Without it, a web page you visit can
+point its own hostname at patchbay's address (DNS rebinding) and use the UI
+from your browser as if it were you; `/ops` shows a warning in that case.
+List every name you reach patchbay by, for example
+`PATCHBAY_ALLOWED_HOSTS=patchbay.example.net,192.0.2.10:8080`.
+
+patchbay checks the `Host` header and every `X-Forwarded-Host` value. Behind
+a reverse proxy that passes the original `Host` through (Caddy and Traefik
+do by default), list the public name. If the proxy rewrites `Host` to the
+upstream's name (nginx's default `proxy_set_header Host $proxy_host`), list
+that name too, unless it is `localhost` or a loopback address.
+
+This setting lives in the env file only; `/ops` shows its value under
+*serving*.
+
 ### Authentication
 
 patchbay is read-only, so authentication is a gate, not an identity system:
@@ -66,6 +87,13 @@ and topology describe your real network — plus the `/ops` action triggers.
 | `PATCHBAY_SESSION_HOURS` | `12` | Session cookie lifetime |
 | `PATCHBAY_SESSION_SECRET` | auto | Cookie-signing secret. Auto-generated once and persisted in the DB when unset; set explicitly only to share sessions across replicas |
 
+Each session is bound to the auth settings it was issued under. Changing
+`PATCHBAY_AUTH`, the password (`PATCHBAY_PASSWORD_HASH` or
+`PATCHBAY_PASSWORD`), or the OIDC endpoints, client ID, or identity path signs
+everyone out. A failed password sign-in answers after a short delay, and
+attempts are paced across all clients; while the queue is long, sign-in asks
+you to try again in a minute.
+
 `oidc` runs a standard authorization-code flow against any OAuth2/OIDC
 provider, described generically — endpoints plus a claim path, no
 vendor-specific code:
@@ -78,9 +106,17 @@ vendor-specific code:
 | `PATCHBAY_OIDC_TOKEN_URL` | — | Required: the token endpoint |
 | `PATCHBAY_OIDC_USERINFO_URL` | — | Preferred identity source when set; otherwise the id_token's claims are used |
 | `PATCHBAY_OIDC_SCOPES` | `openid email profile` | Requested scopes |
-| `PATCHBAY_OIDC_IDENTITY_PATH` | `email` | Dot-path to the identity claim, such as `email` or `preferred_username` |
-| `PATCHBAY_OIDC_ALLOWED` | any | Comma-separated identities allowed in; unset = any authenticated identity |
+| `PATCHBAY_OIDC_IDENTITY_PATH` | `email` | Dot-path to the identity claim, such as `email`, `preferred_username`, or `sub` |
+| `PATCHBAY_OIDC_ALLOWED` | any | Comma-separated identities allowed in; unset = any authenticated identity. Checked on every request, so removing an identity ends its session |
 | `PATCHBAY_OIDC_REDIRECT_URL` | derived | Exact redirect URL registered at the provider; derived from the request (honoring `X-Forwarded-Proto`) when unset |
+
+With the default identity path, `email`, patchbay accepts the email only
+when the provider marks it verified (`email_verified` is `true`). A provider
+that omits `email_verified` can't sign anyone in by email: an unverified
+address is whatever the account holder typed. Microsoft Entra ID and GitHub
+omit it. For those, set `PATCHBAY_OIDC_IDENTITY_PATH` to a claim the
+provider controls, such as `preferred_username` or `sub`, and list those
+values in `PATCHBAY_OIDC_ALLOWED`.
 
 The token-endpoint exchange trusts the id_token over TLS (standard for the
 direct back-channel) and uses `PATCHBAY_TLS_VERIFY` for that connection —
