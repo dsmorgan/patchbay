@@ -214,6 +214,8 @@ CREATE TABLE IF NOT EXISTS tunnels (
     status TEXT,               -- up | down | idle (wireguard: stale
     last_handshake REAL,       -- handshake) | raw source phrases
     detail TEXT,               -- short human detail (allowed IPs, SA info)
+    allowed_ips TEXT,          -- WireGuard peer allowed-ips, comma-separated
+                               -- CIDRs: which peer a shared wg0 route reaches
     source TEXT NOT NULL,
     last_seen REAL,
     UNIQUE (device, type, name)
@@ -345,6 +347,9 @@ def init(conn: sqlite3.Connection) -> None:
     for col in RATE_COUNTERS:  # #64: port-counter canaries
         if col not in hcols:
             conn.execute(f"ALTER TABLE rate_history ADD COLUMN {col} REAL")
+    tcols = {r[1] for r in conn.execute("PRAGMA table_info(tunnels)")}
+    if tcols and "allowed_ips" not in tcols:  # #98: route-to-peer matching
+        conn.execute("ALTER TABLE tunnels ADD COLUMN allowed_ips TEXT")
     rcols = {r[1] for r in conn.execute("PRAGMA table_info(routes)")}
     if rcols and "flags" not in rcols:  # discard routes must not read as reach
         conn.execute("ALTER TABLE routes ADD COLUMN flags TEXT")
@@ -598,15 +603,16 @@ def save_tunnels(conn: sqlite3.Connection, *, device: str, source: str,
     for t in rows:
         conn.execute(
             "INSERT INTO tunnels (device, type, name, peer, interface, status, "
-            "last_handshake, detail, source, last_seen) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "last_handshake, detail, allowed_ips, source, last_seen) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(device, type, name) DO UPDATE SET peer=excluded.peer, "
             "interface=excluded.interface, status=excluded.status, "
             "last_handshake=excluded.last_handshake, detail=excluded.detail, "
+            "allowed_ips=excluded.allowed_ips, "
             "source=excluded.source, last_seen=excluded.last_seen",
             (device, type_, t["name"], t.get("peer"), t.get("interface"),
              t.get("status"), t.get("last_handshake"), t.get("detail"),
-             source, now()))
+             t.get("allowed_ips"), source, now()))
 
 
 

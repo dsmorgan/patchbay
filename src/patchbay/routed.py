@@ -310,10 +310,13 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # reached *through* a tunnel (a route whose exit interface is the
     # tunnel's) hangs off the tunnel node, not the provider cloud — and it
     # draws even when nothing local has a leg on it, because reachability
-    # through the tunnel is its participation. Routes are matched to a
-    # tunnel by exact interface first, else by interface-prefix type when
-    # exactly one tunnel of that type exists (openvpn/ipsec rows don't
-    # always know their interface name).
+    # through the tunnel is its participation. A route only ever matches a
+    # tunnel on its own router (#98: two firewalls each have a wg0): by
+    # exact interface first, else by interface-prefix type (openvpn/ipsec
+    # rows don't always know their interface name). Several candidates —
+    # WireGuard peers sharing one wg0 — are told apart by the peer whose
+    # allowed-ips hold the destination; with no single such peer nothing
+    # is guessed.
     tun_rows = conn.execute(
         "SELECT * FROM tunnels ORDER BY device, type, name").fetchall()
     tunnels: list[dict] = []
@@ -325,29 +328,44 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                     "status": t["status"], "device": t["device"],
                     "peer": t["peer"], "detail": t["detail"],
                     "rails": set(), "local_nets": []} for t in tun_rows]
-        by_iface = {t["interface"]: i for i, t in enumerate(tun_rows)
-                    if t["interface"]}
-        by_type: dict[str, list[int]] = {}
+        by_iface: dict[tuple[str, str], list[int]] = {}
+        by_type: dict[tuple[str, str], list[int]] = {}
+        allowed: dict[int, list] = {}
         for i, t in enumerate(tun_rows):
-            by_type.setdefault(t["type"], []).append(i)
+            if t["interface"]:
+                by_iface.setdefault((t["device"], t["interface"]), []).append(i)
+            by_type.setdefault((t["device"], t["type"]), []).append(i)
+            allowed[i] = [n for n in (_net(c.strip()) for c in
+                                      (t["allowed_ips"] or "").split(",") if c.strip())
+                          if n is not None]
         pfx_type = (("tun_wg", "wireguard"), ("wg", "wireguard"),
                     ("ovpn", "openvpn"), ("ipsec", "ipsec"), ("enc", "ipsec"))
+
+        def pick(cands: list[int], dest) -> int | None:
+            if len(cands) == 1:
+                return cands[0]
+            fits = [i for i in cands
+                    if any(a.version == dest.version and dest.subnet_of(a)
+                           for a in allowed[i])]
+            return fits[0] if len(fits) == 1 else None
+
         for r in conn.execute(
-                "SELECT destination, interface, flags FROM routes "
+                "SELECT device, destination, interface, flags FROM routes "
                 "WHERE destination NOT IN ('0.0.0.0/0', '::/0')"):
             if any(f in (r["flags"] or "") for f in ("B", "R")):
                 continue
-            iface = r["interface"] or ""
-            idx = by_iface.get(iface)
-            if idx is None and iface:
-                for pfx, typ in pfx_type:
-                    if iface.startswith(pfx) and len(by_type.get(typ, [])) == 1:
-                        idx = by_type[typ][0]
-                        break
-            if idx is None:
-                continue
             dest = _net(r["destination"])
             if dest is None:
+                continue
+            iface = r["interface"] or ""
+            cands = by_iface.get((r["device"], iface), []) if iface else []
+            if not cands and iface:
+                for pfx, typ in pfx_type:
+                    if iface.startswith(pfx):
+                        cands = by_type.get((r["device"], typ), [])
+                        break
+            idx = pick(cands, dest)
+            if idx is None:
                 continue
             # a destination that CONTAINS local networks is the tunnel's
             # source side — WireGuard allowed-ips for the home supernet,

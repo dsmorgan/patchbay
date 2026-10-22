@@ -238,6 +238,65 @@ def test_tunnel_route_matches_unique_type_by_prefix(conn):
     assert not any(r["key"] == "net:172.16.46.0/24" for r in g["rails"])
 
 
+def _wg_peer(c, device, name, allowed, iface="wg0"):
+    c.execute("INSERT INTO tunnels (device, type, name, interface, status, "
+              "allowed_ips, source, last_seen) VALUES "
+              "(?, 'wireguard', ?, ?, 'up', ?, 'opnsense', ?)",
+              (device, name, iface, allowed, pdb.now()))
+
+
+def _route(c, device, dest, iface="wg0"):
+    c.execute("INSERT INTO routes (device, destination, interface, proto, "
+              "flags, source) VALUES (?, ?, ?, 'ipv4', 'US', 'test')",
+              (device, dest, iface))
+
+
+def test_peers_sharing_wg0_each_get_their_own_route(conn):
+    """#98: one WireGuard instance, two site peers, one tunnel row per peer
+    all on wg0. Keyed by interface alone, both routes landed on the last
+    peer; the peer whose allowed-ips hold the destination is the one."""
+    seed_site(conn)
+    _wg_peer(conn, "fw1", "wg0 · site-b", "172.16.44.0/24")
+    _wg_peer(conn, "fw1", "wg0 · site-c", "172.16.45.0/24,172.16.46.0/24")
+    _route(conn, "fw1", "172.16.44.0/24")
+    _route(conn, "fw1", "172.16.45.0/24")
+    _route(conn, "fw1", "172.16.47.0/24")     # no peer allows it: no guess
+    g = build_routed_graph(conn, _S())
+    by_name = {t["name"]: t["rails"] for t in g["tunnels"]}
+    assert by_name == {"wg0 · site-b": ["net:172.16.44.0/24"],
+                       "wg0 · site-c": ["net:172.16.45.0/24"]}
+
+
+def test_same_interface_on_two_firewalls_never_crosses(conn):
+    """Two firewalls each with their own wg0: a route matches a tunnel on
+    its own router only."""
+    seed_site(conn)
+    fw2 = dev(conn, "fw2", role="firewall")
+    iface(conn, fw2, "vmx0", ip="192.0.2.2")
+    _wg_peer(conn, "fw1", "wg0 · site-b", None)
+    _wg_peer(conn, "fw2", "wg0 · site-c", None)
+    _route(conn, "fw1", "172.16.44.0/24")
+    _route(conn, "fw2", "172.16.45.0/24")
+    g = build_routed_graph(conn, _S())
+    by = {(t["device"], t["name"]): t["rails"] for t in g["tunnels"]}
+    assert by == {("fw1", "wg0 · site-b"): ["net:172.16.44.0/24"],
+                  ("fw2", "wg0 · site-c"): ["net:172.16.45.0/24"]}
+
+
+def test_type_fallback_stays_on_the_routes_own_router(conn):
+    """The only openvpn tunnel at the site, but on another firewall, is
+    not where fw1's ovpnc1 route leads."""
+    seed_site(conn)
+    dev(conn, "fw2", role="firewall")
+    conn.execute("INSERT INTO tunnels (device, type, name, status, source, "
+                 "last_seen) VALUES ('fw2', 'openvpn', 'roadwarrior', 'up', "
+                 "'opnsense', ?)", (pdb.now(),))
+    _route(conn, "fw1", "172.16.45.0/24", iface="ovpnc1")
+    g = build_routed_graph(conn, _S())
+    (t,) = g["tunnels"]
+    assert t["rails"] == []
+
+
 def test_tunnel_route_into_documented_rail_reuses_it(conn):
     """A remote subnet already documented (IPAM) keeps its rail — the
     tunnel attaches to it instead of inventing a net: twin."""
