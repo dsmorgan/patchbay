@@ -114,9 +114,10 @@ With the default identity path, `email`, patchbay accepts the email only
 when the provider marks it verified (`email_verified` is `true`). A provider
 that omits `email_verified` can't sign anyone in by email: an unverified
 address is whatever the account holder typed. Microsoft Entra ID and GitHub
-omit it. For those, set `PATCHBAY_OIDC_IDENTITY_PATH` to a claim the
-provider controls, such as `preferred_username` or `sub`, and list those
-values in `PATCHBAY_OIDC_ALLOWED`.
+omit it. For Entra ID, set `PATCHBAY_OIDC_IDENTITY_PATH` to a claim the
+provider controls, such as `preferred_username` or `sub`. For GitHub's user
+endpoint, use `login` (its `id` is a number, which patchbay doesn't accept
+as an identity). List those values in `PATCHBAY_OIDC_ALLOWED`.
 
 The token-endpoint exchange trusts the id_token over TLS (standard for the
 direct back-channel) and uses `PATCHBAY_TLS_VERIFY` for that connection —
