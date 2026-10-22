@@ -74,6 +74,20 @@ put.
   Docker or Podman: set `user: "0:0"`. The snapshot delivery share and any
   custom snapshot directory must be writable by the same uid. If you reached
   Oxidized's API from another machine, use an SSH tunnel.
+- Secret redaction covers more forms (#93). Firewall config history now
+  redacts the OPNsense IPsec pre-shared key, the LDAP bind password, PEM
+  blocks, and long encoded blobs, whatever the element's case, attributes,
+  CDATA, or comments. Snapshots scrub more device-config forms (IOS-style
+  `key-string`, ISAKMP, OSPF, tacacs and radius keys, SNMP host communities,
+  HSRP and VRRP authentication; MikroTik, OpenWrt, and Aruba secrets) and
+  carry a constant placeholder instead of a digest. `/ops`, `/configs`, and
+  poll errors mask credentials in `OXIDIZED_URL`.
+
+  **Upgrade notes:** on first start, stored config history is re-redacted
+  once with the new rules; no step is needed. Snapshots already written to
+  disk or delivered off-host were made with the old rules and may hold those
+  secrets: delete or regenerate them, and consider rotating any IPsec
+  pre-shared key, LDAP bind password, or device key they could contain.
 
 ## [0.21.0] — 2026-10-22
 
