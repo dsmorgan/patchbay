@@ -912,3 +912,12 @@ def test_a_database_locked_from_the_start_still_delivers(dbp, monkeypatch):
     assert any("without the lease" in line for line in d.lines)
     transports.WebhookDispatcher(dbp, transport=Recorder().transport, now=T0 + 300).send([])
     assert [e["event"] for e in _events(dbp)] == ["notified"]
+
+
+def test_a_burst_over_the_outbox_cap_is_all_sent(dbp, monkeypatch):
+    # the cap bounds what waits for a dead receiver, not what one cycle sends
+    monkeypatch.setattr(transports, "OUTBOX_MAX", 2)
+    _add(dbp, "hook", "generic", HOOK)
+    rec = Recorder()
+    _poll(dbp, [_item(f"a:{i}") for i in range(5)], T0, rec)
+    assert len(rec.seen) == 5

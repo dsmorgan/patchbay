@@ -437,16 +437,16 @@ def _noted_at(e: dict) -> float:
     return at if isinstance(at, (int, float)) else 0.0
 
 
-def _in_order(entries: list[dict]) -> list[dict]:
-    """Each transport's entries in the order their notes arose, capped at
-    the newest OUTBOX_MAX. Two dispatches that overlap each store what they
+def _in_order(entries: list[dict], cap: int | None = None) -> list[dict]:
+    """Each transport's entries in the order their notes arose, the newest
+    `cap` of each when one is given. Two dispatches that overlap each store what they
     hold; arrival order in the list says nothing, so a clear stored before
     its raise would otherwise reach the receiver first and leave it
     firing. The sort is stable: one poll's notes keep their own order."""
     per: dict[int, list[dict]] = {}
     for e in entries:
         per.setdefault(e["t"], []).append(e)
-    return [e for q in per.values() for e in sorted(q, key=_noted_at)[-OUTBOX_MAX:]]
+    return [e for q in per.values() for e in sorted(q, key=_noted_at)[-(cap or len(q)):]]
 
 
 def _remove_each(entries: list, gone: list) -> list:
@@ -587,7 +587,7 @@ class WebhookDispatcher:
                 self.lines.append("[warn] notify: the database is busy; "
                                   "dispatching without the lease")
             try:
-                self._cycle(conn, notes)
+                self._cycle(conn, notes, leased=got == "ok")
             finally:
                 if got == "ok":
                     _release(conn, owner)
@@ -637,7 +637,8 @@ class WebhookDispatcher:
             self._write({"updates": [], "events": [], "outbox": mine, "consumed": []},
                         pending=[])
 
-    def _cycle(self, conn: sqlite3.Connection, notes: list[alerting.Notification]) -> None:
+    def _cycle(self, conn: sqlite3.Connection, notes: list[alerting.Notification], *,
+               leased: bool = True) -> None:
         now = db.now() if self.now is None else self.now
         transports = {r["id"]: dict(r) for r in conn.execute(
             "SELECT * FROM alert_transports ORDER BY id")}
@@ -645,8 +646,9 @@ class WebhookDispatcher:
         base = db.get_state(conn, LINK_BASE_KEY)
         # an earlier cycle's outcome the database would not take: its
         # history and results are written with ours, the outbox entries it
-        # had already handled are not handled twice, and its queue is ours
-        pending = [(p, d) for p in _pending_paths(self.db_path)
+        # had already handled are not handled twice, and its queue is ours.
+        # Only the lease holder folds these in, so no two dispatches do.
+        pending = [(p, d) for p in (_pending_paths(self.db_path) if leased else ())
                    if (d := _read_pending(p)) is not None]
         handled = [e for _, d in pending for e in d.get("consumed") or []]
         outbox = _load_outbox(conn)
@@ -817,7 +819,7 @@ class WebhookDispatcher:
         # another dispatch meanwhile and stays
         others = [e for e in _remove_each(_load_outbox(conn), outcome["consumed"])
                   if e.get("t") in alive and e not in ours]
-        db.set_state(conn, OUTBOX_KEY, json.dumps(_in_order(ours + others)))
+        db.set_state(conn, OUTBOX_KEY, json.dumps(_in_order(ours + others, OUTBOX_MAX)))
         conn.commit()
 
 
