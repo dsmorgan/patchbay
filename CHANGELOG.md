@@ -16,6 +16,17 @@ put.
   by hand in SQL before this release was read as seconds and is now read as
   minutes. A damaged rule row no longer stops the alert engine.
 
+### Fixed
+- A break-glass or alert snapshot taken while LibreNMS is unreachable is
+  written without graphs, with a note where they would be, instead of
+  failing (#96). Graph fetches give up after 3 s to connect. `/graph`
+  answers 502 when LibreNMS is down.
+- The OPNsense poll no longer fails on sites without the ISC DHCP plugin
+  (Dnsmasq or Kea DHCP) (#96).
+- pfSense gateways that are up no longer draw as down on the topology and
+  the Overview. A gateway in an unknown or degraded state draws amber, the
+  same way alerts treat it (#96).
+
 ## [0.21.0] — 2026-10-22
 
 ### Added
