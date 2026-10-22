@@ -79,6 +79,15 @@ def test_scrub_config_covers_oxidized_secret_forms():
         "standby 1 authentication text FakeHsrpText": "FakeHsrpText",
         "vrrp 7 authentication text FakeVrrpText": "FakeVrrpText",
         " authentication text FakeNxosVrrp": "FakeNxosVrrp",
+        # OpenWrt UCI (`uci export`), Aruba Instant/AOS management users
+        "\toption key 'FakeWifiKey2'": "FakeWifiKey2",
+        "\toption key1 's:FakeWep'": "FakeWep",
+        "\toption password 'FakePppPw'": "FakePppPw",
+        "\toption psk 'FakeUciPsk'": "FakeUciPsk",
+        "\toption private_key 'FakeWgPriv='": "FakeWgPriv",
+        "\toption preshared_key 'FakeWgPsk='": "FakeWgPsk",
+        "mgmt-user admin FakeArubaPw": "FakeArubaPw",
+        "mgmt-user ops read-only FakeArubaHash": "FakeArubaHash",
         # pfSense notification tokens in a config.xml Oxidized backed up
         "<telegram><api>FAKE-tg-token</api></telegram>": "FAKE-tg-token",
     }
@@ -143,6 +152,10 @@ def test_scrub_config_leaves_ordinary_lines_alone():
            "standby 1 ip 192.0.2.254\n"
            "standby 1 priority 110\n"
            "vrrp 7 ip 192.0.2.253\n"
+           "config wifi-iface 'default_radio0'\n"
+           "\toption ssid 'Office'\n"
+           "\toption encryption 'psk2'\n"
+           "\toption persistent_keepalive '25'\n"
            "<interfaces><lan><if>em0</if><descr>LAN</descr></lan></interfaces>\n"
            "<system><hostname>fw1</hostname><domain>example.net</domain></system>\n"
            "-----BEGIN CERTIFICATE-----")
