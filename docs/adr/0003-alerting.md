@@ -489,7 +489,10 @@ last one counted. The canary's hold applies to every alert a receiver
 heard about, silenced or re-raised included.
 
 **One dispatch at a time.** Dispatches take a lease in `app_state` and
-send each transport's notes in the order the polls decided them, so a
-clear never reaches a receiver before its raise. An outcome the database
-will not take waits in a file beside it for the next dispatch.
-`REQUEST_S` bounds each request in wall-clock time.
+send each transport's notes in the order the polls decided them. Waiters
+take the lease in no set order, so the holder drops a raise, escalate, or
+remind whose alert has cleared since (History: `dropped`, "cleared
+since"): a receiver never hears a stale raise after its clear. An outcome
+the database will not take waits in a private file beside it and is
+written once by the next dispatch. `REQUEST_S` bounds each request in
+wall-clock time.
