@@ -490,9 +490,8 @@ def test_created_by_is_the_oidc_identity_when_there_is_one(clean_env, tmp_path):
                        PATCHBAY_OIDC_TOKEN_URL="https://idp.example/token")
     assert client.post("/alerts/silences",
                        data={"kind": "category", "scope": "link"}).status_code == 401
-    secret = auth.session_secret(load_settings())
     client.cookies.set(auth.SESSION_COOKIE,
-                       auth.make_token(secret, "alice@example.com", hours=1))
+                       auth.session_token(load_settings(), "alice@example.com"))
     assert client.post("/alerts/silences",
                        data={"kind": "category", "scope": "link"}).status_code == 303
     c = sqlite3.connect(dbp)

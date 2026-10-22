@@ -5,6 +5,8 @@ oidc (authorization-code flow against a generic OAuth2/OIDC provider).
 patchbay is read-only, so this is a gate, not an identity system: no user
 table, no roles. Sessions are HMAC-signed cookies; the signing secret is
 auto-generated and persisted in the DB unless PATCHBAY_SESSION_SECRET is set.
+Each session carries a fingerprint of the auth settings it was issued under,
+so changing the mode, the password, or the OIDC provider ends it.
 """
 
 from __future__ import annotations
@@ -127,21 +129,25 @@ def session_secret(settings: Settings) -> bytes:
 
 
 def make_token(secret: bytes, identity: str, hours: float,
-               kind: str = "session") -> str:
+               kind: str = "session", fp: str | None = None) -> str:
     """kind domain-separates token types: the OIDC state cookie is handed to
     UNAUTHENTICATED visitors, so a state token must never verify as a session
-    token (same secret, so the type has to live in the signed claims)."""
-    payload = _b64(json.dumps(
-        {"sub": identity, "use": kind,
-         "exp": int(time.time() + hours * 3600)}).encode())
+    token (same secret, so the type has to live in the signed claims).
+    fp, when given, is the auth-settings fingerprint the token is bound to."""
+    claims = {"sub": identity, "use": kind,
+              "exp": int(time.time() + hours * 3600)}
+    if fp is not None:
+        claims["fp"] = fp
+    payload = _b64(json.dumps(claims).encode())
     sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
 
 def read_token(secret: bytes, token: str | None,
-               kind: str = "session") -> str | None:
-    """Return the identity if the token is genuine, unexpired, and of the
-    expected kind, else None."""
+               kind: str = "session", fp: str | None = None) -> str | None:
+    """Return the identity if the token is genuine, unexpired, of the
+    expected kind, and (when fp is given) issued under that fingerprint,
+    else None."""
     if not token or "." not in token:
         return None
     payload, _, sig = token.rpartition(".")
@@ -154,8 +160,37 @@ def read_token(secret: bytes, token: str | None,
         return None
     if claims.get("exp", 0) < time.time() or claims.get("use") != kind:
         return None
+    if fp is not None and claims.get("fp") != fp:
+        return None
     sub = claims.get("sub")
     return sub if isinstance(sub, str) else None
+
+
+def auth_fingerprint(settings: Settings, secret: bytes) -> str:
+    """A digest of the settings that decide who may sign in. A session
+    minted under other settings no longer verifies, so changing the mode,
+    rotating the password, or pointing at another OIDC provider or claim
+    signs everyone out. Keyed with the session secret: the token payload is
+    readable by whoever holds the cookie, and a plain hash of a plain-text
+    password would be a free offline guessing target. The OIDC allowlist is
+    left out on purpose: authenticated_identity re-checks it per request,
+    so removing someone ends their session while adding someone ends none."""
+    material = [settings.auth_mode]
+    if settings.auth_mode == "password":
+        material += [settings.password_hash or "", settings.password_plain or ""]
+    elif settings.auth_mode == "oidc":
+        material += [settings.oidc_auth_url or "", settings.oidc_token_url or "",
+                     settings.oidc_userinfo_url or "", settings.oidc_client_id or "",
+                     settings.oidc_identity_path]
+    return hmac.new(secret, b"auth-fingerprint\0" + json.dumps(material).encode(),
+                    hashlib.sha256).hexdigest()[:32]
+
+
+def session_token(settings: Settings, identity: str) -> str:
+    """A session cookie value for identity under the current auth settings."""
+    secret = session_secret(settings)
+    return make_token(secret, identity, settings.session_hours,
+                      fp=auth_fingerprint(settings, secret))
 
 
 def _cookie_secure(request: Request) -> bool:
@@ -166,7 +201,7 @@ def set_session(response: Response, request: Request, settings: Settings,
                 identity: str) -> None:
     response.set_cookie(
         SESSION_COOKIE,
-        make_token(session_secret(settings), identity, settings.session_hours),
+        session_token(settings, identity),
         max_age=int(settings.session_hours * 3600),
         httponly=True, samesite="lax", secure=_cookie_secure(request))
 
@@ -180,8 +215,12 @@ def is_public(path: str) -> bool:
 def authenticated_identity(request: Request, settings: Settings) -> str | None:
     if settings.auth_mode == "none":
         return "-"
-    return read_token(session_secret(settings),
-                      request.cookies.get(SESSION_COOKIE))
+    secret = session_secret(settings)
+    identity = read_token(secret, request.cookies.get(SESSION_COOKIE),
+                          fp=auth_fingerprint(settings, secret))
+    if identity and settings.auth_mode == "oidc" and not oidc_allowed(settings, identity):
+        return None  # removed from the allowlist since signing in
+    return identity
 
 
 def gate(request: Request, settings: Settings) -> Response | None:
