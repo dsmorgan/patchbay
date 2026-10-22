@@ -233,7 +233,9 @@ from . import auth
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     intercept = auth.gate(request, load_settings())
-    return intercept if intercept else await call_next(request)
+    response = intercept if intercept else await call_next(request)
+    auth.forbid_framing(response)  # every response, refusals included
+    return response
 
 
 app.include_router(auth.build_router(templates, load_settings))
