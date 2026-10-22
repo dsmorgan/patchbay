@@ -17,6 +17,7 @@ import httpx
 from ..config import Settings
 from .. import db
 from . import register
+from ..normalize import canonical_name
 from ..ports import port_kind
 
 NAME = "oxidized"
@@ -227,7 +228,9 @@ class OxidizedCollector:
                 cr = client.get(f"{base}/node/fetch/{full}")
                 if cr.status_code != 200:
                     continue
-                dev = (node.get("name") or full).split(".")[0].lower()
+                # the same name every other source's row merges under: an
+                # IP-named node stays whole instead of becoming its octet
+                dev = canonical_name(node.get("name") or full)
                 # config text parsed, then dropped
                 names, rows, roles = parser(cr.text)
                 if not rows and not names:

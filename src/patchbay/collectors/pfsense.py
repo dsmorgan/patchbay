@@ -96,8 +96,10 @@ class PfsenseCollector:
             return data
 
         with httpx.Client(verify=settings.tls_verify, timeout=20) as client:
-            _hostname = base.split("://")[-1].split(":")[0]
-            dev_name = _hostname.split(".")[0]
+            from ..normalize import host_device_name
+            from urllib.parse import urlsplit
+            _hostname = urlsplit(base).hostname or base
+            dev_name = host_device_name(base)
 
             sysinfo = get("api/v2/status/system") or {}
             version = None

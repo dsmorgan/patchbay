@@ -311,7 +311,11 @@ def test_opnsense_host_accepts_scheme_and_bare_hostname():
     assert base_and_name("fw1.example.net") == ("https://fw1.example.net/api", "fw1")
     assert base_and_name("http://fw1.example.net") == ("http://fw1.example.net/api", "fw1")
     assert base_and_name("https://fw1.example.net:8443/") == ("https://fw1.example.net:8443/api", "fw1")
-    assert base_and_name("http://192.0.2.1") == ("http://192.0.2.1/api", "192")
+    # an address names the firewall whole, never by its first octet (#98)
+    assert base_and_name("http://192.0.2.1") == ("http://192.0.2.1/api", "192.0.2.1")
+    assert base_and_name("192.0.2.1:8443") == ("https://192.0.2.1:8443/api", "192.0.2.1")
+    assert base_and_name("https://[2001:db8::1]:8443")[1] == "2001:db8::1"
+    assert base_and_name("FW1.lab1") == ("https://FW1.lab1/api", "fw1")
 
 
 # --- pfSense (PR #9) ---
@@ -435,6 +439,23 @@ def test_pfsense_retracts_a_removed_vlan_subinterface(conn, clean_env, monkeypat
     monkeypatch.setattr(PfClient, "interfaces", PfClient.interfaces[:1])  # subif deleted
     PfsenseCollector().collect(s, conn)
     assert conn.execute("SELECT COUNT(*) FROM port_vlans WHERE device='fw2'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("host, name, mgmt", [
+    ("https://192.0.2.9", "192.0.2.9", "192.0.2.9"),
+    ("https://[2001:db8::9]:8443", "2001:db8::9", "2001:db8::9"),
+    ("https://fw2.lab1", "fw2", "fw2.lab1")])
+def test_pfsense_names_the_firewall_like_every_source(conn, clean_env, monkeypatch,
+                                                     host, name, mgmt):
+    """#98: an address-named pfSense became its first octet ("192")."""
+    from patchbay.collectors.pfsense import PfsenseCollector
+    from patchbay.config import load_settings
+    clean_env.setenv("PFSENSE_HOST", host)
+    clean_env.setenv("PFSENSE_API_KEY", "k")
+    monkeypatch.setattr(httpx, "Client", PfClient)
+    PfsenseCollector().collect(load_settings(), conn)
+    dev = conn.execute("SELECT name, mgmt_ip FROM devices WHERE role='firewall'").fetchone()
+    assert tuple(dev) == (name, mgmt)
 
 
 def test_pfsense_403_degrades_and_is_named(conn, clean_env, monkeypatch):
@@ -1994,6 +2015,20 @@ def test_oxidized_port_vlans_delete_scoped_to_source(conn, clean_env, monkeypatc
     assert ("old-port", 9, "oxidized") not in rows      # own stale row gone
     assert ("vmx1", 13, "vsphere") in rows              # foreign row kept
     assert ("ethernet1/1/1", 22, "oxidized") in rows
+
+
+def test_oxidized_ip_named_nodes_stay_apart(conn, clean_env, monkeypatch):
+    """#98: two nodes named by address both became device "192", and the
+    second parse wiped the first's rows. Each keeps its whole address, the
+    name LibreNMS gives the same switch."""
+    from patchbay.collectors.oxidized import OxidizedCollector
+    monkeypatch.setattr(_OxClient, "nodes", [
+        {"name": ip, "full_name": ip, "model": "ironware",
+         "last": {"status": "success"}} for ip in ("192.0.2.2", "192.0.2.3")])
+    monkeypatch.setattr(httpx, "Client", _OxClient)
+    OxidizedCollector().collect(_ox_settings(clean_env), conn)
+    devs = {r[0] for r in conn.execute("SELECT DISTINCT device FROM port_vlans")}
+    assert devs == {"192.0.2.2", "192.0.2.3"}
 
 
 def test_oxidized_vlan_prune_claim_aware(conn, clean_env, monkeypatch):
