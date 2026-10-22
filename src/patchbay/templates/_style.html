@@ -37,6 +37,7 @@
     --rail-tab-pad: 0.36rem 0.6rem 0.36rem 0.5rem; --rail-tab-justify: flex-start;
     --rail-indent: 6px; --rail-top-justify: flex-end;
     --rail-tot-dir: row; --rail-tot-align: stretch;
+    --rail-badge-pos: static;
   }
   html.rail-collapsed {
     --rail-w: 54px; --when-wide: none; --when-narrow: block;
@@ -46,6 +47,7 @@
     --rail-tab-pad: 0.42rem 0; --rail-tab-justify: center;
     --rail-indent: 0; --rail-top-justify: center;
     --rail-tot-dir: column; --rail-tot-align: center;
+    --rail-badge-pos: absolute;
   }
   @media (max-width: 640px) {
     :root {
@@ -56,6 +58,7 @@
       --rail-tab-pad: 0.42rem 0; --rail-tab-justify: center;
       --rail-indent: 0; --rail-top-justify: center;
       --rail-tot-dir: column; --rail-tot-align: center;
+      --rail-badge-pos: absolute;
     }
     .rail .rail-toggle { display: none; }  /* nothing to toggle: too narrow for labels */
     .rail .rail-pin { display: none; }
@@ -158,6 +161,16 @@
      column of words; the selected one comes up with the rest of the row */
   .rail-icon { flex: none; width: 16px; height: 16px; opacity: 0.85; }
   .rail-tab.on .rail-icon, .rail-tab:hover .rail-icon, .rail-chevron .rail-icon { opacity: 1; }
+  /* the Alerts count (#118): a pill after the label; collapsed, there is no
+     label to sit beside, so it moves onto the icon's corner */
+  .rail-tab.has-badge { position: relative; }
+  .rail-badge { position: var(--rail-badge-pos); top: 1px; right: 4px; margin-left: auto;
+                min-width: 1.15rem; padding: 0 0.3rem; border-radius: 999px;
+                background: var(--muted); color: var(--bg); text-align: center;
+                font: 700 0.64rem/1.15rem var(--font-ui);
+                font-variant-numeric: tabular-nums; }
+  .rail-badge.crit { background: var(--crit); }
+  .rail-badge.warn { background: var(--warn); }
   .rail-label { display: block; overflow: hidden; text-overflow: ellipsis;
                 white-space: nowrap; max-width: var(--rail-label-max);
                 opacity: var(--rail-label-o); visibility: var(--rail-label-vis); }

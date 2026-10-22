@@ -67,18 +67,36 @@ async def _database_busy(request: Request, exc: sqlite3.OperationalError):
     raise exc
 
 
+def _alert_badge(conn) -> dict | None:
+    """The Alerts rail entry's count (#118) and its worst severity, or None
+    at zero. `alerting.open_count` says what it counts and how that differs
+    from the Active tab."""
+    by_sev = alerting.open_count(conn)
+    n = sum(by_sev.values())
+    if not n:
+        return None
+    sev = next((s for s in ("crit", "warn") if by_sev.get(s)), "info")
+    return {"n": n, "sev": sev, "crit": by_sev.get("crit", 0),
+            "warn": by_sev.get("warn", 0)}
+
+
 def _shell_context(request: Request) -> dict:
-    """Context every page gets: the rail's device totals (#46). One
-    aggregate read per render — the rail is on every page, so the count
-    can't depend on which handler built the page."""
+    """Context every page gets: the rail's device totals (#46) and the
+    Alerts count (#118). One aggregate read each per render — the rail is
+    on every page, so neither can depend on which handler built the page,
+    and neither may fail the page (a missing table reads as nothing)."""
+    ctx = {"totals": None, "alert_badge": None}
     try:
         conn = _conn()
     except Exception:
-        return {"totals": None}
+        return ctx
     try:
-        return {"totals": device_totals(conn)}
-    except sqlite3.Error:
-        return {"totals": None}
+        for key, read in (("totals", device_totals), ("alert_badge", _alert_badge)):
+            try:
+                ctx[key] = read(conn)
+            except sqlite3.Error:
+                pass
+        return ctx
     finally:
         conn.close()
 
