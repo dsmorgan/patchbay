@@ -1,6 +1,6 @@
 # patchbay — architecture
 
-*Spec v1.1 · 2026-08-15 · read-only first, break-glass always*
+*Spec v1.2 · 2026-10-22 · read-only first, break-glass always*
 
 This is the public, site-agnostic version of the architecture spec. Deployment-specific
 details (hostnames, addresses, credentials) live in the private site-config repo.
@@ -15,7 +15,7 @@ and a periodic self-contained HTML snapshot stored off-network so it's usable pr
 when the network is broken.
 
 **Approach:** hybrid. Proven open-source tools do the commodity work — **LibreNMS** for
-SNMP polling, metrics, and alerting; **Oxidized** for versioned config backup. A thin
+SNMP polling and metrics; **Oxidized** for versioned config backup. A thin
 custom app (**FastAPI + HTMX + SQLite**) talks to those plus the native APIs that are far
 richer than SNMP — UniFi, OPNsense, vSphere, phpIPAM — and owns the unified visualization,
 drill-down, and snapshot generation.
@@ -30,9 +30,21 @@ is deferred to the final phase and starts with small, guarded actions.
 - **Core:** normalizer producing a shared model — devices, interfaces, links, endpoints,
   subnets, VLANs — in SQLite. Collection is a plugin interface; each source maps into the
   shared model independently.
-- **Outputs:** LAN-only browser UI; self-contained HTML snapshots shipped to storage that
-  is off the monitored failure domain; alerting through patchbay's own rules and
-  webhook transports ([ADR-0003](adr/0003-alerting.md)).
+- **Outputs:**
+  - A LAN-only browser UI.
+  - Self-contained HTML snapshots, daily, on demand, and on a critical alert, copied to
+    storage that is off the monitored failure domain ([Snapshots](#snapshots)).
+  - Alerts from patchbay's own rules ([ADR-0003](adr/0003-alerting.md)). The poller
+    evaluates them each cycle and sends them through transports: an Uptime Kuma push
+    monitor or a generic JSON webhook. Each rule can route to a different transport or to
+    none, a silence mutes what is known and fine, and the `/alerts` page shows the
+    active list, the history (kept 90 days, at most 10,000 events), the rules, the
+    declared tunnels, the transports, and the silences.
+  - `/healthz`: unauthenticated, `200 ok` while the last poll finished within three poll
+    intervals and `503 stale` after. A stopped poller raises no alerts, so this is how a
+    monitor catches it. The response carries nothing else.
+  - `patchbay backup PATH`: a consistent copy of the database, which holds state that
+    polling cannot regenerate (see [Database backup](#database-backup)).
 
 **Deployment principle:** the stack must not run on the infrastructure it monitors.
 Reference deployment is containers on a NAS that sits outside the hypervisor failure
@@ -101,26 +113,62 @@ how much each source can actually know:
    where the default route and VPN tunnels leave; the VLAN overlay highlights a
    VLAN/subnet across the fabric, with an IPAM drift report (live ARP/leases vs. IPAM
    records).
-4. **Config & change history** — Oxidized git log rendered as one cross-device timeline
-   with in-app diffs, plus snapshot-to-snapshot topology diffs.
+4. **Config & change history** — one cross-device timeline with in-app diffs, from two
+   sources: the Oxidized git log for switches and APs, and patchbay's own revisions of the
+   firewall's `config.xml` (secret-bearing elements replaced by keyed stamps, the newest
+   `PATCHBAY_CONFIG_KEEP` kept per device, 50 by default). A stored change also raises
+   the `config-changed` alert, which informs and routes nowhere unless you route it.
+   Snapshot-to-snapshot topology diffs are not planned; see [Snapshots](#snapshots).
 
 ## Snapshots
 
-- One fully self-contained HTML file: inline CSS/JS/SVG, zero external requests.
-  Contains the topology map, the routed view, all device/port detail, IPAM tables,
-  leases, ARP, latest configs.
-- Nightly schedule + on-demand + (later) automatically on critical alert.
-- Written to cloud-synced storage on a separate device; optional S3 copy with lifecycle
-  rules. Retention: 30 dailies, 12 monthlies, all alert-triggered.
+- One fully self-contained HTML file: inline CSS, JS, SVG, and typeface, zero external
+  requests. It holds the topology map and the routed view, every device with its ports,
+  links, VLANs, subnets, endpoints (from ARP, leases, the MAC table, and IPAM), gateways,
+  tunnels, 24-hour traffic graphs for linked ports, and the latest stored config of each
+  device, including the firewall's.
+- Three triggers:
+  - Daily at `PATCHBAY_SNAPSHOT_AT`, run by the poller.
+  - On demand: `patchbay snapshot`, or the button on `/ops`.
+  - With `PATCHBAY_ALERT_SNAPSHOT` on, after the poll that raises a critical alert or
+    escalates one to critical. The file is `patchbay-YYYYMMDD-HHMMSS-alert.html`, at most
+    one per `PATCHBAY_ALERT_SNAPSHOT_COOLDOWN` (60 minutes by default). A silenced alert
+    never takes one. `/snapshots` lists each alert snapshot with the alerts that took it.
+- Written to `PATCHBAY_SNAPSHOT_DIR`, then copied to `PATCHBAY_SNAPSHOT_DELIVER_DIR`:
+  a path the host can reach on a different device, such as a mounted share that a cloud
+  sync client watches. The copy lands under a temporary name and is renamed, so a sync
+  client never reads a partial file. A failed delivery never costs you the local file and
+  raises the `snapshot-failed` alert.
+- Tiered retention, `PATCHBAY_SNAPSHOT_KEEP`, default `30,12m,3y,first`: the first snapshot
+  of each of the last 30 days, 12 months, and 3 years, plus the first ever, and always the
+  newest. Alert snapshots are counted separately: the newest `PATCHBAY_ALERT_SNAPSHOT_KEEP`
+  (10 by default) in each directory. The tiers and the alert count never touch each
+  other's files. Pruning covers the local and the delivery directory. A spec that fails
+  to parse prunes nothing. See [configuration.md](configuration.md#snapshot-retention).
 - **Redaction:** configs are scrubbed before embedding (secret stripping + a scrub pass
-  for SNMP communities, hashes, PSKs). A snapshot ends up on cloud storage; treat it as
-  leakable.
+  for SNMP communities, hashes, PSKs); the firewall's revisions were already reduced to
+  keyed stamps when stored and are scrubbed again on the way in. Alert transport URLs
+  never enter a snapshot. A snapshot ends up on cloud storage; treat it as leakable.
+- **Not planned:** an S3 client and snapshot-to-snapshot topology diffs. A site-side tool
+  can copy the delivery directory to a bucket today, for example `rclone sync`.
+
+### Database backup
+
+`patchbay.db` holds what polling cannot rebuild: webhook URLs, silences, alert rules and
+history, declared tunnels, the firewall's config history, and the per-install key behind
+its redaction stamps. The snapshot job does not copy it.
+
+`patchbay backup PATH` writes a consistent copy with SQLite's backup API, which is safe
+while the poller runs. The file is mode 600 and contains secrets. The command refuses to
+write inside `PATCHBAY_SNAPSHOT_DELIVER_DIR`, because that directory is meant for a sync
+client. [deployment.md](deployment.md#back-up-and-restore) covers scheduling and restore.
 
 ## Security
 
 - Read-only everywhere until the operations phase: SNMPv3 auth+priv RO users, read-only
   API roles/tokens per source.
 - UI is LAN-only. Secrets in env files on the host, never in the repo or snapshots.
+  Webhook URLs live in the database, masked in the UI and kept out of snapshots and logs.
 - Write actions (final phase) get a separate credential set, per-action confirmation,
   and an audit log.
 - Legacy-crypto devices, such as FastIron 08.0.30 with its DH-group1-SHA1-only SSH, are handled
