@@ -334,11 +334,11 @@ such as `sw1:` that no silence scope can express), nothing silences it.
 Fix the entry and import again, or add the silence by hand on the alerts
 page.
 
-Coverage does not change at any step. An alert that was silenced before the
-import stays silenced after it, and after you remove the variable. To stop
-silencing an entry, end its silence on the **Silences** tab. Until you
-remove the variable, ending an imported silence brings the read-only entry
-back, because the variable still silences.
+Coverage holds after the import and after you remove the variable: an alert
+that an imported silence covers stays silenced. To stop silencing an entry,
+end its silence on the **Silences** tab; the entry is then no longer
+silenced, because the variable does nothing on its own. If you upgrade
+before you import, the entries silence nothing until you import them.
 
 ### More than one internet connection
 

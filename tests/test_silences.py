@@ -404,9 +404,15 @@ def test_expect_leaves_the_item_active_everywhere(clean_env, tmp_path):
     # a poll raises it: nothing is silenced
     assert client.post("/ops/poll").status_code == 200
     c = sqlite3.connect(dbp)
-    assert c.execute("SELECT state FROM alerts").fetchall() != [("silenced",)]
-    assert c.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 1
+    assert c.execute("SELECT state FROM alerts").fetchall() == [("active",)]
     c.close()
+
+
+def test_poll_output_carries_the_expect_warning(clean_env, tmp_path):
+    _, client = _web(clean_env, tmp_path, PATCHBAY_EXPECT="hyp1")
+    lines = client.post("/ops/poll").json()["lines"]
+    assert any(l.startswith("[warn] PATCHBAY_EXPECT: ignored")
+               and "/alerts?tab=silences" in l for l in lines)
 
 
 def test_ops_help_points_expect_at_the_alerts_page(clean_env, tmp_path):
