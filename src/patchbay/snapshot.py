@@ -72,8 +72,10 @@ def _data_uri(body: bytes | str, ctype: str) -> str:
 
 
 # A LibreNMS that doesn't answer must not hold a break-glass snapshot hostage:
-# 3 s to connect, 5 s per read, and the first failure ends graph fetching.
-GRAPH_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
+# an unreachable host fails in 3 s and the first failure ends graph fetching,
+# while the 15 s read leaves room for a slow-rendering LibreNMS (a 24 h graph
+# on a busy server) so the daily snapshot doesn't lose every graph.
+GRAPH_TIMEOUT = httpx.Timeout(15.0, connect=3.0)
 
 
 def generate(settings: Settings) -> str:

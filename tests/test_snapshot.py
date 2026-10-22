@@ -2,6 +2,9 @@
 
 import os
 
+import httpx
+import pytest
+
 from patchbay.snapshot import scrub_config
 
 
@@ -203,20 +206,33 @@ def test_snapshot_embeds_firewall_history_scrubbed(clean_env, tmp_path):
     assert "leftover-snmp-secret" not in t         # second scrub layer caught it
 
 
-def _librenms_down(clean_env, tmp_path):
-    """A seeded DB with LibreNMS configured at a port nothing listens on."""
+def _librenms_down(clean_env, monkeypatch, tmp_path, exc=None):
+    """A seeded DB with LibreNMS configured, every httpx.Client wired to a
+    MockTransport whose handler raises `exc` — no socket is ever opened.
+    Returns the list of requests the handler saw."""
+    import httpx
     from tests.test_web import seed
 
     seed(str(tmp_path / "test.db"))
     clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(tmp_path / "snaps"))
-    clean_env.setenv("LIBRENMS_URL", "http://127.0.0.1:9")
+    clean_env.setenv("LIBRENMS_URL", "http://librenms.example.test")
     clean_env.setenv("LIBRENMS_TOKEN", "t0ken")
+    seen: list[httpx.Request] = []
+
+    def handler(request):
+        seen.append(request)
+        raise exc or httpx.ConnectError("refused", request=request)
+
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: real(
+        *a, **{**k, "transport": httpx.MockTransport(handler)}))
+    return seen
 
 
-def test_snapshot_survives_unreachable_librenms(clean_env, tmp_path):
+def test_snapshot_survives_unreachable_librenms(clean_env, monkeypatch, tmp_path):
     """The outage the break-glass file exists for: LibreNMS is down, so the
     graphs are skipped with a note and the snapshot is still written."""
-    _librenms_down(clean_env, tmp_path)
+    seen = _librenms_down(clean_env, monkeypatch, tmp_path)
     from patchbay.config import load_settings
     from patchbay.snapshot import write_snapshot
 
@@ -227,34 +243,35 @@ def test_snapshot_survives_unreachable_librenms(clean_env, tmp_path):
     assert "const SNAPSHOT = true" in t                        # topology intact
     assert "Traffic graphs unavailable" in t and "ConnectError" in t
     assert "data:image/png" not in t
-    assert "127.0.0.1:9" not in t and "t0ken" not in t        # no URL or token leaks
+    assert "librenms.example.test" not in t and "t0ken" not in t   # no URL or token leaks
+    assert len(seen) == 1                      # two linked ports, one attempt
 
 
-def test_snapshot_stops_graph_fetching_after_first_transport_error(clean_env, tmp_path, monkeypatch):
-    """One dead host costs one timeout, not one per linked port; and the
-    short snapshot timeout is what gets passed down."""
-    _librenms_down(clean_env, tmp_path)
+def test_snapshot_graph_timeouts_fail_fast_on_connect_but_wait_on_reads(
+        clean_env, monkeypatch, tmp_path):
+    """Short connect timeout so a blackholed host costs seconds; a generous
+    read timeout so a slow-rendering LibreNMS keeps its graphs. The timeout
+    is passed explicitly, never left at the 20 s default."""
+    _librenms_down(clean_env, monkeypatch, tmp_path)
     from patchbay import snapshot, web
     from patchbay.config import load_settings
 
-    calls = []
+    got = []
+    real = web.fetch_graph_image
 
-    def boom(settings, dev, iface, gtype, hours, w, timeout=20):
-        calls.append((dev, iface, timeout))
-        raise web.GraphSourceError("ConnectTimeout")
+    def spy(*a, **k):
+        got.append(k.get("timeout"))
+        return real(*a, **k)
 
-    monkeypatch.setattr(web, "fetch_graph_image", boom)
-    t = snapshot.generate(load_settings())
-    assert len(calls) == 1                       # two linked ports, one attempt
-    assert calls[0][2] is snapshot.GRAPH_TIMEOUT
-    assert snapshot.GRAPH_TIMEOUT.connect <= 5 and snapshot.GRAPH_TIMEOUT.read <= 10
-    assert t.count("Traffic graphs unavailable") == 2    # both linked devices
-    assert "ConnectTimeout" in t
+    monkeypatch.setattr(web, "fetch_graph_image", spy)
+    snapshot.generate(load_settings())
+    assert got == [snapshot.GRAPH_TIMEOUT]
+    assert snapshot.GRAPH_TIMEOUT.connect == 3 and snapshot.GRAPH_TIMEOUT.read == 15
 
 
-def test_alert_snapshot_survives_unreachable_librenms(clean_env, tmp_path):
+def test_alert_snapshot_survives_unreachable_librenms(clean_env, monkeypatch, tmp_path):
     """snapshot-on-critical goes through the same generate()."""
-    _librenms_down(clean_env, tmp_path)
+    _librenms_down(clean_env, monkeypatch, tmp_path)
     from patchbay import snapshot
     from patchbay.config import load_settings
 
@@ -262,15 +279,24 @@ def test_alert_snapshot_survives_unreachable_librenms(clean_env, tmp_path):
     assert path.exists() and "Traffic graphs unavailable" in path.read_text()
 
 
-def test_fetch_graph_image_raises_source_error_on_transport_failure(clean_env, tmp_path):
-    import pytest
+@pytest.mark.parametrize("exc", [
+    httpx.ConnectError("refused"), httpx.ConnectTimeout("slow"),
+    httpx.ReadTimeout("slow"), httpx.DecodingError("bad gzip"),
+    httpx.TooManyRedirects("loop")], ids=lambda e: type(e).__name__)
+def test_fetch_graph_image_wraps_every_request_error(clean_env, monkeypatch, tmp_path, exc):
+    """httpx.RequestError, not just TransportError: a bad Content-Encoding
+    (DecodingError) or a redirect loop is as unusable as a refused connection."""
     from patchbay import web
     from patchbay.config import load_settings
 
-    _librenms_down(clean_env, tmp_path)
-    with pytest.raises(web.GraphSourceError):
+    _librenms_down(clean_env, monkeypatch, tmp_path, exc=exc)
+    with pytest.raises(web.GraphSourceError) as ei:
         web.fetch_graph_image(load_settings(), "sw1", "1/0/1", "port_bits")
-    # unconfigured stays "no graph", not an error
-    clean_env.delenv("LIBRENMS_URL")
-    assert web.fetch_graph_image(load_settings(), "sw1", "1/0/1", "port_bits") is None
+    assert str(ei.value) == type(exc).__name__
 
+
+def test_fetch_graph_image_unconfigured_is_no_graph_not_an_error(clean_env, tmp_path):
+    from patchbay import web
+    from patchbay.config import load_settings
+
+    assert web.fetch_graph_image(load_settings(), "sw1", "1/0/1", "port_bits") is None

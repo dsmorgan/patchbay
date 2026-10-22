@@ -1656,10 +1656,19 @@ def test_ops_survives_really_corrupt_db(clean_env, client):
     assert r.status_code == 409
 
 
-def test_graph_proxy_answers_502_when_librenms_is_down(clean_env, tmp_path, client):
+def test_graph_proxy_answers_502_when_librenms_is_down(clean_env, monkeypatch, tmp_path, client):
+    import httpx
     seed(str(tmp_path / "test.db"))
-    clean_env.setenv("LIBRENMS_URL", "http://127.0.0.1:9")   # nothing listens
+    clean_env.setenv("LIBRENMS_URL", "http://librenms.example.test")
     clean_env.setenv("LIBRENMS_TOKEN", "t0ken")
+
+    def handler(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    # `client` already exists, so only the proxy's own client is rewired
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda *a, **k: real(
+        *a, **{**k, "transport": httpx.MockTransport(handler)}))
     r = client.get("/graph", params={"device": "sw1", "iface": "1/0/1"})
     assert r.status_code == 502
 
