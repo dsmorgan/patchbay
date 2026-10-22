@@ -16,39 +16,21 @@ import httpx
 
 from ..config import CONFIG_KEEP_DEFAULT, Settings
 from .. import db
+from ..redact import redact_xml
 from . import register
 
 # --- firewall config history (#23) ------------------------------------------
 # config.xml is pulled over the same API key as everything else (grant the
 # firewall's backup page privilege). It carries live private keys, so the raw
-# document is redacted BEFORE anything touches the database: the content of
-# every secret-bearing element is replaced with a short hash of itself —
-# a rotated key still shows as a change, but no secret is ever stored.
-# Overzealous by design, same stance as the snapshot scrubber.
-# matched as substrings of the tag NAME, not exact tags: plugins invent
-# names like <rocommunity>, <sharedsecret>, <varusersfreeradiuspassword>,
-# <otp_seed> — exact matching let all of those through. A false positive
-# still diffs as a change (the hash moves), so err toward matching.
-_SECRET_TAG_WORDS = ("prv", "crt", "cert", "pass", "secret", "psk", "shared",
-                     "private", "key", "seed", "community", "auth", "token",
-                     "hash", "credential")
-_SECRET_RE = re.compile(
-    r"<([a-zA-Z0-9_-]*(?:" + "|".join(_SECRET_TAG_WORDS) +
-    r")[a-zA-Z0-9_-]*)>([^<]+)</\1>")
-# catch-all for key material hiding under tags the list doesn't know: any
-# element whose content is one long base64-ish run gets the same treatment
-# (a real ACME account key surfaced under a bare <key> before this existed —
-# unknown plugins will invent more names, so shape catches what names miss)
-_LONG_BLOB_RE = re.compile(r"<([a-zA-Z0-9_-]+)>([A-Za-z0-9+/=\s]{200,})</\1>")
+# document is redacted BEFORE anything touches the database (redact.py: the
+# content of every secret-bearing element is replaced with a short hash of
+# itself — a rotated key still shows as a change, but no secret is ever
+# stored). Overzealous by design, same stance as the snapshot scrubber.
+
 # the <revision> block updates on every save — its description/username are
 # the change's metadata (lifted onto the revision row); its timestamp churn
 # must not read as a config change or clutter the diffs
 _REVISION_RE = re.compile(r"\s*<revision>.*?</revision>", re.S)
-
-def _digest(m: re.Match) -> str:
-    tag, content = m.group(1), m.group(2)
-    stamp = hashlib.sha256(content.encode()).hexdigest()[:8]
-    return f"<{tag}>redacted:{stamp}</{tag}>"
 
 
 def prepare_config(raw: str) -> tuple[str, str | None, str | None]:
@@ -61,9 +43,7 @@ def prepare_config(raw: str) -> tuple[str, str | None, str | None]:
         auth_m = re.search(r"<username>([^<]*)</username>", rev.group(0))
         msg = (msg_m.group(1).strip() or None) if msg_m else None
         auth = (auth_m.group(1).strip() or None) if auth_m else None
-    text = _REVISION_RE.sub("", raw)
-    text = _SECRET_RE.sub(_digest, text)
-    text = _LONG_BLOB_RE.sub(_digest, text)
+    text, _ = redact_xml(_REVISION_RE.sub("", raw))
     return text, msg, auth
 
 
