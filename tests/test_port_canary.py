@@ -11,7 +11,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
-from patchbay import alerting, attention
+from patchbay import alerting, attention, silences
 from patchbay import db as pdb
 from patchbay.config import load_settings
 
@@ -141,14 +141,15 @@ def test_hysteresis_on_a_zero_baseline_port(conn, settings, clock):
     assert _canaries(conn, settings) == []
 
 
-def test_params_and_expected(conn, clean_env, clock):
+def test_params_and_silence(conn, clean_env, clock):
     _history(conn, 0.0)
     _sample(conn, T0 - 60, in_errors=60.0)
     alerting.seed_rules(conn)
     conn.execute("UPDATE alert_rules SET params = ? WHERE name = 'port-canary'",
                  (json.dumps({"for": 2, "floor": 100}),))
     assert _canaries(conn, load_settings()) == []
-    clean_env.setenv("PATCHBAY_EXPECT", "sw1:1/0/5")
+    silences.add(conn, {"kind": "port", "scope": "sw1:1/0/5", "until": None,
+                        "reason": None, "created_by": "t", "created_at": T0})
     conn.execute("UPDATE alert_rules SET params = '{}' WHERE name = 'port-canary'")
     # computed, but silenced through the silence list (#62)
     [it] = _canaries(conn, load_settings())

@@ -298,8 +298,7 @@ def attention_items(conn: sqlite3.Connection, settings, *,
     (#118) beside the cards, which show the same state per device.
 
     Every item is returned, silenced or not: `silenced` holds the silence
-    that covers it (silences.py, which also reads PATCHBAY_EXPECT), or
-    None. Each surface decides what a silenced item means for it."""
+    that covers it (silences.py), or None. Each surface decides what a silenced item means for it."""
     items: list[dict] = []
     checked: list[str] = []
 
@@ -399,7 +398,7 @@ def attention_items(conn: sqlite3.Connection, settings, *,
                 })
 
     items = _apply_rule_settings(conn, items)
-    silences.apply(conn, items, settings, now)
+    silences.apply(conn, items, now)
     order = {"crit": 0, "warn": 1}
     items.sort(key=lambda i: order.get(i["severity"], 2))  # crit first, order kept
     return items, checked
@@ -561,8 +560,7 @@ def _gateway_degraded(conn, settings, now: float, checked: list[str]) -> list[di
             "rule": "gateway-degraded", "key": f"gateway:{g['name']}",
             "category": "gateway", "severity": sev,
             "text": f"gateway {g['name']} {what}", "href": "/",
-            # a gateway is silenced by its name as a device, which is how
-            # PATCHBAY_EXPECT has always matched it
+            # a gateway is silenced by its name as a device
             "devices": [g["name"]],
         })
     return out

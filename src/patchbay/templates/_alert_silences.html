@@ -1,10 +1,7 @@
 {# The Silenced and Silences tabs (#62, ADR-0003 Decisions 6 and 8).
    Silenced lists the items a silence covers right now, with that silence,
    so a silence is never invisible. Silences is the list itself: add,
-   remove, expired rows muted. PATCHBAY_EXPECT entries show here as
-   permanent, read-only rows (deprecated, #69) until imported on /ops, after
-   which the imported silence replaces its row. Plain forms posting to
-   /alerts/silences. #}
+   remove, expired rows muted. Plain forms posting to /alerts/silences. #}
 
 {% if tab == 'silenced' %}
 <section class="sil">
@@ -56,11 +53,6 @@ still recorded, but it leaves the Overview and is never sent. When the
 silence ends, an alert that still holds raises as new.</p>
 </details>
 
-{% if silences | selectattr("source", "equalto", "env") | list %}
-<p class="sil-note">PATCHBAY_EXPECT is deprecated. Its entries below cannot be
-edited here. <a href="/ops">Import them as silences on Ops</a>, then remove the
-variable.</p>
-{% endif %}
 {% if silences %}
 <div class="scroll" style="max-width: 900px">
 <table>
@@ -72,11 +64,9 @@ variable.</p>
     <td>{{ s.reason or '' }}</td>
     <td class="muted">{{ s.created_by or '' }}{% if s.created_text %}
         <span class="mono">· {{ s.created_text }}</span>{% endif %}</td>
-    <td>{% if s.source == 'db' %}
-      <form method="post" action="/alerts/silences/{{ s.id }}/delete">
+    <td><form method="post" action="/alerts/silences/{{ s.id }}/delete">
         <input type="hidden" name="back" value="silences">
-        <button class="linkbtn">{{ 'end now' if s.live else 'remove' }}</button></form>
-    {% else %}<a class="muted" href="/ops" title="declared in PATCHBAY_EXPECT (deprecated)">import on Ops</a>{% endif %}</td>
+        <button class="linkbtn">{{ 'end now' if s.live else 'remove' }}</button></form></td>
   </tr>
   {% endfor %}
 </table>

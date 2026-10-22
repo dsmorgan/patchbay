@@ -45,6 +45,11 @@ def net(clean_env, tmp_path):
     return Net
 
 
+def _silence(net, device):
+    net.sql("INSERT INTO alert_silences (kind, scope, until, created_by, created_at) "
+            "VALUES ('device', ?, NULL, 't', 0)", device)
+
+
 def _badge(html):
     m = re.search(r'<a class="rail-tab[^"]*" href="/alerts"[^>]*>.*?</a>', html, re.S)
     assert m, "no Alerts entry in the rail"
@@ -121,7 +126,8 @@ def test_silenced_alerts_leave_the_badge_with_the_tab(net, clean_env):
     assert (after[1] if after else 0) == _active_rows(net.client)
 
     # everything silenced: the badge is gone, the Silenced tab has them
-    clean_env.setenv("PATCHBAY_EXPECT", "sw1,hyp1")
+    for dev in ("sw1", "hyp1"):
+        _silence(net, dev)
     net.poll()
     assert _badge(net.client.get("/").text) is None
     assert _active_rows(net.client) == 0
@@ -190,27 +196,27 @@ def test_one_shot_events_count_while_the_tab_lists_them(net, clean_env):
     assert _active_rows(net.client) == 0
 
 
-def test_an_event_silenced_when_it_fired_never_counts(net, clean_env):
-    clean_env.setenv("PATCHBAY_EXPECT", "sw1")
+def test_an_event_silenced_when_it_fired_never_counts(net):
+    _silence(net, "sw1")
     _config_change(net, pdb.now())
     net.poll()
     assert _active_rows(net.client) == 0
     assert _badge(net.client.get("/").text) is None
 
 
-def test_an_event_follows_its_silence_in_both_directions(net, clean_env):
+def test_an_event_follows_its_silence_in_both_directions(net):
     # silenced after it fired: the next poll takes it off the badge, as the
     # tab drops it at once
     _config_change(net, pdb.now())
     net.poll()
     assert _badge(net.client.get("/").text)[1] == _active_rows(net.client) == 1
-    clean_env.setenv("PATCHBAY_EXPECT", "sw1")
+    _silence(net, "sw1")
     assert _active_rows(net.client) == 0
     net.poll()
     assert _badge(net.client.get("/").text) is None
 
     # unsilenced again: it is back on both, and no notification replays it
-    clean_env.delenv("PATCHBAY_EXPECT")
+    net.sql("DELETE FROM alert_silences")
     assert _active_rows(net.client) == 1
     net.poll()
     assert _badge(net.client.get("/").text)[:2] == ("info", 1)
@@ -219,12 +225,12 @@ def test_an_event_follows_its_silence_in_both_directions(net, clean_env):
     c.close()
 
 
-def test_an_event_silenced_when_it_fired_returns_when_unsilenced(net, clean_env):
-    clean_env.setenv("PATCHBAY_EXPECT", "sw1")
+def test_an_event_silenced_when_it_fired_returns_when_unsilenced(net):
+    _silence(net, "sw1")
     _config_change(net, pdb.now())
     net.poll()
     assert _badge(net.client.get("/").text) is None
-    clean_env.delenv("PATCHBAY_EXPECT")
+    net.sql("DELETE FROM alert_silences")
     net.poll()
     assert _badge(net.client.get("/").text)[1] == _active_rows(net.client) == 1
 

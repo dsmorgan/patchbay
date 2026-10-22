@@ -146,7 +146,7 @@ def test_demo_canary_is_active_on_a_flooded_port(tmp_path):
     from patchbay.attention import attention_items
 
     c, _ = _seed(str(tmp_path / "demo.db"))
-    items, _ = attention_items(c, SimpleNamespace(ipam_url=None, expected=set()))
+    items, _ = attention_items(c, SimpleNamespace(ipam_url=None))
     [canary] = [i for i in items if i["rule"] == "port-canary"]
     assert canary["key"] == "port:canary:edge1:e1/0/4:in_errors"
     assert canary["severity"] == "warn" and not canary["silenced"]

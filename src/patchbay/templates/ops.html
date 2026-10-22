@@ -149,14 +149,15 @@ poll.</p>
     {% for w in d.warnings %}<div class="mono">⚠ {{ w }}</div>{% endfor %}
   </div>
   {% if d.var == "PATCHBAY_EXPECT" %}
-  {# #69 stage 1: the deprecation notice. The wrapper renders always, so the
+  {# #69: the import notice. The wrapper renders always, so the
      live swap has an element to replace; the button is found by delegation
      below, because a swap discards its listener #}
   <div id="expectnotice" data-live>
   {% if expect %}
   <div class="dclwarn" style="margin-top: 0">
-    <div><strong>PATCHBAY_EXPECT is deprecated.</strong> A future release
-      ignores it. A silence can expire and carry a reason; an entry here cannot.</div>
+    <div><strong>PATCHBAY_EXPECT is ignored.</strong> Its entries silence
+      nothing. Import them as silences, which can expire and carry a reason, and
+      manage them on the <a href="/alerts?tab=silences">alerts page</a>.</div>
     <div style="margin-top: 0.3rem">
       {% if expect.pending %}{{ expect.pending }} of {{ expect.count }}
         {{ "entry is" if expect.count == 1 else "entries are" }} not yet a silence.
@@ -168,11 +169,12 @@ poll.</p>
               style="margin-left: 0.4rem; padding: 0.2rem 0.7rem; font-size: 0.75rem">import as silences</button>
     </div>
     {% if expect.invalid %}
-    <div style="margin-top: 0.3rem">Cannot import, and still silencing while
-      the variable is set:
+    <div style="margin-top: 0.3rem">Cannot import, so nothing silences
+      {{ "it" if expect.invalid | length == 1 else "them" }}:
       {% for e, why in expect.invalid %}<div class="mono">{{ e }} — {{ why }}</div>{% endfor %}
-      Fix or drop {{ "it" if expect.invalid | length == 1 else "them" }} before you
-      remove the variable.</div>
+      Fix {{ "it" if expect.invalid | length == 1 else "them" }} and import
+      again, or add {{ "a silence" if expect.invalid | length == 1 else "silences" }}
+      on the alerts page.</div>
     {% endif %}
     <div class="muted" style="margin-top: 0.3rem">Importing twice creates no
       duplicates.{% if not expect.pending and not expect.invalid %}

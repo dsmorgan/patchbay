@@ -151,7 +151,7 @@ def test_a_silenced_crit_takes_no_snapshot(env):
                          "reason": "maintenance", "created_by": "operator",
                          "created_at": T0})
         items = [dict(it)]
-        silences.apply(c, items, s, T0)
+        silences.apply(c, items, T0)
         notes = alerting.evaluate(c, items, now=T0)
         assert [r["state"] for r in c.execute("SELECT state FROM alerts")] == ["silenced"]
     assert notes == []

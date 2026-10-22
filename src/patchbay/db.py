@@ -298,9 +298,8 @@ CREATE TABLE IF NOT EXISTS alert_transports (
     failures INTEGER NOT NULL DEFAULT 0  -- consecutive, for the 3-strike item
 );
 CREATE TABLE IF NOT EXISTS alert_silences (
-    id INTEGER PRIMARY KEY,    -- silences.py (#62); PATCHBAY_EXPECT adds
-    kind TEXT NOT NULL,        -- read-only rows of its own, never stored
-                               -- here. kind: key | device | port | category
+    id INTEGER PRIMARY KEY,    -- silences.py (#62)
+    kind TEXT NOT NULL,        -- key | device | port | category
     scope TEXT NOT NULL,       -- the exact key, device, dev:port, category
     until REAL,                -- NULL = permanent
     reason TEXT,

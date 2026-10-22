@@ -143,13 +143,12 @@ DECLARATION_HELP = {
         "example": "core1:1/0/16",
     },
     "PATCHBAY_EXPECT": {
-        "what": "Deprecated (#69): expected conditions, read as permanent "
-                "silences. A port whose link is legitimately slow, or a "
-                "whole device (bare name) to quiet every item naming it. "
-                "Click import as silences to turn each entry into a "
-                "permanent silence, then remove this variable. Silences "
-                "have an expiry and a reason and live on the Silences tab "
-                "of the Alerts page (/alerts?tab=silences).",
+        "what": "Ignored (#69): its entries silence nothing. Click import "
+                "as silences to turn each entry into a permanent silence, "
+                "then remove this variable. The import stays here only "
+                "while the variable is set. Silences have an expiry and a "
+                "reason and live on the Silences tab of the Alerts page "
+                "(/alerts?tab=silences).",
         "syntax": "device:interface or device, comma-separated",
         "example": "core1:1/0/16,hyp1",
     },
@@ -242,11 +241,9 @@ class Settings:
     # Site-provided identity aliases, e.g. a chassis serial no source maps:
     # PATCHBAY_ALIASES="ABC123456=core1,oldname=newname"
     aliases: dict[str, str]
-    # Conditions the operator has declared expected: legacy input to the
-    # silence list (silences.py, #62), each entry a permanent silence.
-    # "dev:iface" silences items at that port (a management drop that is
-    # legitimately 100M); a bare "dev" silences every item that names the
-    # device. An alert nobody can silence trains everyone to ignore the list.
+    # Ignored since #69: it only feeds the import on /ops (silences.py),
+    # which turns each entry into a permanent silence. "dev:iface" is a
+    # port, a bare "dev" a device.
     # PATCHBAY_EXPECT="core1:1/0/16,hyp1"
     expected: set[str]
     # Declared unmanaged switches (ports the operator knows feed one), shown
@@ -480,6 +477,12 @@ def load_settings(*, read_db: bool = True) -> Settings:
         s = spec.strip()
         if s:
             expected.add(":".join(part.strip() for part in s.split(":", 1)))
+    if expected:
+        warnings.append(
+            "PATCHBAY_EXPECT: ignored, its entries no longer silence "
+            "anything. Import them as silences with the import action on "
+            "/ops, then remove the variable; silences are listed on the "
+            "alerts page (/alerts?tab=silences)")
     unmanaged = []
     for spec in (env("PATCHBAY_UNMANAGED") or "").split(","):
         spec = spec.strip()
