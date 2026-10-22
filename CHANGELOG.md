@@ -8,6 +8,15 @@ put.
 
 ## [Unreleased]
 
+### Added
+- Alerts visibility (#118). The Overview's Attention box lists down devices,
+  and the **Alerts** entry in the rail shows the count of open alerts,
+  colored by the worst severity and hidden at zero. Items the engine holds
+  while their device is down (a down AP's cable) are tagged "held: X is
+  down" on Active and Attention and aren't in the count. One-shot events
+  follow silences added or removed after they fire. When a critical alert
+  raises with `PATCHBAY_ALERT_SNAPSHOT` off, the poll output says so.
+
 ### Deprecated
 - `PATCHBAY_EXPECT` is deprecated (#69). While it's set, `/ops` shows a
   notice with an **import as silences** button that turns each entry into a
