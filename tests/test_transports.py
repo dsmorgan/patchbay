@@ -666,7 +666,9 @@ def test_rules_tab_shows_route_labels(clean_env, tmp_path):
 
 # -- #80: overlapping dispatches keep every queued note ---------------------
 
-def test_interleaved_dispatches_keep_every_queued_note(dbp):
+def test_interleaved_dispatches_keep_every_queued_note(dbp, monkeypatch):
+    # the inner dispatch finds the lease held and queues behind it (#110)
+    monkeypatch.setattr(transports, "LEASE_WAIT_S", 0)
     _add(dbp, "hook", "generic", HOOK)
     inner_done = []
 
@@ -734,9 +736,11 @@ def test_redaction_ignores_hex_case_of_percent_escapes():
     assert "100%c3 literal" in out            # unrelated text is untouched
 
 
-def test_overlapping_dispatches_failing_the_same_retry_keep_one_copy(dbp):
+def test_overlapping_dispatches_failing_the_same_retry_keep_one_copy(dbp, monkeypatch):
+    monkeypatch.setattr(transports, "LEASE_WAIT_S", 0)
     _add(dbp, "hook", "generic", HOOK)
     c = _c(dbp)
+    # an entry stored before #110 carries `tries`; it is read the same way
     pdb.set_state(c, transports.OUTBOX_KEY, json.dumps(
         [{"t": 1, "note": transports._note_dict(_note("a:1")), "tries": 1}]))
     c.commit()
@@ -756,3 +760,135 @@ def test_overlapping_dispatches_failing_the_same_retry_keep_one_copy(dbp):
     kept = json.loads(pdb.get_state(c, transports.OUTBOX_KEY))
     c.close()
     assert [e["note"]["key"] for e in kept] == ["a:1"]
+
+
+# -- #110: delivery order, the dispatch lease, a locked outcome write ----------
+
+def _kind_note(kind, at, key="link:sw1:1"):
+    return alerting.Notification(kind=kind, key=key, rule="link-down", severity="warn",
+                                 text="x", href="/ops", raised_at=T0, route="1:warn",
+                                 noted_at=at)
+
+
+def test_a_clear_stored_before_its_raise_is_still_sent_after_it(dbp, monkeypatch):
+    # the clear's dispatch read the outbox before the raise's dispatch stored
+    # the raise; the receiver must still hear raise, then clear
+    monkeypatch.setattr(transports, "LEASE_WAIT_S", 0)
+    _add(dbp, "hook", "generic", HOOK)
+    inner_done = []
+
+    def handler(request):
+        if not inner_done:
+            inner_done.append(True)
+            transports.WebhookDispatcher(
+                dbp, transport=httpx.MockTransport(handler), now=T0).send(
+                [_kind_note("raise", T0)])
+        return httpx.Response(503)
+
+    transports.WebhookDispatcher(
+        dbp, transport=httpx.MockTransport(handler), now=T0 + 300).send(
+        [_kind_note("clear", T0 + 300)])
+    c = _c(dbp)
+    kept = json.loads(pdb.get_state(c, transports.OUTBOX_KEY))
+    c.close()
+    assert [e["note"]["kind"] for e in kept] == ["raise", "clear"]
+    assert all("tries" not in e for e in kept)
+    rec = Recorder()
+    transports.WebhookDispatcher(dbp, transport=rec.transport, now=T0 + 600).send([])
+    assert [json.loads(r.content)["event"] for r in rec.seen] == ["raise", "clear"]
+
+
+def test_the_lease_is_one_holder_and_expires(dbp, monkeypatch):
+    c = _c(dbp)
+    assert transports._claim(c, "a")
+    assert not transports._claim(c, "b")
+    assert transports._claim(c, "a")              # the holder may renew
+    transports._release(c, "b")                   # not b's to release
+    assert not transports._claim(c, "b")
+    transports._release(c, "a")
+    assert transports._claim(c, "b")
+    monkeypatch.setattr(transports, "LEASE_TTL_S", -1)
+    assert transports._claim(c, "b")              # b's lease is already stale...
+    assert transports._claim(c, "c")              # ...so c takes it over
+    c.close()
+
+
+def test_overlapping_dispatches_take_turns(dbp):
+    import threading
+
+    _add(dbp, "hook", "generic", HOOK)
+    gate, started = threading.Event(), threading.Event()
+    seen = []
+
+    def handler(request):
+        key = json.loads(request.content)["key"]
+        seen.append(key)
+        if key == "a:1":
+            started.set()
+            gate.wait(5)
+        return httpx.Response(200)
+
+    def dispatch(note):
+        transports.WebhookDispatcher(
+            dbp, transport=httpx.MockTransport(handler), now=T0).send([note])
+
+    first = threading.Thread(target=dispatch, args=(_note("a:1"),))
+    first.start()
+    assert started.wait(5)
+    second = threading.Thread(target=dispatch, args=(_note("b:2"),))
+    second.start()
+    second.join(0.5)
+    assert seen == ["a:1"]                        # b waits for a's lease
+    gate.set()
+    first.join(5)
+    second.join(5)
+    assert seen == ["a:1", "b:2"]
+
+
+def test_a_locked_outcome_write_loses_nothing(dbp, monkeypatch):
+    # the database stays locked through the outcome write: the failed
+    # raise, its history, and the transport's failure count wait in a file
+    # and land with the next cycle, which also retries the raise
+    monkeypatch.setattr(transports, "OUTCOME_TRIES", 1)
+    monkeypatch.setattr(transports, "LEASE_TTL_S", -1)   # the release fails too
+    monkeypatch.setattr(transports, "DB_TIMEOUT_S", 0.05)
+    tid = _add(dbp, "hook", "generic", HOOK)
+    blocker = sqlite3.connect(dbp, check_same_thread=False)
+
+    def locked(request):
+        blocker.execute("BEGIN IMMEDIATE")       # a poll takes the write lock
+        return httpx.Response(503)
+
+    d = transports.WebhookDispatcher(dbp, transport=httpx.MockTransport(locked), now=T0)
+    d.send([_note("a:1")])
+    assert any("stayed locked" in line for line in d.lines)
+    blocker.rollback()
+    blocker.close()
+    assert len(transports._pending_paths(dbp)) == 1
+    assert _events(dbp) == [] and _transport(dbp, tid)["failures"] == 0
+
+    rec = Recorder()
+    transports.WebhookDispatcher(dbp, transport=rec.transport, now=T0 + 300).send([])
+    assert [json.loads(r.content)["key"] for r in rec.seen] == ["a:1"]
+    assert [e["event"] for e in _events(dbp)] == ["delivery_failed", "notified"]
+    assert transports._pending_paths(dbp) == []
+    c = _c(dbp)
+    assert json.loads(pdb.get_state(c, transports.OUTBOX_KEY)) == []
+    c.close()
+
+
+def test_request_s_bounds_the_wait_for_headers(monkeypatch):
+    import time
+
+    monkeypatch.setattr(transports, "REQUEST_S", 0.3)
+
+    def slow(request):
+        time.sleep(1.0)                            # headers come late
+        return httpx.Response(200)
+
+    t = {"kind": "generic", "url": HOOK, "name": "g"}
+    start = time.monotonic()
+    with httpx.Client(transport=httpx.MockTransport(slow)) as client:
+        ok, result = transports._request(client, t, payload={})
+    assert time.monotonic() - start < 0.8
+    assert not ok and result.startswith("_Deadline")
