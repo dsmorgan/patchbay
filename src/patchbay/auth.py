@@ -244,7 +244,9 @@ def _split_host(value: str) -> tuple[str, str | None]:
 
 def host_allowed(settings: Settings, value: str) -> bool:
     """Whether a Host (or X-Forwarded-Host) value names this deployment.
-    An allowlist entry without a port matches any port."""
+    An allowlist entry without a port matches any port; one with :80 or
+    :443 also matches a Host without a port, since browsers leave the
+    scheme's default port out of the header."""
     host, port = _split_host(value)
     if not host:
         return False
@@ -252,7 +254,9 @@ def host_allowed(settings: Settings, value: str) -> bool:
         return True
     for entry in settings.allowed_hosts:
         want_host, want_port = _split_host(entry)
-        if host == want_host and want_port in (None, port):
+        if host == want_host and (
+                want_port in (None, port)
+                or (port is None and want_port in ("80", "443"))):
             return True
     return False
 

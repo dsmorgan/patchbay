@@ -396,6 +396,52 @@ def test_host_allowed_matching(clean_env):
     assert not auth.host_allowed(s, "")
 
 
+def test_default_port_entries_match_a_portless_host(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("PATCHBAY_ALLOWED_HOSTS",
+                     "patchbay.example.net:443,198.51.100.7:80,192.0.2.10:8080")
+    s = load_settings()
+    assert auth.host_allowed(s, "patchbay.example.net")      # browser omits :443
+    assert auth.host_allowed(s, "patchbay.example.net:443")
+    assert not auth.host_allowed(s, "patchbay.example.net:8443")
+    assert auth.host_allowed(s, "198.51.100.7")
+    assert not auth.host_allowed(s, "192.0.2.10")            # 8080 is no default
+
+
+def test_url_shaped_allowlist_entries_are_read_as_hosts(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("PATCHBAY_ALLOWED_HOSTS",
+                     "https://patchbay.example.net/, http://192.0.2.10:8080/ops,"
+                     "patchbay.example.com, https://")
+    s = load_settings()
+    assert s.allowed_hosts == ("patchbay.example.net", "192.0.2.10:8080",
+                               "patchbay.example.com")
+    assert auth.host_allowed(s, "patchbay.example.net")
+    assert auth.host_allowed(s, "192.0.2.10:8080")
+    warned = [w for w in s.parse_warnings if w.startswith("PATCHBAY_ALLOWED_HOSTS:")]
+    assert len(warned) == 3
+    assert any("'https://patchbay.example.net/' as 'patchbay.example.net'" in w
+               for w in warned)
+    assert any("skipped malformed entry 'https://'" in w for w in warned)
+    c = _client(clean_env)
+    page = TestClient(c.app, base_url="http://patchbay.example.net").get("/ops").text
+    assert "list hostnames, not URLs" in page
+
+
+def test_web_startup_prints_allowlist_warnings(clean_env, monkeypatch, capsys):
+    import argparse
+    import sys as _sys
+    import types
+
+    from patchbay import cli
+    clean_env.setenv("PATCHBAY_ALLOWED_HOSTS", "https://patchbay.example.net/")
+    monkeypatch.setitem(_sys.modules, "uvicorn",
+                        types.SimpleNamespace(run=lambda *a, **k: None))
+    assert cli.cmd_web(argparse.Namespace(host="127.0.0.1", port=8080)) == 0
+    err = capsys.readouterr().err
+    assert "[warn] PATCHBAY_ALLOWED_HOSTS: read 'https://patchbay.example.net/'" in err
+
+
 def test_any_host_accepted_without_allowlist(clean_env):
     import patchbay.web as web
     c = TestClient(web.app, base_url="http://attacker.example:8080")

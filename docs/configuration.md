@@ -56,7 +56,7 @@ container network.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PATCHBAY_ALLOWED_HOSTS` | any | Comma-separated hostnames or addresses patchbay answers to, each with an optional `:port` (without one, any port matches). A request naming any other host gets `400`. `localhost`, `127.0.0.1`, and `::1` are always allowed |
+| `PATCHBAY_ALLOWED_HOSTS` | any | Comma-separated hostnames or addresses patchbay answers to, each with an optional `:port` (without one, any port matches; `:80` and `:443` also match a request that names no port). A request naming any other host gets `400`. `localhost`, `127.0.0.1`, and `::1` are always allowed. An entry written as a URL is read as its host and port, with a warning on `/ops` and at startup |
 
 Set this whenever `PATCHBAY_AUTH=none`. Without it, a web page you visit can
 point its own hostname at patchbay's address (DNS rebinding) and use the UI
