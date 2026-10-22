@@ -267,3 +267,78 @@ def test_login_queue_turns_away_when_full(clean_env, fresh_login_queue):
     c = _client(clean_env)
     r = c.post("/login", data={"password": "pw", "next": "/vlans"})
     assert r.headers["location"] == "/vlans"
+
+
+def test_password_rotation_ends_sessions(clean_env):
+    c = _client(clean_env, PATCHBAY_AUTH="password",
+                PATCHBAY_PASSWORD_HASH=auth.hash_password("old"))
+    c.post("/login", data={"password": "old", "next": "/"})
+    assert c.get("/").status_code == 200
+    clean_env.setenv("PATCHBAY_PASSWORD_HASH", auth.hash_password("new"))
+    assert c.get("/").status_code == 303
+
+
+def test_plain_password_rotation_ends_sessions(clean_env):
+    c = _client(clean_env, PATCHBAY_AUTH="password", PATCHBAY_PASSWORD="old")
+    c.post("/login", data={"password": "old", "next": "/"})
+    assert c.get("/").status_code == 200
+    clean_env.setenv("PATCHBAY_PASSWORD", "new")
+    assert c.get("/").status_code == 303
+
+
+def test_fingerprint_does_not_reveal_a_plain_password(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("PATCHBAY_AUTH", "password")
+    clean_env.setenv("PATCHBAY_PASSWORD", "hunter2")
+    settings = load_settings()
+    payload = auth.session_token(settings, "operator").rpartition(".")[0]
+    fp = json.loads(auth._unb64(payload))["fp"]
+    import hashlib
+    for guess in ("hunter2", json.dumps(["password", "", "hunter2"])):
+        assert hashlib.sha256(guess.encode()).hexdigest()[:32] != fp
+
+
+def test_auth_mode_switch_ends_sessions(clean_env):
+    from patchbay.config import load_settings
+    c = _client(clean_env, **OIDC_ENV)
+    c.cookies.set(auth.SESSION_COOKIE,
+                  auth.session_token(load_settings(), "mallory@example.com"))
+    assert c.get("/").status_code == 200
+    clean_env.setenv("PATCHBAY_AUTH", "password")
+    clean_env.setenv("PATCHBAY_PASSWORD_HASH", auth.hash_password("pw"))
+    assert c.get("/").status_code == 303
+
+
+def test_oidc_provider_change_ends_sessions(clean_env):
+    from patchbay.config import load_settings
+    c = _client(clean_env, **OIDC_ENV)
+    c.cookies.set(auth.SESSION_COOKIE,
+                  auth.session_token(load_settings(), "alice@example.com"))
+    assert c.get("/").status_code == 200
+    clean_env.setenv("PATCHBAY_OIDC_IDENTITY_PATH", "preferred_username")
+    assert c.get("/").status_code == 303
+
+
+def test_allowlist_removal_ends_that_session_only(clean_env):
+    from patchbay.config import load_settings
+    c = _client(clean_env, PATCHBAY_OIDC_ALLOWED="alice@example.com,mallory@example.com",
+                **OIDC_ENV)
+    settings = load_settings()
+    alice = auth.session_token(settings, "alice@example.com")
+    mallory = auth.session_token(settings, "mallory@example.com")
+    c.cookies.set(auth.SESSION_COOKIE, mallory)
+    assert c.get("/").status_code == 200
+    clean_env.setenv("PATCHBAY_OIDC_ALLOWED", "Alice@example.com,bob@example.com")
+    assert c.get("/").status_code == 303
+    c.cookies.set(auth.SESSION_COOKIE, alice)
+    assert c.get("/").status_code == 200
+
+
+def test_session_without_fingerprint_is_rejected(clean_env):
+    # cookies minted before #94 carry no fingerprint: one sign-in on upgrade
+    from patchbay.config import load_settings
+    c = _client(clean_env, **OIDC_ENV)
+    legacy = auth.make_token(auth.session_secret(load_settings()),
+                             "alice@example.com", hours=1)
+    c.cookies.set(auth.SESSION_COOKIE, legacy)
+    assert c.get("/").status_code == 303
