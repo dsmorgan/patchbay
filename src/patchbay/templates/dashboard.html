@@ -175,8 +175,9 @@
   .attn-all { margin-left: auto; font-size: 0.75rem; }
   .attn { list-style: none; margin: 0.5rem 0 0; padding: 0;
           display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.88rem; }
-  /* the Overview stays a summary: ~4 rows visible, the rest scroll (#28) */
-  .attn.capped { max-height: 6.6em; overflow-y: auto; }
+  /* the Overview stays a summary: five rows and a peek of the sixth, so the
+     scroll is visible; the rest scroll (#28, #118) */
+  .attn.capped { max-height: 10em; overflow-y: auto; }
   .attn li { padding-left: 0.85rem; position: relative; }
   .attn li::before { content: ""; position: absolute; left: 0; top: 0.42em;
                      width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
