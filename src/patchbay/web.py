@@ -35,6 +35,18 @@ from .ports import port_kind
 from .redact import hide_userinfo
 
 app = FastAPI(title="patchbay")
+
+
+@app.exception_handler(sqlite3.OperationalError)
+async def _database_busy(request: Request, exc: sqlite3.OperationalError):
+    """A write that waited out the busy timeout is a retry, not a crash:
+    503 says so (#109). Any other database error stays a 500."""
+    if "locked" in str(exc) or "busy" in str(exc):
+        return Response("the database is busy (a poll is writing) — try again",
+                        status_code=503, headers={"Retry-After": "5"})
+    raise exc
+
+
 def _shell_context(request: Request) -> dict:
     """Context every page gets: the rail's device totals (#46). One
     aggregate read per render — the rail is on every page, so the count
