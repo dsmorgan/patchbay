@@ -1047,3 +1047,121 @@ def test_synthesized_name_alias_from_the_old_rule_is_retired(conn):
     assert [tuple(r) for r in conn.execute("SELECT * FROM positions")] == \
         [("Rack-Switch", 10, 20)]
     assert links(conn) == [("Rack-Switch", "?", "sw1", "1/0/12", "fdb-inference")]
+
+
+def _fdb(conn, device, port, *macs):
+    for m in macs:
+        conn.execute("INSERT INTO fdb (device, interface, mac) VALUES (?, ?, ?)",
+                     (device, port, m))
+
+
+def _host(conn, name, mac, role="server"):
+    hid = dev(conn, name, "librenms", last_seen=NOW, role=role, status="up")
+    pdb.upsert_interface(conn, device_id=hid, name="eth0", mac=mac, oper_status="up")
+    return hid
+
+
+def test_two_known_hosts_on_one_port_are_a_dumb_switch(conn):
+    """#98: one fdb-uplink per known MAC owner drew two cables out of one
+    port, and the unknown clients next to them vanished."""
+    core = dev(conn, "core", "librenms", last_seen=NOW, role="switch")
+    pdb.upsert_interface(conn, device_id=core, name="p1", oper_status="up")
+    _host(conn, "nas1", "02:00:00:00:00:01")
+    _host(conn, "pi1", "02:00:00:00:00:02")
+    _fdb(conn, "core", "p1", "02:00:00:00:00:01", "02:00:00:00:00:02",
+         "02:00:00:00:0b:01", "02:00:00:00:0b:02", "02:00:00:00:0b:03")
+    normalize(conn)
+    ghost = "unmanaged@core:p1"
+    assert links(conn) == [
+        ("core", "p1", ghost, "?", "fdb-inference"),
+        ("nas1", "eth0", ghost, "?", "fdb-uplink"),
+        ("pi1", "eth0", ghost, "?", "fdb-uplink")]
+    eps = {r["mac"] for r in conn.execute(
+        "SELECT mac FROM endpoints WHERE device = ?", (ghost,))}
+    assert eps == {"02:00:00:00:0b:01", "02:00:00:00:0b:02", "02:00:00:00:0b:03"}
+
+
+def test_lldp_less_managed_switch_owns_the_hosts_behind_it(conn):
+    """A managed switch without LLDP on the uplink: the core port learns
+    the switch and every host behind it. The switch learned those hosts on
+    its own downlinks, so the port is one cable, to the switch."""
+    core = dev(conn, "core", "librenms", last_seen=NOW, role="switch")
+    pdb.upsert_interface(conn, device_id=core, name="p5", mac="02:00:00:00:0c:05")
+    edge = dev(conn, "edge2", "librenms", last_seen=NOW, role="switch")
+    pdb.upsert_interface(conn, device_id=edge, name="e24", mac="02:00:00:00:0e:24")
+    _host(conn, "h1", "02:00:00:00:00:11")
+    _host(conn, "h2", "02:00:00:00:00:12")
+    _fdb(conn, "core", "p5", "02:00:00:00:0e:24", "02:00:00:00:00:11",
+         "02:00:00:00:00:12")
+    _fdb(conn, "edge2", "e24", "02:00:00:00:0c:05")   # its uplink
+    _fdb(conn, "edge2", "e1", "02:00:00:00:00:11")
+    _fdb(conn, "edge2", "e2", "02:00:00:00:00:12")
+    normalize(conn)
+    from_core = [l for l in links(conn) if "core" in (l[0], l[2])]
+    assert from_core == [("core", "p5", "edge2", "e24", "fdb-uplink")]
+    assert not conn.execute(
+        "SELECT 1 FROM devices WHERE role = 'unmanaged-switch'").fetchone()
+
+
+def test_dumb_switch_survives_one_host_going_quiet(conn):
+    """MAC tables age out idle hosts. One poll that sees only one of the
+    two hosts must not swap the inferred switch for a direct cable."""
+    dev(conn, "core", "librenms", last_seen=NOW, role="switch")
+    _host(conn, "nas1", "02:00:00:00:00:01")
+    _host(conn, "pi1", "02:00:00:00:00:02")
+    _fdb(conn, "core", "p1", "02:00:00:00:00:01", "02:00:00:00:00:02")
+    normalize(conn)
+    conn.execute("DELETE FROM fdb WHERE mac = '02:00:00:00:00:02'")
+    normalize(conn)
+    ghost = "unmanaged@core:p1"
+    assert get_dev(conn, ghost) is not None
+    assert ("core", "p1", ghost, "?", "fdb-inference") in links(conn)
+    assert not any(l[4] == "fdb-uplink" and "core" in (l[0], l[2])
+                   for l in links(conn))
+
+
+def test_fanned_out_uplinks_from_before_the_fix_are_withdrawn(conn):
+    """A database from before #98 holds one fdb-uplink per owner on the
+    port. The next normalize replaces them with the inferred switch, rather
+    than letting them claim the port (and retire it) until they expire."""
+    dev(conn, "core", "librenms", last_seen=NOW, role="switch")
+    _host(conn, "nas1", "02:00:00:00:00:01")
+    _host(conn, "pi1", "02:00:00:00:00:02")
+    for h in ("nas1", "pi1"):
+        pdb.upsert_link(conn, a_device="core", a_interface="p1", b_device=h,
+                        b_interface="eth0", source="fdb-uplink")
+    _fdb(conn, "core", "p1", "02:00:00:00:00:01", "02:00:00:00:00:02")
+    normalize(conn)
+    ghost = "unmanaged@core:p1"
+    assert links(conn) == [
+        ("core", "p1", ghost, "?", "fdb-inference"),
+        ("nas1", "eth0", ghost, "?", "fdb-uplink"),
+        ("pi1", "eth0", ghost, "?", "fdb-uplink")]
+
+
+def test_retired_dumb_switch_takes_its_hung_hosts_along(conn):
+    dev(conn, "core", "librenms", last_seen=NOW, role="switch")
+    _host(conn, "nas1", "02:00:00:00:00:01")
+    _host(conn, "pi1", "02:00:00:00:00:02")
+    _fdb(conn, "core", "p1", "02:00:00:00:00:01", "02:00:00:00:00:02")
+    normalize(conn)
+    # LLDP now names the far end: the inferred switch and its links go
+    pdb.upsert_link(conn, a_device="core", a_interface="p1", b_device="sw9",
+                    b_interface="1", source="lldp")
+    normalize(conn)
+    assert get_dev(conn, "unmanaged@core:p1") is None
+    assert links(conn) == [("core", "p1", "sw9", "1", "lldp")]
+
+
+def test_ap_owns_its_monitored_wireless_client(conn):
+    """A monitored host on Wi-Fi shows up on the AP's switch port next to
+    the AP. The controller lists it as the AP's client, so the port is one
+    cable to the AP — not a dumb switch, and not two cables."""
+    dev(conn, "core", "librenms", last_seen=NOW, role="switch")
+    _host(conn, "ap1", "02:00:00:00:0a:01", role="ap")
+    _host(conn, "laptop1", "02:00:00:00:00:21")
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:00:21", source="unifi",
+                        device="ap1", interface="?")
+    _fdb(conn, "core", "p3", "02:00:00:00:0a:01", "02:00:00:00:00:21")
+    normalize(conn)
+    assert links(conn) == [("ap1", "eth0", "core", "p3", "fdb-uplink")]
