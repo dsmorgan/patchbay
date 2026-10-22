@@ -32,10 +32,11 @@ raise a `source` item (attention.py). Every request has a wall-clock
 limit, and the whole cycle has a time budget, so a slow receiver delays
 the poll's exit by a bounded amount and never its data.
 
-One dispatch runs at a time (a lease in app_state, #110), and a
-transport's notes go out in the order the polls decided them, so a
-receiver never hears a clear before its raise. An outcome the database
-will not take is kept beside it and written by the next dispatch.
+One dispatch runs at a time (a lease in app_state, #110). A transport's
+notes go out in the order the polls decided them, and a raise whose alert
+has cleared since is dropped, so a receiver never hears a stale raise
+after its clear. An outcome the database will not take is kept beside it
+and written, once, by the next dispatch.
 """
 from __future__ import annotations
 
@@ -529,6 +530,18 @@ def _release(conn: sqlite3.Connection, owner: str) -> None:
 # the lease, folds it in before anything else: no queued note and no
 # delivery record is lost. Each writer names its own file, so a waiter that
 # never held the lease cannot overwrite the holder's.
+#
+# Replay is exactly once. Each file carries an `id`, and an outcome lists
+# the ids it `folded` in. Writing an outcome stores those ids in app_state
+# in the same transaction, and a file that folds others in names them too,
+# so a crash before the old files are unlinked never writes their history
+# rows or failure counts twice: a file whose id is already stored, or
+# named by another file, is removed unread.
+FOLDED_KEY = "alert_dispatch_folded"
+FOLDED_KEEP = 200
+# a temp file this old was left by a crash mid-write, not a writer at work
+TMP_STALE_S = 3600
+
 
 def _pending_paths(db_path: str) -> list[str]:
     return sorted(glob.glob(glob.escape(db_path) + "-dispatch-*.json"))
@@ -540,16 +553,51 @@ def _read_pending(path: str) -> dict | None:
             data = json.load(f)
     except (OSError, ValueError):
         return None
-    return data if isinstance(data, dict) else None
+    return data if isinstance(data, dict) and isinstance(data.get("id"), str) else None
 
 
 def _write_pending(db_path: str, outcome: dict) -> str:
-    path = f"{db_path}-dispatch-{time.time_ns()}-{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
+    """Write `outcome` (with a fresh `id`) to its own file, readable by the
+    owner only. O_EXCL: never write through a stale or planted file."""
+    oid = uuid.uuid4().hex
+    path = f"{db_path}-dispatch-{time.time_ns()}-{os.getpid()}-{oid[:8]}.json"
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(outcome, f)
-    os.replace(tmp, path)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({**outcome, "id": oid}, f)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
     return path
+
+
+def _unlink(path: str) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+def _sweep_tmp(db_path: str, now: float) -> None:
+    for tmp in glob.glob(glob.escape(db_path) + "-dispatch-*.json.tmp"):
+        try:
+            if now - os.path.getmtime(tmp) > TMP_STALE_S:
+                os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _folded(conn: sqlite3.Connection) -> list[str]:
+    try:
+        ids = json.loads(db.get_state(conn, FOLDED_KEY) or "[]")
+    except ValueError:
+        return []
+    return [i for i in ids if isinstance(i, str)] if isinstance(ids, list) else []
 
 
 class WebhookDispatcher:
@@ -648,8 +696,7 @@ class WebhookDispatcher:
         # history and results are written with ours, the outbox entries it
         # had already handled are not handled twice, and its queue is ours.
         # Only the lease holder runs a cycle, so no two dispatches do this.
-        pending = [(p, d) for p in _pending_paths(self.db_path)
-                   if (d := _read_pending(p)) is not None]
+        pending = self._pending(conn)
         handled = [e for _, d in pending for e in d.get("consumed") or []]
         outbox = _load_outbox(conn)
         consumed = outbox + handled
@@ -667,7 +714,12 @@ class WebhookDispatcher:
                                    else (None, "", None))
             return alert_rows[key]
 
-        # every note due, per transport, in the order the polls decided them
+        # every note due, per transport, in the order the polls decided them.
+        # Order within one queue is not enough: dispatches waiting on the
+        # lease take it in no set order, so a later poll's clear can go out
+        # first. A raise, escalate, or remind whose alert has cleared since
+        # is therefore dropped, here under the lease, wherever it came from;
+        # its clear (sent already, or queued) is the receiver's last word.
         events: list[tuple] = []
         entries: list[dict] = []
         for entry in backlog:
@@ -686,8 +738,11 @@ class WebhookDispatcher:
         queued: dict[int, list[alerting.Notification]] = {}
         for e in _in_order(entries):
             n = _note_from(e["note"])
+            state = alert_row(n.key)[2]
+            if n.kind in ("raise", "escalate", "remind") and state == "cleared":
+                events.append((n, "dropped", "cleared since"))
+                continue
             queued.setdefault(e["t"], []).append(n)
-            alert_row(n.key)
 
         started = self.clock()
         updates: list[list] = []
@@ -761,8 +816,32 @@ class WebhookDispatcher:
                  n.severity, n.text, n.href, detail] for n, event, detail in events],
             "outbox": new_outbox,
             "consumed": consumed,
+            "folded": [i for _, d in pending for i in [d["id"], *(d.get("folded") or [])]],
         }
         self._write(outcome, pending=[p for p, _ in pending])
+
+    def _pending(self, conn: sqlite3.Connection) -> list[tuple[str, dict]]:
+        """The outcome files to fold in: unreadable ones are reported and
+        removed, and one already written (its id stored, or folded into
+        another file) is removed unread."""
+        _sweep_tmp(self.db_path, time.time())
+        read = []
+        for p in _pending_paths(self.db_path):
+            d = _read_pending(p)
+            if d is None:
+                self.lines.append(f"[warn] notify: unreadable held-over outcome "
+                                  f"{os.path.basename(p)} removed")
+                _unlink(p)
+                continue
+            read.append((p, d))
+        done = set(_folded(conn)) | {i for _, d in read for i in d.get("folded") or []}
+        out = []
+        for p, d in read:
+            if d["id"] in done:
+                _unlink(p)
+            else:
+                out.append((p, d))
+        return out
 
     def _write(self, outcome: dict, *, pending: list[str]) -> None:
         """Record one outcome in a short write, or keep it in a file for the
@@ -788,10 +867,7 @@ class WebhookDispatcher:
         finally:
             conn.close()
         for p in pending:
-            try:
-                os.unlink(p)
-            except FileNotFoundError:
-                pass
+            _unlink(p)
 
     def _record(self, conn: sqlite3.Connection, outcome: dict) -> None:
         # BEGIN IMMEDIATE first: a dispatch that queued notes behind the
@@ -820,6 +896,10 @@ class WebhookDispatcher:
         others = [e for e in _remove_each(_load_outbox(conn), outcome["consumed"])
                   if e.get("t") in alive and e not in ours]
         db.set_state(conn, OUTBOX_KEY, json.dumps(_in_order(ours + others, OUTBOX_MAX)))
+        if outcome.get("folded"):
+            # in the same transaction: a file folded here is never replayed
+            db.set_state(conn, FOLDED_KEY, json.dumps(
+                (_folded(conn) + outcome["folded"])[-FOLDED_KEEP:]))
         conn.commit()
 
 
