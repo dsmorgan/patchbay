@@ -2221,3 +2221,47 @@ def test_unifi_error_rate_dropped_after_long_gap(conn, clean_env, monkeypatch):
     assert last["in_errors"] is None and last["out_errors"] is None
     _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(960, 960), 1000.0 + 86460)
     assert _err_rows(conn)[-1]["in_errors"] == pytest.approx(1.0)
+
+
+class _OnsClientNoIscLeases(_OnsClient):
+    """Base stub, but the ISC leases endpoint 404s (site on Dnsmasq/Kea)."""
+    def get(self, url, **kw):
+        if "searchLease" in url:
+            class R404:
+                status_code = 404
+                text = ""
+                def raise_for_status(self_):
+                    raise httpx.HTTPStatusError(
+                        "404", request=httpx.Request("GET", url),
+                        response=httpx.Response(404))
+                def json(self_): return {}
+            return R404()
+        return super().get(url, **kw)
+
+
+def test_opnsense_missing_isc_leases_endpoint_does_not_fail_the_poll(conn, clean_env, monkeypatch):
+    """A 404 from dhcpv4/leases/searchLease is 'no opinion' like the VPN
+    plugin endpoints: the poll's other writes land, and endpoints written by
+    earlier polls (or other sources) are left alone."""
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:09:09", source="opnsense",
+                        ip="192.0.2.50", hostname="old-lease")
+    monkeypatch.setattr(httpx, "Client", _OnsClientNoIscLeases)
+    summary = OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert "interfaces" in summary
+    assert conn.execute("SELECT COUNT(*) FROM interfaces WHERE name = 'igc0'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM routes").fetchone()[0] == 2
+    row = conn.execute("SELECT hostname FROM endpoints WHERE mac = '02:00:00:00:09:09'").fetchone()
+    assert row and row["hostname"] == "old-lease"
+    assert conn.execute("SELECT 1 FROM raw_payloads WHERE endpoint = 'dhcpv4/leases'").fetchone() is None
+
+
+def test_opnsense_answered_empty_leases_still_leave_endpoints_alone(conn, clean_env, monkeypatch):
+    """Lease-derived endpoints are upsert-only (nothing prunes them), so an
+    empty answer behaves like a 404 here: the poll succeeds, rows stand."""
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    pdb.upsert_endpoint(conn, mac="02:00:00:00:09:09", source="opnsense",
+                        ip="192.0.2.50", hostname="old-lease")
+    monkeypatch.setattr(httpx, "Client", _OnsClient)
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert conn.execute("SELECT COUNT(*) FROM endpoints").fetchone()[0] == 1

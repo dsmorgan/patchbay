@@ -387,7 +387,11 @@ class OpnsenseCollector:
             # oversized rowCount (leases beyond it would be silently dropped)
             page, all_rows = 1, []
             while True:
-                leases = get(f"dhcpv4/leases/searchLease?current={page}&rowCount=500")
+                # ISC-only: a site on Dnsmasq or Kea has no such endpoint, and
+                # a 404 is "no opinion", not a failed poll (endpoints are
+                # upsert-only here, so there is nothing to prune either way)
+                leases = get(f"dhcpv4/leases/searchLease?current={page}&rowCount=500",
+                             optional=True)
                 if leases is None:
                     break
                 rows = leases.get("rows", [])
