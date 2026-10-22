@@ -239,7 +239,8 @@ def drift_report(conn: sqlite3.Connection, settings) -> dict:
             observed[r["ip"]] = r
 
     def short(h: str | None) -> str:
-        return (h or "").split(".")[0].lower()
+        from .normalize import canonical_name   # normalize imports us
+        return canonical_name(h or "")
 
     undocumented, external, conflicts, in_sync = [], [], [], 0
     for ip in sorted(observed, key=ip_sort_key):

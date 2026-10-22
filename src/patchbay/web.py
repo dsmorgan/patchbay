@@ -27,6 +27,7 @@ from .attention import (CATEGORIES, STALE_MIN, attention_items, device_totals, d
                         gateway_state, human_age, human_speed, ip_sort_key, ipam_link,
                         source_ages, speed_tier, stamp_first_seen)
 from .config import load_settings
+from .normalize import canonical_name
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -1149,7 +1150,7 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
         behind_unmanaged = r["device"] in unmanaged_names
         if not (on_switch or behind_unmanaged):
             continue
-        short = r["hostname"].split(".")[0].lower()
+        short = canonical_name(r["hostname"])
         short = alias_map.get(short) or alias_map.get(r["hostname"]) or short
         if short in dev_names:
             continue  # already a first-class device on the map

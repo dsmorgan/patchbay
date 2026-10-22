@@ -4,6 +4,8 @@
 import json
 import time
 
+import pytest
+
 from patchbay import db as pdb
 from patchbay.normalize import (EVIDENCE_TTL, _expire_stale_evidence,
                                 canonical_name, normalize)
@@ -31,6 +33,54 @@ def links(conn):
 def test_canonical_name():
     assert canonical_name("SW1.example.lan.") == "sw1"
     assert canonical_name("  host ") == "host"
+    assert canonical_name("nas1.lan") == "nas1"
+
+
+def test_canonical_name_keeps_addresses_and_dotted_names_whole():
+    # #98: the first-dot cut named every IP-named host after its first
+    # octet and merged version-named VMs into one
+    assert canonical_name("192.0.2.21") == "192.0.2.21"
+    assert canonical_name("2001:DB8::21") == "2001:db8::21"
+    assert canonical_name("fe80::1%vmx0") == "fe80::1%vmx0"
+    assert canonical_name("ubuntu-22.04") == "ubuntu-22.04"
+    assert canonical_name("Ubuntu-22.10") == "ubuntu-22.10"
+    assert canonical_name("unmanaged@ex1:ge-0/0/1.0") == "unmanaged@ex1:ge-0/0/1.0"
+    assert canonical_name("unmanaged@192.0.2.5:p1") == "unmanaged@192.0.2.5:p1"
+    # a hostname inside a dotted domain still loses the whole domain
+    assert canonical_name("esx1.lab.example.com") == "esx1"
+
+
+def test_ip_and_version_named_devices_stay_apart(conn):
+    for n in ("ubuntu-22.04", "ubuntu-22.10"):
+        dev(conn, n, "vsphere", role="vm", parent="192.0.2.21")
+    for n in ("192.0.2.21", "192.0.2.22"):
+        dev(conn, n, "vsphere", role="hypervisor", mgmt_ip=n)
+    normalize(conn)
+    names = {r["name"]: dict(r) for r in conn.execute("SELECT * FROM devices")}
+    assert set(names) == {"ubuntu-22.04", "ubuntu-22.10",
+                          "192.0.2.21", "192.0.2.22"}
+    assert names["192.0.2.22"]["mgmt_ip"] == "192.0.2.22"
+    assert names["ubuntu-22.04"]["parent"] == "192.0.2.21"
+    assert not conn.execute("SELECT * FROM aliases").fetchall()
+
+
+def test_aliases_written_by_the_first_dot_rule_are_retired(conn):
+    # a database from before #98: two hosts merged into "192", their
+    # aliases pointing there, and a pin moved onto the merged name
+    dev(conn, "192.0.2.21", "vsphere", role="hypervisor")
+    dev(conn, "192.0.2.22", "vsphere", role="hypervisor")
+    conn.executemany("INSERT INTO aliases (alias, canonical) VALUES (?, ?)",
+                     [("192.0.2.21", "192"), ("192.0.2.22", "192"),
+                      ("sw1.example.lan", "sw1"), ("old-name.v2", "old-name")])
+    conn.execute("INSERT INTO links (a_device, a_interface, b_device, "
+                 "b_interface, source, last_seen) VALUES "
+                 "('192.0.2.21', 'vmnic0', 'sw1', '1/0/1', 'lldp', ?)", (NOW,))
+    normalize(conn, seed_aliases={"old-name.v2": "old-name"})
+    aliases = dict(conn.execute("SELECT alias, canonical FROM aliases"))
+    # the old rule's aliases go; a real domain alias and an operator's
+    # declared one stay
+    assert aliases == {"sw1.example.lan": "sw1", "old-name.v2": "old-name"}
+    assert links(conn) == [("192.0.2.21", "vmnic0", "sw1", "1/0/1", "lldp")]
 
 
 def test_merge_freshest_row_wins_ties(conn):
@@ -947,3 +997,53 @@ def test_rate_history_ages_out_in_housekeeping(conn):
     normalize(conn)
     left = [r[0] for r in conn.execute("SELECT in_bps FROM rate_history")]
     assert left == [300]                    # the week-old sample is gone
+
+
+def test_declared_label_with_capitals_keeps_its_name_and_pin(conn):
+    """#98: a declared "Rack-Switch" was lowercased by the merge, then the
+    prune saw the wrong name, deleted it and re-created "Rack-Switch" beside
+    a stale alias that moved its pin onto the dead lowercase name."""
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    decl = [("Rack-Switch", "sw1", "1/0/12")]
+    normalize(conn, declared_unmanaged=decl)
+    conn.execute("INSERT INTO positions (name, x, y) VALUES ('Rack-Switch', 10, 20)")
+    for _ in range(2):
+        normalize(conn, declared_unmanaged=decl)
+    assert get_dev(conn, "Rack-Switch") is not None
+    assert get_dev(conn, "rack-switch") is None
+    assert not conn.execute("SELECT * FROM aliases").fetchall()
+    assert [tuple(r) for r in conn.execute("SELECT * FROM positions")] == \
+        [("Rack-Switch", 10, 20)]
+
+
+@pytest.mark.parametrize("port", ["ge-0/0/1.0", "Gi1/0/5"])
+def test_inferred_switch_name_is_a_fixed_point(conn, port):
+    """A Junos logical unit ("ge-0/0/1.0") or a capitalized port in an
+    inferred name used to be cut or lowercased by the next merge, leaving
+    two ghost switches and two links on one port."""
+    dev(conn, "ex1", "librenms", last_seen=NOW, role="switch")
+    for i in range(4):
+        conn.execute("INSERT INTO fdb (device, interface, mac) VALUES "
+                     "('ex1', ?, ?)", (port, f"02:00:00:00:01:0{i}"))
+    for _ in range(3):
+        normalize(conn)
+    ghosts = [r["name"] for r in conn.execute(
+        "SELECT name FROM devices WHERE role = 'unmanaged-switch'")]
+    assert ghosts == [f"unmanaged@ex1:{port}"]
+    assert links(conn) == [("ex1", port, f"unmanaged@ex1:{port}",
+                            "?", "fdb-inference")]
+
+
+def test_synthesized_name_alias_from_the_old_rule_is_retired(conn):
+    """A database from before #98 holds the lowercasing alias and the pin
+    it moved onto the lowercase name; both come back to the declared one."""
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
+    decl = [("Rack-Switch", "sw1", "1/0/12")]
+    normalize(conn, declared_unmanaged=decl)
+    conn.execute("INSERT INTO aliases VALUES ('Rack-Switch', 'rack-switch')")
+    conn.execute("INSERT INTO positions (name, x, y) VALUES ('rack-switch', 10, 20)")
+    normalize(conn, declared_unmanaged=decl)
+    assert not conn.execute("SELECT * FROM aliases").fetchall()
+    assert [tuple(r) for r in conn.execute("SELECT * FROM positions")] == \
+        [("Rack-Switch", 10, 20)]
+    assert links(conn) == [("Rack-Switch", "?", "sw1", "1/0/12", "fdb-inference")]

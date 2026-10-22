@@ -14,7 +14,9 @@ Merges are recorded in `aliases` so old names still resolve in the UI.
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import re
 import sqlite3
 from collections import Counter
 
@@ -37,11 +39,86 @@ SOURCE_PRIORITY = ["librenms", "unifi", "opnsense", "vsphere", "phpipam"]
 NETWORK_ROLES = {"switch", "router", "firewall", "ap", "hypervisor"}
 
 
+_DNS_LABEL = re.compile(r"[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?")
+_TLD = re.compile(r"[a-z]{2,63}|xn--[a-z0-9-]+")
+
+
+def _looks_like_domain(suffix: str) -> bool:
+    """True when `suffix` reads as a DNS domain ("lan", "example.com"):
+    hostname-shaped labels and an alphabetic last label. A version number
+    ("04" in "ubuntu-22.04") or a port suffix ("0" in "ge-0/0/1.0") is not
+    a domain, so the name containing it stays whole."""
+    labels = suffix.split(".")
+    return (all(_DNS_LABEL.fullmatch(lb) for lb in labels)
+            and _TLD.fullmatch(labels[-1]) is not None)
+
+
 def canonical_name(name: str) -> str:
+    """One device, one key: a name lowercased, with its DNS domain dropped
+    ("sw1.lan" and "SW1" are both "sw1"). Only a real domain suffix is
+    dropped. An IP address stays whole, or every host added by address
+    would merge into a device named after its first octet, and so does a
+    dotted name that isn't an FQDN ("ubuntu-22.04" and "ubuntu-22.10" are
+    two VMs, not "ubuntu-22")."""
+    n = (name or "").strip().rstrip(".").lower()
+    try:
+        ipaddress.ip_address(n.split("%", 1)[0])
+        return n
+    except ValueError:
+        pass
+    head, dot, suffix = n.partition(".")
+    if dot and head and _looks_like_domain(suffix):
+        return head
+    return n
+
+
+def _first_label(name: str) -> str:
+    """The rule canonical_name used before #98: everything up to the first
+    dot. Kept only to recognize the aliases that rule wrote."""
     return (name or "").strip().rstrip(".").split(".")[0].lower()
 
 
-def _merge_group(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
+def _identity_key(row: sqlite3.Row) -> str:
+    """The name a device row merges under. A switch normalize synthesized
+    itself (an inferred `unmanaged@dev:port`, or a declared label) is
+    already its own identity: canonicalizing it would lowercase a declared
+    "Rack-Switch" into a name the next pass doesn't expect, and the
+    declaration would re-create the original beside it every poll."""
+    if row["role"] == "unmanaged-switch" and row["source"] in ("inference", "declared"):
+        return row["name"]
+    return canonical_name(row["name"])
+
+
+def _retire_stale_aliases(conn: sqlite3.Connection, keys: dict[str, str],
+                          seeds: set[str]) -> None:
+    """Drop the aliases the identity rule no longer makes.
+
+    Before #98, every name was cut at its first dot, and each merge wrote
+    an alias from the full name to the cut one ("10.0.0.21" -> "10",
+    "ubuntu-22.04" -> "ubuntu-22", "Rack-Switch" -> "rack-switch"). Those
+    aliases outlive the rule: left in place, _rename_refs would keep
+    rewriting the device's links, fdb, routes and pin onto the old merged
+    name. An alias is retired when the old rule explains it and the current
+    one doesn't. Operator-declared (seed) aliases are never touched. A pin
+    the old alias moved onto a name no device holds any more comes back."""
+    for r in conn.execute("SELECT alias, canonical FROM aliases").fetchall():
+        alias, canon = r["alias"], r["canonical"]
+        if alias in seeds or _first_label(alias) != canon:
+            continue
+        if keys.get(alias, canonical_name(alias)) == canon:
+            continue
+        conn.execute("DELETE FROM aliases WHERE alias = ?", (alias,))
+        orphan = not conn.execute("SELECT 1 FROM devices WHERE name = ?",
+                                  (canon,)).fetchone()
+        others = conn.execute("SELECT 1 FROM aliases WHERE canonical = ?",
+                              (canon,)).fetchone()
+        if orphan and not others:
+            conn.execute("UPDATE OR IGNORE positions SET name = ? WHERE name = ?",
+                         (alias, canon))
+
+
+def _merge_group(conn: sqlite3.Connection, rows: list[sqlite3.Row],
+                 canon: str) -> None:
     # freshest row within a source wins ties — a stable sort on priority alone
     # would make the OLDEST row primary (rowid order), freezing every field at
     # its first-seen value for devices that re-duplicate each poll
@@ -49,7 +126,6 @@ def _merge_group(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> None:
         SOURCE_PRIORITY.index(r["source"]) if r["source"] in SOURCE_PRIORITY else 99,
         -(r["last_seen"] or 0)))
     primary, rest = rows[0], rows[1:]
-    canon = canonical_name(primary["name"])
 
     merged = dict(primary)
     # placeholder values ("generic" OS on ping-only LibreNMS devices, CPU
@@ -901,10 +977,13 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
                      (alias, canonical))
     before = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
     groups: dict[str, list[sqlite3.Row]] = {}
+    keys: dict[str, str] = {}
     for r in conn.execute("SELECT * FROM devices").fetchall():
-        groups.setdefault(canonical_name(r["name"]), []).append(r)
-    for rows in groups.values():
-        _merge_group(conn, rows)
+        keys[r["name"]] = _identity_key(r)
+        groups.setdefault(keys[r["name"]], []).append(r)
+    _retire_stale_aliases(conn, keys, set(seed_aliases or {}))
+    for key, rows in groups.items():
+        _merge_group(conn, rows, key)
     _rename_refs(conn)
     _demote_kernel_link_ends(conn)
     _fuse_links(conn)
