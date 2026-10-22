@@ -255,6 +255,9 @@ def test_catalog_row_and_category(conn):
     assert params == {"for": 2, "remind": 0, "floor": 50, "multiplier": 100, "clear": 10,
                       "warmup_h": 24}
     assert alerting.RULES["port-canary"].category == "port"
+    summary = alerting.RULES["port-canary"].summary
+    assert "error rate (discards: see #86)" in summary
+    assert "discard rate" not in summary
     assert attention.CATEGORIES["port"] == "ports"
 
 
