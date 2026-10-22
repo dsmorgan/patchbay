@@ -29,6 +29,7 @@ class FakePoll:
     def __init__(self, *a, **kw):
         self.released = threading.Event()
         self.terminated = False
+        self.signals: list = []
         FakePoll.instances.append(self)
 
     def wait(self):
@@ -36,6 +37,9 @@ class FakePoll:
 
     def poll(self):
         return 0 if self.released.is_set() else None
+
+    def send_signal(self, sig):
+        self.signals.append(sig)   # a leased poll ignores it: keeps running
 
     def terminate(self):
         self.terminated = True
@@ -84,6 +88,8 @@ def test_stop_during_poll_lets_it_finish(fake_polls, capsys):
     assert not fake_polls.instances[0].terminated
     assert len(fake_polls.instances) == 1   # and began no second one
     assert "stopping after this poll" in capsys.readouterr().out
+    # told to give up only if it is still waiting for the lease (#109)
+    assert fake_polls.instances[0].signals == [cli.STOP_WAITING]
 
 
 def test_second_signal_aborts_the_poll(fake_polls, capsys):
@@ -140,3 +146,68 @@ def test_real_process_stops_in_a_second(tmp_path):
     finally:
         if p.poll() is None:
             p.kill()
+
+
+def _clean_env(tmp_path, **extra):
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("PATCHBAY_", "LIBRENMS_", "IPAM_", "UNIFI_",
+                                "OPNSENSE_", "PFSENSE_", "VSPHERE_", "OXIDIZED_"))}
+    env.update(PATCHBAY_ENV=os.devnull, PATCHBAY_DB=str(tmp_path / "p.db"), **extra)
+    return env
+
+
+def _hold_lease(tmp_path):
+    from patchbay import db
+
+    with db.connect(str(tmp_path / "p.db")) as c:
+        db.init(c)
+        assert db.claim_poll_lease(c, "web:1:other", ttl=600) == db.LEASE_CLAIMED
+
+
+@pytest.mark.skipif(cli.STOP_WAITING is None, reason="no SIGUSR1 here")
+def test_a_stop_while_waiting_on_the_lease_exits_at_once(tmp_path):
+    """#109 x #111: the child waits for another poll's lease (up to 15
+    minutes). A stop must not sit that out until docker's grace period
+    runs out and SIGKILLs the poller: the waiting child holds nothing, so
+    it is told to give up, and the poller stops in seconds."""
+    _hold_lease(tmp_path)
+    # configured, but never reached: the poll waits for the lease first
+    env = _clean_env(tmp_path, PATCHBAY_POLL_INTERVAL="3600",
+                     OXIDIZED_URL="http://192.0.2.1:9")
+    p = subprocess.Popen([sys.executable, "-m", "patchbay", "poller"], env=env,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        time.sleep(4)          # the child is up and waiting on the lease
+        assert p.poll() is None
+        p.send_signal(signal.SIGTERM)
+        started = time.monotonic()
+        assert p.wait(timeout=15) == 0
+        assert time.monotonic() - started < 5
+        out, err = p.communicate()
+        assert "another poll is running; waiting" in err
+        assert "stopped while waiting" in out and "poller: stopped" in out
+    finally:
+        if p.poll() is None:
+            p.kill()
+
+
+@pytest.mark.skipif(cli.STOP_WAITING is None, reason="no SIGUSR1 here")
+def test_a_leased_poll_ignores_the_give_up_signal(tmp_path):
+    """Once a poll holds the lease, the poller's first stop lets it finish."""
+    env = _clean_env(tmp_path)
+    code = (
+        "import os, signal, sys, time\n"
+        "from patchbay import cli\n"
+        "class Slow:\n"
+        "    name = 'slow'\n"
+        "    def configured(self, s): return True\n"
+        "    def collect(self, s, conn):\n"
+        "        os.kill(os.getpid(), cli.STOP_WAITING)\n"
+        "        time.sleep(0.2)\n"
+        "        return 'survived'\n"
+        "cli.available = lambda s: {'slow': Slow()}\n"
+        "sys.exit(cli.main(['poll']))\n")
+    r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
+                       text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert "[ok]   slow: survived" in r.stdout

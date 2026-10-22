@@ -587,33 +587,43 @@ def _lease_holder(conn: sqlite3.Connection) -> dict | None:
     return None
 
 
+# claim_poll_lease's answers: the lease is ours; another poll holds it; or
+# the database stayed locked past the busy timeout, so nobody can say
+LEASE_CLAIMED, LEASE_HELD, LEASE_BUSY = "claimed", "held", "busy"
+
+
 def claim_poll_lease(conn: sqlite3.Connection, owner: str, *,
-                     ttl: float = POLL_LEASE_TTL) -> bool:
-    """Take the poll lease for owner, or renew it if owner holds it. False
-    when another poll holds an unexpired lease, or the database stayed
-    locked past the busy timeout. The read and the write share one
-    BEGIN IMMEDIATE, so two processes can't both see the lease free.
-    Commits any open transaction first, as executescript would."""
+                     ttl: float = POLL_LEASE_TTL) -> str:
+    """Take the poll lease for owner, or renew it if owner holds it.
+    Returns LEASE_CLAIMED, LEASE_HELD (another poll holds an unexpired
+    lease), or LEASE_BUSY (the database stayed locked past the busy
+    timeout: a busy database is not a running poll). The read and the
+    write share one BEGIN IMMEDIATE, so two processes can't both see the
+    lease free. Commits any open transaction first, as executescript
+    would."""
     if conn.in_transaction:
         conn.commit()
     # a plain read first: a held lease is answered without waiting for the
     # write lock, which the running poll may be holding
-    held = _lease_holder(conn)
+    try:
+        held = _lease_holder(conn)
+    except sqlite3.OperationalError:
+        return LEASE_BUSY
     if held and held["owner"] != owner and held["until"] > now():
-        return False
+        return LEASE_HELD
     try:
         conn.execute("BEGIN IMMEDIATE")
     except sqlite3.OperationalError:
-        return False
+        return LEASE_BUSY
     try:
         t = now()
         held = _lease_holder(conn)
         if held and held["owner"] != owner and held["until"] > t:
             conn.rollback()
-            return False
+            return LEASE_HELD
         set_state(conn, POLL_LEASE, json.dumps({"owner": owner, "until": t + ttl}))
         conn.commit()
-        return True
+        return LEASE_CLAIMED
     except BaseException:
         conn.rollback()
         raise
