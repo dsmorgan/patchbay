@@ -23,9 +23,10 @@ from . import register
 # config.xml is pulled over the same API key as everything else (grant the
 # firewall's backup page privilege). It carries live private keys, so the raw
 # document is redacted BEFORE anything touches the database (redact.py: the
-# content of every secret-bearing element is replaced with a short hash of
-# itself — a rotated key still shows as a change, but no secret is ever
-# stored). Overzealous by design, same stance as the snapshot scrubber.
+# content of every secret-bearing element is replaced with a short stamp of
+# itself, keyed per install — a rotated key still shows as a change, but no
+# secret is ever stored). Overzealous by design, same stance as the snapshot
+# scrubber.
 
 # the <revision> block updates on every save — its description/username are
 # the change's metadata (lifted onto the revision row); its timestamp churn
@@ -33,8 +34,11 @@ from . import register
 _REVISION_RE = re.compile(r"\s*<revision>.*?</revision>", re.S)
 
 
-def prepare_config(raw: str) -> tuple[str, str | None, str | None]:
+def prepare_config(raw: str, key: bytes | None = None
+                   ) -> tuple[str, str | None, str | None]:
     """Redact secrets and strip revision noise from a raw config.xml.
+    `key` is the install's stamp key (db.redaction_key); without one,
+    secrets become a constant placeholder.
     Returns (stored text, change description, change author)."""
     msg = auth = None
     rev = _REVISION_RE.search(raw)
@@ -43,7 +47,7 @@ def prepare_config(raw: str) -> tuple[str, str | None, str | None]:
         auth_m = re.search(r"<username>([^<]*)</username>", rev.group(0))
         msg = (msg_m.group(1).strip() or None) if msg_m else None
         auth = (auth_m.group(1).strip() or None) if auth_m else None
-    text, _ = redact_xml(_REVISION_RE.sub("", raw))
+    text, _ = redact_xml(_REVISION_RE.sub("", raw), key)
     return text, msg, auth
 
 
@@ -52,7 +56,7 @@ def save_config_revision(conn: sqlite3.Connection, device: str, raw: str,
     """Store a new redacted revision if the config actually changed, then
     trim the device to its newest `keep` revisions (0 = unlimited).
     Returns True when a new revision was written."""
-    text, msg, auth = prepare_config(raw)
+    text, msg, auth = prepare_config(raw, db.redaction_key(conn))
     sha = hashlib.sha256(text.encode()).hexdigest()
     last = conn.execute(
         "SELECT sha FROM config_revisions WHERE device = ? "

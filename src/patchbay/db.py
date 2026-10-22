@@ -7,12 +7,16 @@ in raw_payloads for debugging and for the snapshot generator.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
 from typing import Any, Iterator
+
+from . import redact
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS devices (
@@ -145,7 +149,7 @@ CREATE TABLE IF NOT EXISTS config_revisions (
     id INTEGER PRIMARY KEY,    -- firewall config history pulled over the
     device TEXT NOT NULL,      -- device API (#23). `text` is REDACTED before
     fetched_at REAL NOT NULL,  -- it gets here — secret-bearing elements are
-    sha TEXT NOT NULL,         -- replaced with content hashes, so a change
+    sha TEXT NOT NULL,         -- replaced with keyed content stamps, so a change
     message TEXT,              -- stays diffable but no key/password is ever
     author TEXT,               -- stored. sha covers the noise-stripped text:
     text TEXT NOT NULL         -- a save that changed nothing real is no rev.
@@ -371,6 +375,62 @@ def init(conn: sqlite3.Connection) -> None:
             "  SELECT device, interface, mac, source FROM fdb;"
             "DROP TABLE fdb;"
             "ALTER TABLE fdb_migrate RENAME TO fdb;")
+    _reredact_config_revisions(conn)
+
+
+# the redact.REDACTION_VERSION the stored config history was last redacted
+# under; app_state, so a fresh database records the current one
+REDACTION_STATE = "config_redaction_version"
+REDACTION_KEY = "redaction_key"
+
+
+def redaction_key(conn: sqlite3.Connection) -> bytes:
+    """The per-install key for config-history stamps (#93), generated on
+    first use. It lives beside the history in app_state: it keeps anyone who
+    can read the history (on /configs, say) but not the database from
+    testing guessed secrets against a stamp."""
+    conn.execute("INSERT INTO app_state (key, value) VALUES (?, ?) "
+                 "ON CONFLICT(key) DO NOTHING", (REDACTION_KEY, secrets.token_hex(32)))
+    return conn.execute("SELECT value FROM app_state WHERE key = ?",
+                        (REDACTION_KEY,)).fetchone()[0].encode()
+
+
+def _reredact_config_revisions(conn: sqlite3.Connection) -> None:
+    """Once per redaction-rule version (#93), re-apply the current element
+    rules to every stored firewall config revision, so secrets the old rules
+    missed leave the history, not only new revisions. Redaction is
+    idempotent: stamps already in place stay put, so old and new revisions
+    still diff cleanly, and the recomputed sha matches what
+    save_config_revision derives from the same config next poll (no
+    spurious revision). One transaction: the rewrite and the version mark
+    land together or not at all.
+
+    Version 2 also keys the stamps: a pre-#93 stamp is sha256(content)[:8],
+    and redact.rekey turns it into exactly the keyed stamp a new poll writes
+    for the same content, so history stays continuous across the upgrade."""
+    # read by index: init also runs on connections without a Row factory
+    row = conn.execute("SELECT value FROM app_state WHERE key = ?",
+                       (REDACTION_STATE,)).fetchone()
+    try:
+        done = int(row[0]) if row else 0
+    except ValueError:
+        done = 0
+    if done >= redact.REDACTION_VERSION:
+        return
+    with conn:
+        key = redaction_key(conn)
+        for rid, text in conn.execute(
+                "SELECT id, text FROM config_revisions").fetchall():
+            new = text
+            if done < 2:   # convert unkeyed stamps first, never a keyed one
+                new = redact.STAMP_RE.sub(
+                    lambda m: "redacted:" + redact.rekey(m.group(1), key), new)
+            new, _ = redact.redact_xml(new, key)
+            if new != text:
+                conn.execute(
+                    "UPDATE config_revisions SET text = ?, sha = ? WHERE id = ?",
+                    (new, hashlib.sha256(new.encode()).hexdigest(), rid))
+        set_state(conn, REDACTION_STATE, str(redact.REDACTION_VERSION))
 
 
 def now() -> float:

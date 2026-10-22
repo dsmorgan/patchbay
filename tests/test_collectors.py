@@ -2,6 +2,7 @@
 and the phpIPAM fetch-before-delete atomicity — all against synthetic data."""
 
 import os
+import re
 
 import httpx
 import pytest
@@ -1046,7 +1047,7 @@ _CFG_XML = """<?xml version="1.0"?>
 
 def test_prepare_config_redacts_and_lifts_revision_meta():
     from patchbay.collectors.opnsense import prepare_config
-    text, msg, author = prepare_config(_CFG_XML)
+    text, msg, author = prepare_config(_CFG_XML, b"test-key")
     for secret in ("FAKEKEYB64", "FAKECERTB64", "$2y$10$fakehash", "ssh-ed25519 FAKE"):
         assert secret not in text
     assert "redacted:" in text
@@ -1189,7 +1190,7 @@ def test_prepare_config_redacts_bare_key_and_unknown_long_blobs():
         "<filter>",
         f"<acme><account><key>{blob}</key></account></acme>"
         f"<mystery><widget>{blob}</widget></mystery><filter>")
-    text, _, _ = prepare_config(raw)
+    text, _, _ = prepare_config(raw, b"test-key")
     assert blob not in text
     assert text.count("redacted:") >= 6
     assert "allow lan" in text          # short real content untouched
@@ -1330,7 +1331,7 @@ def test_prepare_config_redacts_mixed_case_pw_cdata_and_attributes():
            "-----END EC PRIVATE KEY-----</widget></x>"
            "<descr>allow lan</descr><hostname>fw1</hostname>"
            "<interface>lan</interface><Enabled>1</Enabled></opnsense>")
-    text, _, _ = prepare_config(raw)
+    text, _, _ = prepare_config(raw, b"test-key")
     for secret in ("FAKE-psk-value", "FAKE-bind-pw", "FAKE-<cdata>-pw",
                    "FAKE-attr-key", "FAKE-upper-psk", "FAKE-static-key",
                    "FAKEPEM"):
@@ -1346,13 +1347,108 @@ def test_prepare_config_redacts_mixed_case_pw_cdata_and_attributes():
 
 def test_prepare_config_is_idempotent():
     """Stored history is re-redacted under newer rules (#93): a second pass
-    must leave every existing hash where it is, or old revisions would diff
-    against new ones on hashes alone."""
+    must leave every existing stamp where it is, or old revisions would diff
+    against new ones on stamps alone."""
     from patchbay.collectors.opnsense import prepare_config
     raw = _CFG_XML.replace("<filter>", "<Key>FAKE-psk</Key><filter>")
-    once, _, _ = prepare_config(raw)
-    twice, _, _ = prepare_config(once)
+    once, _, _ = prepare_config(raw, b"test-key")
+    twice, _, _ = prepare_config(once, b"test-key")
     assert once == twice
+
+
+def test_stored_stamps_are_keyed_per_install(conn):
+    """A stamp is a guessing oracle for a low-entropy secret; keyed with a
+    per-install secret, one read off /configs can't be tested offline."""
+    import hashlib
+    from patchbay.collectors.opnsense import save_config_revision
+    save_config_revision(conn, "fw1", "<a><Key>FAKE-psk</Key></a>")
+    text = conn.execute("SELECT text FROM config_revisions").fetchone()[0]
+    unkeyed = hashlib.sha256(b"FAKE-psk").hexdigest()[:8]
+    assert "<Key>redacted:" in text and unkeyed not in text
+    assert len(pdb.redaction_key(conn)) == 64
+    assert pdb.redaction_key(conn) == pdb.redaction_key(conn)   # stable
+
+
+# a revision as the pre-#93 rules stored it: unkeyed stamps
+# (sha256(content)[:8]), the IPsec PSK under <Key> in plain text
+_PRE93_RAW = ("<opnsense><cert><prv>FAKEKEYB64</prv></cert>"
+              "<Key>FAKE-psk</Key>"
+              "<filter><rule><descr>{rule}</descr></rule></filter></opnsense>")
+
+
+def _pre93_revision(conn, rule, fetched_at):
+    import hashlib
+    h = hashlib.sha256(b"FAKEKEYB64").hexdigest()[:8]
+    text = _PRE93_RAW.format(rule=rule).replace("FAKEKEYB64", "redacted:" + h)
+    conn.execute("INSERT INTO config_revisions (device, fetched_at, sha, text) "
+                 "VALUES ('fw1', ?, ?, ?)",
+                 (fetched_at, hashlib.sha256(text.encode()).hexdigest(), text))
+    conn.execute("DELETE FROM app_state WHERE key = ?", (pdb.REDACTION_STATE,))
+    return text
+
+
+def test_init_reredacts_stored_revisions_once(conn):
+    """#93: revisions stored under the old rules still held the IPsec PSK.
+    db.init re-redacts them once: the secret leaves, the old stamps are
+    keyed in place, sha is recomputed, and the version is recorded."""
+    import hashlib
+    from patchbay import redact
+    old = _pre93_revision(conn, "allow lan", 1.0)
+    assert "FAKE-psk" in old
+
+    pdb.init(conn)
+    text, sha = conn.execute("SELECT text, sha FROM config_revisions").fetchone()
+    assert "FAKE-psk" not in text and "<Key>redacted:" in text
+    assert redact.STAMP_RE.search(old).group(0) not in text   # stamp keyed
+    assert sha == hashlib.sha256(text.encode()).hexdigest()
+    assert pdb.get_state(conn, pdb.REDACTION_STATE) == str(redact.REDACTION_VERSION)
+
+    # recorded: a later init leaves even an unredacted row alone
+    conn.execute("UPDATE config_revisions SET text = '<Key>FAKE-later</Key>'")
+    pdb.init(conn)
+    assert conn.execute("SELECT text FROM config_revisions").fetchone()[0] \
+        == "<Key>FAKE-later</Key>"
+
+
+def test_reredacted_history_matches_the_next_poll(conn):
+    """The re-redacted latest revision must equal what the next poll of the
+    same config stores, or every upgrade would add a spurious revision; and
+    two old revisions of an unchanged key still share its stamp."""
+    from patchbay.collectors.opnsense import save_config_revision
+    _pre93_revision(conn, "allow lan2", 1.0)
+    _pre93_revision(conn, "allow lan", 2.0)
+    pdb.init(conn)
+    texts = [r[0] for r in conn.execute(
+        "SELECT text FROM config_revisions ORDER BY fetched_at")]
+    for tag in ("prv", "Key"):
+        a, b = (re.search(f"<{tag}>(redacted:\\w+)</{tag}>", t).group(1)
+                for t in texts)
+        assert a == b, tag
+    assert save_config_revision(conn, "fw1", _PRE93_RAW.format(rule="allow lan")) is False
+    assert conn.execute("SELECT COUNT(*) FROM config_revisions").fetchone()[0] == 2
+
+
+def test_reredaction_is_one_transaction(conn, monkeypatch):
+    """A failure part-way leaves every row and the version mark as they
+    were, so the next init retries the whole rewrite."""
+    from patchbay import redact
+    _pre93_revision(conn, "allow lan2", 1.0)
+    _pre93_revision(conn, "allow lan", 2.0)
+    conn.commit()
+    real, calls = redact.redact_xml, []
+
+    def flaky(text, key=None):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("boom")
+        return real(text, key)
+
+    monkeypatch.setattr(redact, "redact_xml", flaky)
+    with pytest.raises(RuntimeError):
+        pdb.init(conn)
+    assert all("FAKE-psk" in r[0] for r in conn.execute(
+        "SELECT text FROM config_revisions"))
+    assert pdb.get_state(conn, pdb.REDACTION_STATE) is None
 
 
 def test_pfsense_failed_calls_keep_last_good_rows(conn, clean_env, monkeypatch):

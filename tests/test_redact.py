@@ -1,11 +1,18 @@
 """Shared secret redaction (redact.py, #93): XML element rules and URL
 userinfo masking. All values are fake."""
 
+import ast
+import hashlib
+import inspect
+import textwrap
+
 import pytest
 
-from patchbay.redact import hide_userinfo, redact_xml
+from patchbay import redact
+from patchbay.redact import hide_userinfo, redact_xml, strip_stamps
 
 BLOB = "QUJD" * 60  # 240 chars of base64-looking content
+KEY = b"test-key"
 
 
 @pytest.mark.parametrize("xml, secret", [
@@ -24,9 +31,28 @@ BLOB = "QUJD" * 60  # 240 chars of base64-looking content
      "FAKEOVPN"),
 ])
 def test_redact_xml_handles_any_mix_of_text_whitespace_and_cdata(xml, secret):
-    out, n = redact_xml(xml)
+    out, n = redact_xml(xml, KEY)
     assert secret not in out and n == 1
     assert "redacted:" in out
+    out, n = redact_xml(xml)                 # keyless: the constant
+    assert secret not in out and n == 1
+    assert ">redacted</" in out and "redacted:" not in out
+
+
+@pytest.mark.parametrize("xml", [
+    # CDATA or comments on both sides of a secret child: a body that could
+    # run past its own terminator let the parent's match swallow the child,
+    # and the scan resumed after it, so the child was never redacted
+    "<item><![CDATA[a]]><Key>FAKE-s</Key><![CDATA[b]]></item>",
+    "<item><!-- a --><Key>FAKE-s</Key><!-- b --></item>",
+    "<item><![CDATA[a]]><Key>FAKE-s</Key><!-- b --></item>",
+    "<descr><![CDATA[x]]></descr><Key>FAKE-s</Key><descr><![CDATA[y]]></descr>",
+    "<descr><!-- x --></descr><Key>FAKE-s</Key><descr><!-- y --></descr>",
+    "<a><![CDATA[x]]><b/><![CDATA[y]]></a><Key>FAKE-s</Key>",
+])
+def test_redact_xml_never_spans_into_a_sibling(xml):
+    out, n = redact_xml(xml, KEY)
+    assert "FAKE-s" not in out and n == 1, out
 
 
 def test_redact_xml_leaves_ordinary_elements_alone():
@@ -38,16 +64,55 @@ def test_redact_xml_leaves_ordinary_elements_alone():
     assert redact_xml(xml) == (xml, 0)
 
 
-def test_redact_xml_is_idempotent_and_keeps_hashes():
+@pytest.mark.parametrize("key", [KEY, None])
+def test_redact_xml_is_idempotent_and_keeps_stamps(key):
     xml = "<a><Key>FAKE</Key><b><![CDATA[x]]></b></a>"
-    once, n1 = redact_xml(xml)
-    twice, n2 = redact_xml(once)
+    once, n1 = redact_xml(xml, key)
+    twice, n2 = redact_xml(once, key)
     assert once == twice and n1 == 1 and n2 == 0
 
 
 def test_redact_xml_redacts_the_leaf_not_its_parent():
-    out, _ = redact_xml("<authserver><name>dir</name><Key>FAKE</Key></authserver>")
+    out, _ = redact_xml("<authserver><name>dir</name><Key>FAKE</Key></authserver>", KEY)
     assert out.startswith("<authserver><name>dir</name><Key>redacted:")
+
+
+def test_stamps_are_keyed_and_rekey_continues_legacy_ones():
+    legacy = hashlib.sha256(b"FAKE").hexdigest()[:8]
+    s = redact.stamp("FAKE", KEY)
+    assert legacy not in s and s != redact.stamp("FAKE", b"other-key")
+    assert s == "redacted:" + redact.rekey(legacy, KEY)
+
+
+def test_strip_stamps():
+    assert strip_stamps("<Key>redacted:0123abcd</Key>") == "<Key>redacted</Key>"
+
+
+# REDACTION_VERSION -> fingerprint of the rules it names. A rule change that
+# moves the fingerprint must bump REDACTION_VERSION (so db.init re-redacts
+# stored history) and add the new pair here.
+RULE_FINGERPRINTS = {2: "d3fde27865c5c613"}
+
+
+def _code(fn) -> str:
+    """A function's logic without its docstring, comments, or layout, so
+    only a behavior change moves the fingerprint."""
+    node = ast.parse(textwrap.dedent(inspect.getsource(fn))).body[0]
+    if ast.get_docstring(node) is not None:
+        node.body = node.body[1:]
+    return ast.dump(node)
+
+
+def test_rule_change_bumps_redaction_version():
+    parts = [repr(redact.SECRET_TAG_WORDS), redact._ELEMENT_RE.pattern,
+             redact._UNWRAP_RE.pattern, redact._LONG_BLOB_RE.pattern,
+             redact._ALREADY.pattern, redact.PLACEHOLDER,
+             *(_code(f) for f in (redact._is_secret, redact.stamp,
+                                  redact.rekey, redact.redact_xml))]
+    got = hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
+    assert RULE_FINGERPRINTS.get(redact.REDACTION_VERSION) == got, (
+        f"redaction rules changed (fingerprint {got}): bump "
+        "redact.REDACTION_VERSION and record the new fingerprint here")
 
 
 @pytest.mark.parametrize("text, want", [
