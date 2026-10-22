@@ -1744,3 +1744,80 @@ def test_gateway_state_agrees_with_the_down_alert_rule():
     from patchbay.attention import GATEWAY_DOWN_STATES, gateway_state
     assert all(gateway_state(s) == "down" for s in GATEWAY_DOWN_STATES)
     assert gateway_state("ONLINE") == "up" and gateway_state("Up") == "up"
+
+
+# --- OXIDIZED_URL userinfo (#93) ---
+# a reverse proxy's basic auth rides in OXIDIZED_URL; httpx error messages
+# echo the full URL, so both the URL and the error text are masked
+
+_OX_CRED_URL = "http://admin:FAKEoxpw@ox.invalid:8888"
+
+
+def _ox_401(monkeypatch):
+    import httpx
+    import patchbay.web as web
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, request=request)
+
+    monkeypatch.setattr(web, "_ox_client", lambda settings: httpx.Client(
+        transport=httpx.MockTransport(handler), base_url=_OX_CRED_URL))
+
+
+def test_ops_masks_oxidized_userinfo(clean_env, client):
+    clean_env.setenv("OXIDIZED_URL", _OX_CRED_URL)
+    t = client.get("/ops").text
+    assert "FAKEoxpw" not in t
+    assert "http://***@ox.invalid:8888 · credentials set" in t
+
+
+def test_ops_shows_oxidized_without_userinfo_as_no_credentials(clean_env, client):
+    clean_env.setenv("OXIDIZED_URL", "http://ox.invalid:8888")
+    t = client.get("/ops").text
+    assert "http://ox.invalid:8888 · credentials —" in t
+
+
+def test_configs_masks_oxidized_userinfo_in_url_and_error(clean_env, monkeypatch, client):
+    clean_env.setenv("OXIDIZED_URL", _OX_CRED_URL)
+    _ox_401(monkeypatch)
+    t = client.get("/configs").text
+    assert "401" in t and "unreachable" in t.lower()
+    assert "FAKEoxpw" not in t and "***@ox.invalid:8888" in t
+
+
+def test_confignode_masks_oxidized_userinfo_in_error(clean_env, monkeypatch, client):
+    clean_env.setenv("OXIDIZED_URL", _OX_CRED_URL)
+    _ox_401(monkeypatch)
+    t = client.get("/configs/sw1").text
+    assert "401" in t and "FAKEoxpw" not in t
+
+
+def _failing_source():
+    import httpx
+
+    class Failing:
+        def collect(self, settings, conn):
+            req = httpx.Request("GET", _OX_CRED_URL + "/nodes.json")
+            httpx.Response(401, request=req).raise_for_status()
+
+    return {"oxidized": Failing()}
+
+
+def test_ops_poll_masks_userinfo_in_failure_lines(clean_env, monkeypatch, client):
+    import patchbay.collectors as collectors
+
+    monkeypatch.setattr(collectors, "available", lambda s: _failing_source())
+    lines = client.post("/ops/poll").json()["lines"]
+    fail = [l for l in lines if l.startswith("[fail] oxidized")]
+    assert fail and "401" in fail[0] and "***@ox.invalid" in fail[0]
+    assert "FAKEoxpw" not in client.get("/ops").text
+
+
+def test_cli_poll_masks_userinfo_in_failure_lines(clean_env, monkeypatch, capsys):
+    import argparse
+    from patchbay import cli
+
+    monkeypatch.setattr(cli, "available", lambda s: _failing_source())
+    assert cli.cmd_poll(argparse.Namespace(source=None)) == 1
+    out = capsys.readouterr()
+    assert "[fail] oxidized" in out.err and "FAKEoxpw" not in out.err + out.out

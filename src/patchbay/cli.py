@@ -10,6 +10,7 @@ import time
 from . import __version__, alerting, db
 from .collectors import all_collectors, available
 from .config import load_settings
+from .redact import hide_userinfo
 
 
 def cmd_poll(args: argparse.Namespace) -> int:
@@ -60,7 +61,8 @@ def cmd_poll(args: argparse.Namespace) -> int:
                 summary = collector.collect(settings, conn)
             except Exception as e:  # one failing source must not block the others
                 conn.rollback()  # ...and must not commit half a collection
-                say(f"[fail] {name}: {e}", err=True)
+                # error text can echo a source URL with its credentials
+                say(f"[fail] {name}: {hide_userinfo(str(e))}", err=True)
                 rc = 1
                 continue
             # normalize inside the SAME transaction as the source (#38): the
