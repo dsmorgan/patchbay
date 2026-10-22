@@ -68,6 +68,7 @@
   <ul class="attn capped">
     {% for it in exceptions %}
     <li class="{{ it.severity }}"><a href="{{ it.href }}">{{ it.text }}</a>
+      {% if it.held %}<span class="attn-held" title="{{ HELD_WHY }}">{{ it.held }}</span>{% endif %}
       <span class="attn-since">{{ it.since }}</span></li>
     {% endfor %}
   </ul>
@@ -182,6 +183,7 @@
   .attn li.crit::before { background: var(--crit); }
   .attn li.info::before { background: var(--muted); }
   .attn a { color: var(--ink); }
+  .attn-held { color: var(--muted); font-size: 0.75rem; font-style: italic; margin-left: 0.4rem; }
   .attn-since { color: var(--muted); font-size: 0.75rem; margin-left: 0.4rem; }
   .attn-clear { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--muted); }
   .attn-clear::before { content: "●  "; color: var(--ok); font-size: 0.7rem; }

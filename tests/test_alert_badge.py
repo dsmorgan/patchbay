@@ -198,6 +198,68 @@ def test_an_event_silenced_when_it_fired_never_counts(net, clean_env):
     assert _badge(net.client.get("/").text) is None
 
 
+def test_an_event_follows_its_silence_in_both_directions(net, clean_env):
+    # silenced after it fired: the next poll takes it off the badge, as the
+    # tab drops it at once
+    _config_change(net, pdb.now())
+    net.poll()
+    assert _badge(net.client.get("/").text)[1] == _active_rows(net.client) == 1
+    clean_env.setenv("PATCHBAY_EXPECT", "sw1")
+    assert _active_rows(net.client) == 0
+    net.poll()
+    assert _badge(net.client.get("/").text) is None
+
+    # unsilenced again: it is back on both, and no notification replays it
+    clean_env.delenv("PATCHBAY_EXPECT")
+    assert _active_rows(net.client) == 1
+    net.poll()
+    assert _badge(net.client.get("/").text)[:2] == ("info", 1)
+    c = sqlite3.connect(net.db)
+    assert c.execute("SELECT COUNT(*) FROM alert_events WHERE event = 'raised'").fetchone()[0] == 1
+    c.close()
+
+
+def test_an_event_silenced_when_it_fired_returns_when_unsilenced(net, clean_env):
+    clean_env.setenv("PATCHBAY_EXPECT", "sw1")
+    _config_change(net, pdb.now())
+    net.poll()
+    assert _badge(net.client.get("/").text) is None
+    clean_env.delenv("PATCHBAY_EXPECT")
+    net.poll()
+    assert _badge(net.client.get("/").text)[1] == _active_rows(net.client) == 1
+
+
+def test_held_items_are_tagged_so_the_two_counts_differ_visibly(net):
+    net.sql("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
+    net.sql("UPDATE interfaces SET oper_status = 'down' WHERE name = 'vmnic0'")
+    net.poll()
+    page = net.client.get("/alerts").text
+    assert page.count("held: sw1 is down") == 1      # the cable, not the device
+    overview = net.client.get("/").text
+    assert overview.count("held: sw1 is down") == 1
+    assert 'class="attn-held"' in overview
+    # the badge counts what the engine pages about: tab rows less the held one
+    assert _badge(page)[1] == _active_rows(net.client) - 1
+
+    net.sql("UPDATE devices SET status = 'up' WHERE name = 'sw1'")
+    net.poll()
+    assert "held:" not in net.client.get("/alerts").text
+    assert "held:" not in net.client.get("/").text.split("</section>")[0]
+
+
+def test_badge_read_uses_the_indexes(net):
+    c = sqlite3.connect(net.db)
+    now = pdb.now()
+    events = tuple(n for n, r in alerting.RULES.items() if r.event)
+    plan = " ".join(r[3] for r in c.execute(
+        "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM alerts a WHERE a.state = 'cleared' "
+        f"AND a.raised_at >= ? AND a.rule IN ({','.join('?' * len(events))})",
+        (now, *events)))
+    assert "idx_alerts_raised" in plan
+    assert alerting.open_count(c, now) == {}
+    c.close()
+
+
 def test_badge_never_fails_a_page(net, monkeypatch):
     # an unreadable alerts table: the rail renders without the count
     net.sql("DROP TABLE alerts")
