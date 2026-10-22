@@ -28,17 +28,26 @@ this module passes through `_redact`.
 Dispatch runs after the poll transaction commits and holds no write
 transaction while a request is in flight. A failed generic delivery waits
 in an outbox and is retried next cycle; three consecutive failed cycles
-raise a `source` item (attention.py). Every request has a timeout, and the
-whole cycle has a time budget, so a slow receiver delays the poll's exit
-by a bounded amount and never its data.
+raise a `source` item (attention.py). Every request has a wall-clock
+limit, and the whole cycle has a time budget, so a slow receiver delays
+the poll's exit by a bounded amount and never its data.
+
+One dispatch runs at a time (a lease in app_state, #110), and a
+transport's notes go out in the order the polls decided them, so a
+receiver never hears a clear before its raise. An outcome the database
+will not take is kept beside it and written by the next dispatch.
 """
 from __future__ import annotations
 
 import dataclasses
+import glob
 import json
+import os
 import re
 import sqlite3
+import threading
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Callable
 
@@ -315,17 +324,9 @@ class _Deadline(Exception):
     """The response did not finish within the request's wall-clock limit."""
 
 
-def _request(client: httpx.Client, t, *, status: str | None = None, msg: str = "",
-             payload: dict | None = None, max_s: float = REQUEST_S) -> tuple[bool, str]:
-    """One delivery. Returns (ok, result); the result is safe to show.
-
-    httpx's timeout bounds each phase (connect, each read), not the whole
-    request, so a receiver that trickles its body a byte at a time would
-    hold the poll forever. The request streams instead: every phase gets
-    at most `max_s`, the body read stops at a monotonic deadline of `max_s`
-    from the start, and at most BODY_MAX bytes are read."""
-    max_s = max(0.1, min(REQUEST_S, max_s))
-    deadline = time.monotonic() + max_s
+def _exchange(client: httpx.Client, t, status: str | None, msg: str,
+              payload: dict | None, max_s: float, deadline: float) -> tuple[bool, str]:
+    """The request itself; `_request` bounds it in wall-clock time."""
     sent = ""
     try:
         # building can fail for a stored URL that passed validate_url, so it
@@ -360,6 +361,32 @@ def _request(client: httpx.Client, t, *, status: str | None = None, msg: str = "
     if r.is_success and not (t["kind"] == "kuma" and '"ok":false' in text.replace(" ", "")):
         return True, result
     return False, result
+
+
+def _request(client: httpx.Client, t, *, status: str | None = None, msg: str = "",
+             payload: dict | None = None, max_s: float = REQUEST_S) -> tuple[bool, str]:
+    """One delivery. Returns (ok, result); the result is safe to show.
+
+    httpx's timeout bounds each phase (connect, write, the wait for the
+    headers, each body read), not the whole request, so phases add up and a
+    receiver that trickles its body would hold the poll forever. The
+    exchange runs in a worker thread that the caller waits on for `max_s`
+    at most: past that it is a failed delivery, and the thread is left to
+    end on its own phase timeouts (the request may still land; the retry
+    makes delivery at-least-once). The body read also stops at the
+    deadline and after BODY_MAX bytes."""
+    max_s = max(0.1, min(REQUEST_S, max_s))
+    deadline = time.monotonic() + max_s
+    out: list[tuple[bool, str]] = []
+    worker = threading.Thread(
+        target=lambda: out.append(_exchange(client, t, status, msg, payload, max_s,
+                                            deadline)),
+        name="patchbay-notify", daemon=True)
+    worker.start()
+    worker.join(max_s)
+    if out:
+        return out[0]
+    return False, f"_Deadline: no complete response within {max_s:g} s"
 
 
 def kuma_alerts(conn: sqlite3.Connection, default: Route | None) -> dict[int, list]:
@@ -398,12 +425,139 @@ def _note_from(d: dict) -> alerting.Notification | None:
         return None
 
 
+def _entry(tid: int, n: alerting.Notification) -> dict:
+    return {"t": tid, "note": _note_dict(n)}
+
+
+def _noted_at(e: dict) -> float:
+    """An outbox entry's place in line: the poll that decided its note.
+    An entry from before #110 carries none and sorts first, as the oldest."""
+    note = e.get("note") if isinstance(e, dict) else None
+    at = note.get("noted_at") if isinstance(note, dict) else None
+    return at if isinstance(at, (int, float)) else 0.0
+
+
+def _in_order(entries: list[dict]) -> list[dict]:
+    """Each transport's entries in the order their notes arose, capped at
+    the newest OUTBOX_MAX. Two dispatches that overlap each store what they
+    hold; arrival order in the list says nothing, so a clear stored before
+    its raise would otherwise reach the receiver first and leave it
+    firing. The sort is stable: one poll's notes keep their own order."""
+    per: dict[int, list[dict]] = {}
+    for e in entries:
+        per.setdefault(e["t"], []).append(e)
+    return [e for q in per.values() for e in sorted(q, key=_noted_at)[-OUTBOX_MAX:]]
+
+
+def _remove_each(entries: list, gone: list) -> list:
+    """`entries` less one copy of each item of `gone` (a multiset difference)."""
+    left = list(entries)
+    for g in gone:
+        if g in left:
+            left.remove(g)
+    return left
+
+
+def _load_outbox(conn: sqlite3.Connection) -> list[dict]:
+    try:
+        raw = json.loads(db.get_state(conn, OUTBOX_KEY) or "[]")
+    except ValueError:
+        return []
+    return [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
+
+
+# -- the dispatch lease -------------------------------------------------------
+# One dispatch at a time across processes (the poller and /ops/poll, or two
+# web workers): two overlapping dispatches could each hold a note for the
+# same alert and deliver the later one first. The lease is a row in
+# app_state, claimed in a short write and never held across a request, so
+# it works wherever SQLite does (a file lock is unreliable on Docker
+# Desktop and NAS mounts). It expires, so a crashed holder delays the next
+# dispatch rather than blocking it forever.
+LEASE_KEY = "alert_dispatch_lease"
+LEASE_TTL_S = 120.0
+# How long a dispatch waits for another to finish: the holder's budget, one
+# request, and its outcome write. Past it, the waiter queues its notes for
+# the next cycle rather than race the holder.
+LEASE_WAIT_S = 40.0
+# Tries at the outcome write, each waiting out the connection's busy
+# timeout; past them, the outcome is kept in a file for the next cycle.
+OUTCOME_TRIES = 2
+DB_TIMEOUT_S = 30.0
+
+
+def _claim(conn: sqlite3.Connection, owner: str) -> bool:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        try:
+            held = json.loads(db.get_state(conn, LEASE_KEY) or "null")
+        except ValueError:
+            held = None
+        now = time.time()
+        if (isinstance(held, dict) and held.get("owner") != owner
+                and isinstance(held.get("until"), (int, float)) and held["until"] > now):
+            conn.rollback()
+            return False
+        db.set_state(conn, LEASE_KEY, json.dumps({"owner": owner, "until": now + LEASE_TTL_S}))
+        conn.commit()
+        return True
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _release(conn: sqlite3.Connection, owner: str) -> None:
+    try:
+        if conn.in_transaction:
+            conn.rollback()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            held = json.loads(db.get_state(conn, LEASE_KEY) or "null")
+        except ValueError:
+            held = None
+        if isinstance(held, dict) and held.get("owner") == owner:
+            conn.execute("DELETE FROM app_state WHERE key = ?", (LEASE_KEY,))
+        conn.commit()
+    except sqlite3.Error:
+        pass   # the lease expires on its own
+
+
+# -- outcomes the database would not take ------------------------------------
+# A cycle's outcome (transport results, history rows, the outbox) is written
+# after its requests. If the database stays locked past OUTCOME_TRIES, the
+# outcome goes to a file beside it instead, and the next dispatch, under
+# the lease, folds it in before anything else: no queued note and no
+# delivery record is lost. Each writer names its own file, so a waiter that
+# never held the lease cannot overwrite the holder's.
+
+def _pending_paths(db_path: str) -> list[str]:
+    return sorted(glob.glob(glob.escape(db_path) + "-dispatch-*.json"))
+
+
+def _read_pending(path: str) -> dict | None:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_pending(db_path: str, outcome: dict) -> str:
+    path = f"{db_path}-dispatch-{time.time_ns()}-{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(outcome, f)
+    os.replace(tmp, path)
+    return path
+
+
 class WebhookDispatcher:
     """The real dispatcher: `alerting.dispatch()` hands it the cycle's
-    notifications after commit. It reads its configuration, makes every
-    request with no transaction open, then records the outcome in one
-    short write. `lines` holds the cycle's report for the poll output; it
-    never contains a URL."""
+    notifications after commit. It takes the dispatch lease, reads its
+    configuration, makes every request with no transaction open, then
+    records the outcome in one short write. `lines` holds the cycle's
+    report for the poll output; it never contains a URL."""
 
     def __init__(self, db_path: str, *, transport: httpx.BaseTransport | None = None,
                  now: float | None = None, clock: Callable[[], float] = time.monotonic,
@@ -416,25 +570,76 @@ class WebhookDispatcher:
         self.lines: list[str] = []
 
     def send(self, notes: list[alerting.Notification]) -> None:
-        conn = sqlite3.connect(self.db_path, timeout=30)
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_S)
         conn.row_factory = sqlite3.Row
+        owner = uuid.uuid4().hex
         try:
-            self._cycle(conn, notes)
+            if not conn.execute("SELECT 1 FROM alert_transports LIMIT 1").fetchone():
+                return
+            if self._lease(conn, owner):
+                try:
+                    self._cycle(conn, notes)
+                finally:
+                    _release(conn, owner)
+            else:
+                self._defer(conn, notes)
         finally:
             conn.close()
+
+    def _lease(self, conn: sqlite3.Connection, owner: str) -> bool:
+        waited_until = time.monotonic() + LEASE_WAIT_S
+        while True:
+            try:
+                if _claim(conn, owner):
+                    return True
+            except sqlite3.OperationalError:
+                pass   # locked past the busy timeout: keep waiting
+            if time.monotonic() >= waited_until:
+                return False
+            time.sleep(0.25)
+
+    @staticmethod
+    def _routed(notes, transports, default) -> list[tuple[int, alerting.Notification]]:
+        """This cycle's notes, each with the transport its route names."""
+        out = []
+        for n in notes:
+            route = resolve(n.route, default)
+            if route and route.transport_id in transports and meets(n.severity, route):
+                out.append((route.transport_id, n))
+        return out
+
+    def _defer(self, conn: sqlite3.Connection, notes: list[alerting.Notification]) -> None:
+        """Another dispatch held the lease for LEASE_WAIT_S: queue this
+        cycle's generic notes behind it, in order, rather than race it.
+        Kuma needs nothing queued; its state is pushed every cycle."""
+        transports = {r["id"]: dict(r) for r in conn.execute(
+            "SELECT * FROM alert_transports ORDER BY id")}
+        mine = [_entry(tid, n) for tid, n in
+                self._routed(notes, transports, default_route(conn))
+                if transports[tid]["kind"] == "generic" and transports[tid]["enabled"]]
+        self.lines.append("[warn] notify: another dispatch is still running; "
+                          f"{len(mine)} notification{'' if len(mine) == 1 else 's'} "
+                          "queued for the next cycle")
+        if mine:
+            self._write({"updates": [], "events": [], "outbox": mine, "consumed": []},
+                        pending=[])
 
     def _cycle(self, conn: sqlite3.Connection, notes: list[alerting.Notification]) -> None:
         now = db.now() if self.now is None else self.now
         transports = {r["id"]: dict(r) for r in conn.execute(
             "SELECT * FROM alert_transports ORDER BY id")}
-        if not transports:
-            return
         default = default_route(conn)
         base = db.get_state(conn, LINK_BASE_KEY)
-        try:
-            outbox = json.loads(db.get_state(conn, OUTBOX_KEY) or "[]")
-        except ValueError:
-            outbox = []
+        # an earlier cycle's outcome the database would not take: its
+        # history and results are written with ours, the outbox entries it
+        # had already handled are not handled twice, and its queue is ours
+        pending = [(p, d) for p in _pending_paths(self.db_path)
+                   if (d := _read_pending(p)) is not None]
+        handled = [e for _, d in pending for e in d.get("consumed") or []]
+        outbox = _load_outbox(conn)
+        consumed = outbox + handled
+        backlog = _remove_each(outbox, handled) + [
+            e for _, d in pending for e in d.get("outbox") or [] if isinstance(e, dict)]
         held_down = kuma_alerts(conn, default)
 
         alert_rows: dict[str, tuple] = {}
@@ -447,10 +652,10 @@ class WebhookDispatcher:
                                    else (None, "", None))
             return alert_rows[key]
 
-        # this cycle's notes, per transport, in the order they arose
-        queued: dict[int, list[tuple[alerting.Notification, int]]] = {}
+        # every note due, per transport, in the order the polls decided them
         events: list[tuple] = []
-        for entry in outbox if isinstance(outbox, list) else []:
+        entries: list[dict] = []
+        for entry in backlog:
             n = _note_from(entry.get("note") or {})
             if not (n and entry.get("t") in transports):
                 continue
@@ -460,16 +665,17 @@ class WebhookDispatcher:
             if n.kind != "clear" and alert_row(n.key)[2] == "silenced":
                 events.append((n, "dropped", "silenced"))
                 continue
-            queued.setdefault(entry["t"], []).append((n, int(entry.get("tries") or 0)))
-        for n in notes:
-            route = resolve(n.route, default)
-            if route and route.transport_id in transports and meets(n.severity, route):
-                queued.setdefault(route.transport_id, []).append((n, 0))
-        for n, _ in (x for q in queued.values() for x in q):
+            entries.append(_entry(entry["t"], n))
+        entries += [_entry(tid, n) for tid, n in
+                    self._routed(notes, transports, default)]
+        queued: dict[int, list[alerting.Notification]] = {}
+        for e in _in_order(entries):
+            n = _note_from(e["note"])
+            queued.setdefault(e["t"], []).append(n)
             alert_row(n.key)
 
         started = self.clock()
-        updates: dict[int, dict] = {}
+        updates: list[list] = []
         new_outbox: list[dict] = []
 
         def spent() -> bool:
@@ -486,8 +692,7 @@ class WebhookDispatcher:
                 if spent():
                     self.lines.append(f"[warn] notify {t['name']}: deferred, "
                                       f"the cycle's time budget is spent")
-                    new_outbox += [{"t": tid, "note": _note_dict(n), "tries": k}
-                                   for n, k in mine if t["kind"] == "generic"]
+                    new_outbox += [_entry(tid, n) for n in mine if t["kind"] == "generic"]
                     continue
                 if t["kind"] == "kuma":
                     down = held_down.get(tid, [])
@@ -495,11 +700,11 @@ class WebhookDispatcher:
                     ok, result = _request(client, t, status=status,
                                           msg=kuma_message(down, base=base, now=now),
                                           max_s=left())
-                    updates[tid] = {"ok": ok, "result": result}
+                    updates.append([tid, ok, result])
                     # the push is the delivery of every state change routed
                     # here; one-shot events cannot hold a monitor down, so
                     # Kuma does not carry them
-                    for n, _ in mine:
+                    for n in mine:
                         if n.kind != "event":
                             events.append((n, "notified" if ok else "delivery_failed",
                                            f"{t['name']}: pushed {status}" if ok
@@ -510,78 +715,96 @@ class WebhookDispatcher:
                                       else f"[warn] notify {t['name']}: {result}")
                     continue
                 sent, failed = 0, None
-                for i, (n, tries) in enumerate(mine):
+                for i, n in enumerate(mine):
                     if failed is not None or spent():
                         # the receiver just failed or time ran out: keep the
                         # rest for next cycle rather than wait out more timeouts
-                        new_outbox += [{"t": tid, "note": _note_dict(m), "tries": k}
-                                       for m, k in mine[i:]]
+                        new_outbox += [_entry(tid, m) for m in mine[i:]]
                         break
                     ok, result = _request(client, t, payload=generic_payload(
                         n, transport=t["name"], base=base, now=now,
                         category=alert_rows[n.key][1]), max_s=left())
+                    updates.append([tid, ok, result])
                     if ok:
                         sent += 1
                         events.append((n, "notified", t["name"]))
-                        updates[tid] = {"ok": True, "result": result}
                     else:
                         failed = result
                         events.append((n, "delivery_failed", f"{t['name']}: {result}"))
-                        updates[tid] = {"ok": False, "result": result}
-                        new_outbox.append({"t": tid, "note": _note_dict(n), "tries": tries + 1})
+                        new_outbox.append(_entry(tid, n))
                 if failed is not None:
                     self.lines.append(f"[warn] notify {t['name']}: {failed}; "
                                       f"retrying next cycle")
                 elif sent:
                     self.lines.append(f"[ok]   notify {t['name']}: {sent} sent")
 
-        # the outcome lands in one short write, after every request is done.
-        # BEGIN IMMEDIATE first: another dispatch (the scheduled poll and
-        # /ops/poll can overlap) may have queued notes while our requests
+        outcome = {
+            "updates": [u for _, d in pending for u in d.get("updates") or []]
+                       + [[tid, ok, result, now] for tid, ok, result in updates],
+            "events": [ev for _, d in pending for ev in d.get("events") or []] + [
+                [alert_rows[n.key][0], now, event, n.key, n.rule, alert_rows[n.key][1] or "",
+                 n.severity, n.text, n.href, detail] for n, event, detail in events],
+            "outbox": new_outbox,
+            "consumed": consumed,
+        }
+        self._write(outcome, pending=[p for p, _ in pending])
+
+    def _write(self, outcome: dict, *, pending: list[str]) -> None:
+        """Record one outcome in a short write, or keep it in a file for the
+        next cycle when the database stays locked. Files it folded in are
+        removed only once their content is stored, here or in the new file."""
+        conn = sqlite3.connect(self.db_path, timeout=DB_TIMEOUT_S)
+        conn.row_factory = sqlite3.Row
+        try:
+            for attempt in range(OUTCOME_TRIES):
+                try:
+                    self._record(conn, outcome)
+                    break
+                except sqlite3.OperationalError:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    if attempt + 1 < OUTCOME_TRIES:
+                        time.sleep(1.0)
+            else:
+                _write_pending(self.db_path, outcome)
+                self.lines.append("[warn] notify: the database stayed locked; "
+                                  "delivery records and retries are kept for "
+                                  "the next cycle")
+        finally:
+            conn.close()
+        for p in pending:
+            try:
+                os.unlink(p)
+            except FileNotFoundError:
+                pass
+
+    def _record(self, conn: sqlite3.Connection, outcome: dict) -> None:
+        # BEGIN IMMEDIATE first: a dispatch that queued notes behind the
+        # lease (or an older peer) may have stored some while our requests
         # were in flight, and the outbox is merged under the write lock so
         # neither side's notes are lost (#80)
-        if conn.in_transaction:
-            conn.commit()
         conn.execute("BEGIN IMMEDIATE")
-        for tid, u in updates.items():
-            if u["ok"]:
+        for tid, ok, result, ts in outcome["updates"]:
+            if ok:
                 conn.execute("UPDATE alert_transports SET last_sent_at=?, last_result=?, "
-                             "last_error=NULL, failures=0 WHERE id=?", (now, u["result"], tid))
+                             "last_error=NULL, failures=0 WHERE id=?", (ts, result, tid))
             else:
                 conn.execute("UPDATE alert_transports SET last_error=?, "
-                             "failures=failures+1 WHERE id=?", (u["result"], tid))
-        for n, event, detail in events:
-            alert_id, category, _ = alert_rows[n.key]
-            conn.execute(
-                "INSERT INTO alert_events (alert_id, ts, event, key, rule, category, "
-                "severity, text, href, detail) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (alert_id, now, event, n.key, n.rule, category or "", n.severity,
-                 n.text, n.href, detail))
+                             "failures=failures+1 WHERE id=?", (result, tid))
+        conn.executemany(
+            "INSERT INTO alert_events (alert_id, ts, event, key, rule, category, "
+            "severity, text, href, detail) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            [tuple(ev) for ev in outcome["events"]])
         # a transport deleted while this cycle's requests were in flight
         # must not leave queued notes for a later transport to inherit
         alive = {r[0] for r in conn.execute("SELECT id FROM alert_transports")}
-        per: dict[int, list] = {}
-        for e in (e for e in new_outbox if e["t"] in alive):
-            per.setdefault(e["t"], []).append(e)
-        # the entries this cycle read are consumed (retried, dropped, or
-        # re-queued in new_outbox); whatever else is stored now was queued
-        # by an overlapping dispatch and stays
-        try:
-            current = json.loads(db.get_state(conn, OUTBOX_KEY) or "[]")
-        except ValueError:
-            current = []
-        consumed = list(outbox) if isinstance(outbox, list) else []
-        for e in current if isinstance(current, list) else []:
-            if e in consumed:
-                consumed.remove(e)
-            elif isinstance(e, dict) and e.get("t") in alive:
-                # both dispatches read the same retry and both failed it:
-                # keep our copy only
-                if any(m["note"] == e.get("note") for m in per.get(e["t"], [])):
-                    continue
-                per.setdefault(e["t"], []).append(e)
-        kept = [e for q in per.values() for e in q[-OUTBOX_MAX:]]
-        db.set_state(conn, OUTBOX_KEY, json.dumps(kept))
+        ours = [e for e in outcome["outbox"] if e.get("t") in alive]
+        # the entries this cycle read are handled (retried, dropped, or
+        # re-queued above); whatever else is stored now was queued by
+        # another dispatch meanwhile and stays
+        others = [e for e in _remove_each(_load_outbox(conn), outcome["consumed"])
+                  if e.get("t") in alive and e not in ours]
+        db.set_state(conn, OUTBOX_KEY, json.dumps(_in_order(ours + others)))
         conn.commit()
 
 
