@@ -43,6 +43,9 @@ SECRET_PAT = re.compile(
     # a bare `key 7 ...` inside an IOS-XE `tacacs server`/`radius server`
     # block, and the per-group `server-private ADDR ... key ...`
     r"^\s+key(?=\s)|server-private \S+|"
+    # OpenWrt UCI: `option key '...'`, WEP key1-4, WireGuard private_key and
+    # preshared_key, any psk option; Aruba `mgmt-user NAME [ROLE] PASSWORD`
+    r"\boption \w*(?:key|psk)\w*|mgmt-user \S+|"
     # the community string of `snmp-server host` follows the address and
     # an optional notification type and version, with no keyword before it
     r"snmp-server host \S+(?: (?:traps|informs))?(?: version (?:1|2c|3 \S+))?|"
