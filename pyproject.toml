@@ -27,7 +27,9 @@ filterwarnings = ["ignore::DeprecationWarning"]
 patchbay = "patchbay.cli:main"
 
 [build-system]
-requires = ["hatchling"]
+# exact pin: the image builds the wheel with whatever this resolves to, and
+# uv.lock does not cover build backends. Bump it deliberately.
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
