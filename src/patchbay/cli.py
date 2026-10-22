@@ -148,7 +148,15 @@ def cmd_poll(args: argparse.Namespace) -> int:
                 # cycle's alerting already ran, before the snapshot did
                 db.record_snapshot_failure(conn, failure[0], kind=failure[1])
             snap.mark_done(conn)      # once a day even if delivery failed —
-            db.save_last_poll(conn, lines)   # retrying every 5 min won't help
+                                      # retrying every 5 min won't help
+    # the cycle's whole report, dispatch and snapshot lines included (the
+    # save above, inside the poll transaction, has the collection's only):
+    # /ops shows it so a headless deployment's failures are visible
+    try:
+        with db.connect(settings.db_path) as conn:
+            db.save_last_poll(conn, lines)
+    except sqlite3.Error as e:
+        print(f"[warn] last poll record not saved: {e}", file=sys.stderr)
     return rc
 
 
