@@ -16,6 +16,14 @@ put.
   down" on Active and Attention and aren't in the count. One-shot events
   follow silences added or removed after they fire. When a critical alert
   raises with `PATCHBAY_ALERT_SNAPSHOT` off, the poll output says so.
+- The demo shows phase 6 (#119): alert history, an active port canary, a
+  silence, an expected tunnel, and a disabled demo webhook, so every
+  `/alerts` tab has content. `docs/architecture.md` (spec v1.2) covers
+  alerts, alert snapshots, tiered retention, config history, backup, and
+  `/healthz`, and marks S3 delivery and snapshot diffs not planned. New
+  `db.record_rates()` is the collector contract's way to write rate samples
+  (`docs/collectors.md`). Route labels mark a disabled transport "(off)",
+  and a poll warns when the default route points at one.
 
 ### Deprecated
 - `PATCHBAY_EXPECT` is deprecated (#69). While it's set, `/ops` shows a
