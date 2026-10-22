@@ -335,8 +335,11 @@ of `/data`, then drops to an unprivileged user:
   `sudo chown -R "$USER" data` after you stop the stack.
 - A `./data` you created yourself (`mkdir data`) keeps its owner, and
   patchbay runs as that user, so you keep editing `data/.env` normally.
-- In both cases, files an older release left root-owned (`patchbay.db`,
-  snapshots) are re-owned automatically on the next start. **Upgrading
+- In both cases, the files an older release left root-owned (`.env`,
+  `patchbay.db` and its SQLite sidecars, and the top level of `snapshots/`)
+  are re-owned automatically on the next start. Only those known paths are
+  touched, and symlinks and multiply linked files are skipped; anything else
+  you keep under `data/` stays as it is, so `chown` it yourself. **Upgrading
   needs no manual step**: `docker compose pull && docker compose up -d`.
 
 To pick the user yourself, set `user: "1000:1000"` (any uid:gid) on both
