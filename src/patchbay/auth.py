@@ -33,8 +33,10 @@ PBKDF2_ITERATIONS = 260_000
 SESSION_COOKIE = "patchbay_session"
 STATE_COOKIE = "patchbay_oidc_state"
 
-# paths reachable without a session (login flow itself + static assets)
-PUBLIC_PATHS = {"/login", "/logout", "/auth/oidc/login", "/auth/oidc/callback"}
+# paths reachable without a session (login flow itself, the /healthz probe,
+# and static assets). The Host allowlist still applies to every one of them.
+PUBLIC_PATHS = {"/login", "/logout", "/auth/oidc/login", "/auth/oidc/callback",
+                "/healthz"}
 PUBLIC_PREFIXES = ("/static/",)
 
 # Hosts every deployment answers to whatever PATCHBAY_ALLOWED_HOSTS says:

@@ -11,7 +11,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from .retention import DEFAULT_SPEC, KeepSpec, parse_keep_spec
 
@@ -27,6 +27,37 @@ DECLARATION_VARS = (
     "PATCHBAY_CONFIG_KEEP", "PATCHBAY_ALERT_SNAPSHOT",
     "PATCHBAY_ALERT_SNAPSHOT_COOLDOWN", "PATCHBAY_ALERT_SNAPSHOT_KEEP",
 )
+
+# Seconds between polls when PATCHBAY_POLL_INTERVAL is unset.
+POLL_INTERVAL_DEFAULT = 300.0
+
+
+def read_poll_interval() -> tuple[float, str | None]:
+    """(seconds, warning or None) from PATCHBAY_POLL_INTERVAL.
+
+    The compose files pass the variable to both services, but it also works in
+    the env file, so this looks there too. It reads the file without loading
+    it into os.environ: the poller supervisor calls this every cycle, and its
+    child polls must still read the env file fresh themselves. An empty value
+    counts as unset, because compose passes an unset variable as empty.
+    """
+    var = "PATCHBAY_POLL_INTERVAL"
+    raw = (os.environ.get(var) or "").strip()
+    if not raw:
+        raw = (dotenv_values(os.environ.get("PATCHBAY_ENV", ".env")).get(var)
+               or "").strip()
+    if not raw:
+        return POLL_INTERVAL_DEFAULT, None
+    try:
+        seconds = float(raw)
+        if not 1 <= seconds < float("inf"):
+            raise ValueError(raw)
+    except ValueError:
+        return POLL_INTERVAL_DEFAULT, (
+            f"{var}: {raw!r} is not a number of seconds, 1 or more — using "
+            f"{POLL_INTERVAL_DEFAULT:.0f}")
+    return seconds, None
+
 
 # Firewall config revisions kept per device when PATCHBAY_CONFIG_KEEP is unset.
 CONFIG_KEEP_DEFAULT = 50
@@ -356,6 +387,9 @@ class Settings:
     # localhost and the loopback addresses are always allowed
     # (auth.LOOPBACK_HOSTS).
     allowed_hosts: tuple[str, ...] | None = None
+    # Seconds between poller cycles (PATCHBAY_POLL_INTERVAL, #111). The poller
+    # sleeps it; /healthz reads it to know how old a poll may be.
+    poll_interval: float = POLL_INTERVAL_DEFAULT
 
     @property
     def snapshot_keep_unknown(self) -> bool:
@@ -599,6 +633,10 @@ def load_settings() -> Settings:
         warnings.append("PATCHBAY_ALLOWED_HOSTS: no usable entry — only "
                         "localhost and loopback addresses are allowed")
 
+    poll_interval, interval_warning = read_poll_interval()
+    if interval_warning:
+        warnings.append(interval_warning)
+
     alert_snapshot_cooldown = whole("PATCHBAY_ALERT_SNAPSHOT_COOLDOWN",
                                     ALERT_SNAPSHOT_COOLDOWN_DEFAULT)
     alert_snapshot_keep = whole("PATCHBAY_ALERT_SNAPSHOT_KEEP",
@@ -672,4 +710,5 @@ def load_settings() -> Settings:
         alert_snapshot_cooldown=alert_snapshot_cooldown,
         alert_snapshot_keep=alert_snapshot_keep,
         allowed_hosts=allowed_hosts,
+        poll_interval=poll_interval,
     )

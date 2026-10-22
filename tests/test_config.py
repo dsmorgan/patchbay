@@ -153,3 +153,32 @@ def test_snapshot_at_validates_hhmm(clean_env):
     s = load_settings()
     assert s.snapshot_at is None
     assert any("PATCHBAY_SNAPSHOT_AT" in w for w in s.parse_warnings)
+
+
+def test_poll_interval(clean_env, tmp_path):
+    from patchbay.config import POLL_INTERVAL_DEFAULT, load_settings, read_poll_interval
+
+    assert load_settings().poll_interval == POLL_INTERVAL_DEFAULT == 300
+    clean_env.setenv("PATCHBAY_POLL_INTERVAL", "")          # compose passes unset as empty
+    assert read_poll_interval() == (300, None)
+    clean_env.setenv("PATCHBAY_POLL_INTERVAL", "45")
+    assert load_settings().poll_interval == 45
+    for bad in ("soon", "0", "-5", "nan", "inf"):
+        clean_env.setenv("PATCHBAY_POLL_INTERVAL", bad)
+        s = load_settings()
+        assert s.poll_interval == 300, bad
+        assert any(w.startswith("PATCHBAY_POLL_INTERVAL:") for w in s.parse_warnings), bad
+
+
+def test_poll_interval_reads_the_env_file_without_loading_it(clean_env, tmp_path):
+    import os
+
+    from patchbay.config import read_poll_interval
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("PATCHBAY_POLL_INTERVAL=90\n")
+    clean_env.setenv("PATCHBAY_ENV", str(env_file))
+    assert read_poll_interval() == (90, None)
+    assert "PATCHBAY_POLL_INTERVAL" not in os.environ   # a child poll re-reads the file
+    clean_env.setenv("PATCHBAY_POLL_INTERVAL", "120")   # the environment wins
+    assert read_poll_interval() == (120, None)

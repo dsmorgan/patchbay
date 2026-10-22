@@ -1821,3 +1821,89 @@ def test_cli_poll_masks_userinfo_in_failure_lines(clean_env, monkeypatch, capsys
     assert cli.cmd_poll(argparse.Namespace(source=None)) == 1
     out = capsys.readouterr()
     assert "[fail] oxidized" in out.err and "FAKEoxpw" not in out.err + out.out
+
+
+# --- /healthz (#111) -----------------------------------------------------------
+
+def _set_last_poll(db_path, age_seconds):
+    import json
+    import time
+
+    c = sqlite3.connect(db_path)
+    pdb.init(c)
+    pdb.set_state(c, "last_poll", json.dumps(
+        {"ts": time.time() - age_seconds, "lines": ["[ok]   librenms: 3 devices"]}))
+    c.commit()
+    c.close()
+
+
+def test_healthz_fresh_poll_is_ok(client, tmp_path):
+    _set_last_poll(str(tmp_path / "test.db"), 60)
+    r = client.get("/healthz")
+    assert (r.status_code, r.text) == (200, "ok")
+    assert r.headers["cache-control"] == "no-store"
+    assert client.head("/healthz").status_code == 200
+
+
+def test_healthz_stale_after_three_intervals(client, tmp_path, clean_env):
+    db_path = str(tmp_path / "test.db")
+    _set_last_poll(db_path, 800)               # under 3 x 300 s
+    assert client.get("/healthz").status_code == 200
+    _set_last_poll(db_path, 910)               # over it
+    r = client.get("/healthz")
+    assert (r.status_code, r.text) == (503, "stale")
+    clean_env.setenv("PATCHBAY_POLL_INTERVAL", "600")   # the limit follows it
+    assert client.get("/healthz").status_code == 200
+
+
+def test_healthz_never_polled_has_a_startup_grace(client, monkeypatch):
+    import time
+
+    import patchbay.web as web
+
+    monkeypatch.setattr(web, "_STARTED", time.time() - 60)
+    assert client.get("/healthz").status_code == 200   # no database file yet
+    monkeypatch.setattr(web, "_STARTED", time.time() - 901)
+    assert client.get("/healthz").status_code == 503   # grace is over
+
+
+def test_healthz_survives_an_unreadable_record(client, tmp_path, monkeypatch):
+    import time
+
+    import patchbay.web as web
+
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    pdb.init(c)
+    pdb.set_state(c, "last_poll", "not json")
+    c.commit()
+    c.close()
+    monkeypatch.setattr(web, "_STARTED", time.time() - 60)
+    assert client.get("/healthz").status_code == 200   # counts as never polled
+
+
+def test_healthz_does_not_create_or_write_the_database(client, tmp_path):
+    client.get("/healthz")
+    assert not (tmp_path / "test.db").exists()
+
+
+def test_healthz_reveals_nothing_else(client, tmp_path):
+    _set_last_poll(str(tmp_path / "test.db"), 10)
+    assert client.get("/healthz").text == "ok"
+
+
+def test_healthz_is_exempt_from_auth(client, clean_env):
+    clean_env.setenv("PATCHBAY_AUTH", "password")
+    clean_env.setenv("PATCHBAY_PASSWORD", "correct horse")
+    assert client.get("/healthz").status_code in (200, 503)
+    page = client.get("/", follow_redirects=False)
+    assert page.status_code == 303                      # the gate is on
+
+
+def test_healthz_still_obeys_the_host_allowlist(client, clean_env):
+    clean_env.setenv("PATCHBAY_ALLOWED_HOSTS", "patchbay.example.net")
+    assert client.get("/healthz", headers={"host": "attacker.example"}
+                      ).status_code == 400
+    assert client.get("/healthz", headers={"host": "patchbay.example.net"}
+                      ).status_code in (200, 503)
+    assert client.get("/healthz", headers={"host": "127.0.0.1:8080"}
+                      ).status_code in (200, 503)      # the container's own probe
