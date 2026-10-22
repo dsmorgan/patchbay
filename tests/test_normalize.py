@@ -1215,3 +1215,41 @@ def test_a_real_device_sharing_the_first_label_stays(conn):
     normalize(conn)
     names = {r["name"] for r in conn.execute("SELECT name FROM devices")}
     assert names == {"ubuntu-22", "ubuntu-22.04", "web", "web.2"}
+
+
+def _vmotion_site(conn):
+    dev(conn, "core", "librenms", last_seen=NOW, role="switch")
+    for h, mac in (("hyp1", "02:00:00:00:01:01"), ("hyp2", "02:00:00:00:02:01")):
+        hid = dev(conn, h, "vsphere", last_seen=NOW, role="hypervisor")
+        pdb.upsert_interface(conn, device_id=hid, name="vmnic0", mac=mac)
+    for vm, host, mac in (("vm1", "hyp1", "02:00:00:00:01:11"),
+                          ("vm9", "hyp2", "02:00:00:00:02:19")):
+        vid = dev(conn, vm, "vsphere", last_seen=NOW, role="vm", parent=host)
+        pdb.upsert_interface(conn, device_id=vid, name="Network adapter 1", mac=mac)
+
+
+def test_vmotion_race_keeps_the_host_cable(conn):
+    """vm9 just moved from hyp1 to hyp2: the switch still has its MAC on
+    hyp1's port while vCenter already says hyp2. hyp1's own MAC is on the
+    port, so the guest's word doesn't add a second device — the port stays
+    one cable to hyp1, not an inferred switch held for the evidence TTL."""
+    _vmotion_site(conn)
+    _fdb(conn, "core", "p1", "02:00:00:00:01:01", "02:00:00:00:01:11",
+         "02:00:00:00:02:19")
+    normalize(conn)
+    # vm1 adds a ('hyp1', '?') row beside vmnic0, as on main; never hyp2
+    assert {(l[2], l[4]) for l in links(conn)} == {("hyp1", "fdb-uplink")}
+    assert get_dev(conn, "unmanaged@core:p1") is None
+
+
+def test_guest_only_port_never_infers_a_switch(conn):
+    """A VM-network uplink carries guest MACs only (the host's own NICs
+    talk elsewhere), so a vMotion race shows two hosts' guests on it.
+    Guest evidence alone links the hosts it names; it never invents a
+    dumb switch."""
+    _vmotion_site(conn)
+    _fdb(conn, "core", "p2", "02:00:00:00:01:11", "02:00:00:00:02:19")
+    normalize(conn)
+    assert get_dev(conn, "unmanaged@core:p2") is None
+    assert {l[0] for l in links(conn) if l[2] == "core" or l[0] == "core"} \
+        <= {"core", "hyp1", "hyp2"}

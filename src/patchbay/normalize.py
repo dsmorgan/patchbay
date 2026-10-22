@@ -688,7 +688,9 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
             # cable ends on a vSwitch-backed port, the far end is '?', which
             # also collapses several vmks on one uplink into ONE cable.
             resolved: set[tuple[str, str]] = set()
-            seen_by: dict[str, set[str]] = {}    # far device -> its MACs here
+            # far device -> its MACs here, by its own interfaces or a guest's
+            direct: dict[str, set[str]] = {}
+            guests: dict[str, set[str]] = {}
             for m in macs:
                 hit = if_by_mac.get(canon_mac(m))
                 if hit is None or hit[0] == dev:
@@ -699,7 +701,17 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
                     (od, oif if port_kind(oif) == "physical" else "?")
                 if end[0] != dev:
                     resolved.add(end)
-                    seen_by.setdefault(end[0], set()).add(canon_mac(m))
+                    (guests if parent else direct).setdefault(
+                        end[0], set()).add(canon_mac(m))
+            # A guest's MAC only says where the VM ran when it was read, and
+            # a vMotion between the switch's table and vCenter's leaves it on
+            # the old host's port. A device's own MAC on the port outranks
+            # that: a host seen there only through a guest is no second
+            # device and gets no cable. With no own MAC at all, guest
+            # evidence links each host it names, as before.
+            if direct:
+                resolved = {e for e in resolved if e[0] in direct}
+            seen_by = direct or guests
             ends = set(resolved)
             # A port has one cable. Several known devices behind it are
             # either one managed switch and what hangs off it (it learned
@@ -707,17 +719,17 @@ def _place_endpoints_and_infer(conn: sqlite3.Connection,
             # switch with all of them behind it — writing a link per owner
             # drew N cables out of one port (#98).
             ghost = f"unmanaged@{dev}:{iface}"
-            if len(seen_by) > 1:
-                near = [x for x in seen_by
+            if len(direct) > 1:
+                near = [x for x in direct
                         if all(_learned_behind(x, ys, dev_macs.get(dev, set()),
                                                fdb_at, clients_of)
-                               for y, ys in seen_by.items() if y != x)]
+                               for y, ys in direct.items() if y != x)]
                 if len(near) == 1:
                     resolved = {e for e in resolved if e[0] == near[0]}
                     _retract_uplinks(conn, dev, iface, keep=near[0])
                 else:
                     resolved = set()
-            elif seen_by:
+            elif len(seen_by) == 1:
                 # an inferred dumb switch whose other hosts went quiet (their
                 # MACs aged out of the table) stays until its evidence does
                 hung = _hung_behind(conn, ghost)
