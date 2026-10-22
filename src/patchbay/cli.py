@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
+import socket
 import sqlite3
+import subprocess
 import sys
+import threading
 import time
 
 from . import __version__, alerting, db
 from .collectors import all_collectors, available
-from .config import load_settings
+from .config import load_settings, read_poll_interval
 from .redact import hide_userinfo
 
 
@@ -146,6 +150,90 @@ def cmd_poll(args: argparse.Namespace) -> int:
             snap.mark_done(conn)      # once a day even if delivery failed —
             db.save_last_poll(conn, lines)   # retrying every 5 min won't help
     return rc
+
+
+WAIT_TRIES = 60       # 60 x 5 s: a cold LibreNMS needs a few minutes
+WAIT_STEP = 5.0
+
+
+def _wait_for(targets: list[str], stop: threading.Event) -> None:
+    """Hold the first cycle until each HOST:PORT accepts a connection, then
+    give up and carry on: the bound is the point. Waiting for the common case
+    keeps the first poll from logging a failure that is always there, and
+    never depending on it means a broken target cannot stall every other
+    source. A stop request ends the wait at once."""
+    for target in targets:
+        host, _, port = target.rpartition(":")
+        try:
+            addr = (host, int(port))
+        except ValueError:
+            print(f"[wait]  {target!r} is not HOST:PORT — not waiting for it",
+                  file=sys.stderr, flush=True)
+            continue
+        for i in range(WAIT_TRIES):
+            if stop.is_set():
+                return
+            try:
+                socket.create_connection(addr, 2).close()
+            except OSError:
+                stop.wait(WAIT_STEP)
+                continue
+            if i:
+                print(f"[wait]  {target} up after {i * WAIT_STEP:.0f}s", flush=True)
+            break
+        else:
+            print(f"[wait]  {target} still down after {WAIT_TRIES * WAIT_STEP:.0f}s"
+                  " — polling without it", flush=True)
+
+
+def cmd_poller(args: argparse.Namespace) -> int:
+    """Poll forever: one `patchbay poll` per cycle, then sleep
+    PATCHBAY_POLL_INTERVAL. Stops promptly on SIGTERM or SIGINT (#111).
+
+    This process is what a container runs as PID 1, where a signal with no
+    handler is ignored: the old `sh -c 'while true; ...'` loop never saw
+    `docker stop`, so every stop waited out the grace period and then
+    SIGKILLed the poller, possibly mid-poll. A stop between polls ends the
+    sleep and exits at once. A stop during a poll lets that poll finish,
+    since a poll's work lands in transactions and its notifications leave
+    after the last of them: aborting would lose one or the other. A second
+    signal aborts the poll.
+
+    Each cycle is its own process, so the env file is re-read every poll
+    and a crashed poll cannot take the loop down, as before."""
+    stop = threading.Event()
+    child: subprocess.Popen | None = None
+    seen = 0
+
+    def on_signal(signum: int, frame) -> None:
+        nonlocal seen
+        seen += 1
+        stop.set()
+        if seen > 1 and child and child.poll() is None:
+            child.terminate()
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+    _wait_for(args.wait or [], stop)
+    warned: str | None = None
+    while not stop.is_set():
+        try:
+            child = subprocess.Popen(
+                [sys.executable, "-m", "patchbay", "poll"],
+                start_new_session=True)  # a terminal's ^C is ours to handle
+            child.wait()
+        except OSError as e:
+            print(f"[fail] poller: could not start a poll: {e}", file=sys.stderr,
+                  flush=True)
+        interval, warning = read_poll_interval()
+        if warning and warning != warned:
+            print(f"[warn] {warning}", file=sys.stderr, flush=True)
+            warned = warning
+        stop.wait(interval)
+    if seen > 1:
+        return 1   # the second signal cut a poll short
+    print("[ok]   poller: stopped", flush=True)
+    return 0
 
 
 def cmd_web(args: argparse.Namespace) -> int:
@@ -344,6 +432,14 @@ def main(argv: list[str] | None = None) -> int:
     p_poll = sub.add_parser("poll", help="run collectors")
     p_poll.add_argument("--source", action="append", help="only this collector (repeatable)")
     p_poll.set_defaults(func=cmd_poll)
+
+    p_poller = sub.add_parser(
+        "poller", help="poll on a loop (PATCHBAY_POLL_INTERVAL), stopping "
+        "promptly on SIGTERM; what the compose files run")
+    p_poller.add_argument("--wait", action="append", metavar="HOST:PORT",
+                          help="before the first poll, wait up to 5 minutes "
+                          "for this address to accept connections (repeatable)")
+    p_poller.set_defaults(func=cmd_poller)
 
     p_show = sub.add_parser("show", help="print a table from the model")
     p_show.add_argument("table", choices=["devices", "links", "subnets", "vlans", "endpoints"])
