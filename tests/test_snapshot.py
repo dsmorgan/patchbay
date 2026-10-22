@@ -42,6 +42,59 @@ def test_scrub_config_drops_private_key_blocks():
     assert "<redacted: private key block>" in out
 
 
+def test_scrub_config_covers_oxidized_secret_forms():
+    """#93: these forms came through with a redaction count of 0 — XML
+    elements in a firewall config.xml Oxidized backed up, IOS key chains,
+    ISAKMP and OSPF MD5 keys, SNMP host communities, any PEM key block, and
+    MikroTik `key=value` pairs whose value the keyword pattern swallowed."""
+    cases = {
+        "<prv>FAKEPRVB64</prv>": "FAKEPRVB64",
+        "<privatekey>FAKEWGKEY=</privatekey>": "FAKEWGKEY",
+        "<tls>FAKETLSB64==</tls>": "FAKETLSB64",
+        "<apikey>fakeapikey0123</apikey>": "fakeapikey0123",
+        "<Key>FAKE-psk</Key>": "FAKE-psk",
+        "<ldap_bindpw>FAKE-bind</ldap_bindpw>": "FAKE-bind",
+        "  key-string 7 0000FAKE0000": "0000FAKE0000",
+        " ip ospf message-digest-key 1 md5 7 1111FAKE1111": "1111FAKE1111",
+        "snmp-server host 192.0.2.9 version 2c FakeHostComm": "FakeHostComm",
+        "snmp-server host 192.0.2.9 traps version 2c FakeTrapComm": "FakeTrapComm",
+        "snmp-server host 192.0.2.9 FakeV1Comm": "FakeV1Comm",
+        "crypto isakmp key 0 FakeIsakmpKey address 192.0.2.1": "FakeIsakmpKey",
+        " tunnel key 8675309": "8675309",
+        "-----BEGIN OpenVPN Static key V1-----\nfeedfacefeedface\n"
+        "-----END OpenVPN Static key V1-----": "feedface",
+        "set [ find default=yes ] wpa2-pre-shared-key=FakeWifiKey":
+            "FakeWifiKey",
+    }
+    for line, secret in cases.items():
+        out, n = scrub_config(line)
+        assert secret not in out, line
+        assert n >= 1, line
+
+
+def test_scrub_config_one_line_key_block_does_not_swallow_the_rest():
+    cfg = ("a -----BEGIN PRIVATE KEY-----FAKE-----END PRIVATE KEY-----\n"
+           "hostname sw1\n")
+    out, _ = scrub_config(cfg)
+    assert "FAKE" not in out and "hostname sw1" in out
+
+
+def test_scrub_config_leaves_ordinary_lines_alone():
+    cfg = ("hostname sw1\n"
+           "interface GigabitEthernet0/1\n"
+           " description uplink to core\n"
+           " switchport mode trunk\n"
+           "router ospf 1\n"
+           " network 192.0.2.0 0.0.0.255 area 0\n"
+           "ntp server 192.0.2.123\n"
+           "snmp-server location rack 2\n"
+           "<interfaces><lan><if>em0</if><descr>LAN</descr></lan></interfaces>\n"
+           "<system><hostname>fw1</hostname><domain>example.net</domain></system>\n"
+           "-----BEGIN CERTIFICATE-----")
+    out, n = scrub_config(cfg)
+    assert out == cfg and n == 0
+
+
 def test_snapshot_generates_offline(clean_env, tmp_path):
     # no LibreNMS, no Oxidized: the snapshot still renders — no graphs and no
     # configs sections, everything else intact (graceful degradation)

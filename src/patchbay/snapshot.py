@@ -22,6 +22,7 @@ import httpx
 from . import db
 from . import routed
 from .config import Settings
+from .redact import redact_xml
 from .retention import alert_prunable, classify
 from .ports import port_kind
 
@@ -29,28 +30,46 @@ from .ports import port_kind
 # context up to the keyword, redact the rest. Overzealous by design: this
 # file lands on cloud storage, so err toward redacting too much.
 SECRET_PAT = re.compile(
-    r"(password|passwd|secret|community|pre-shared-key|psk\b|wpa\S*|"
+    # keyword suffixes stop at '=': in a `wpa2-pre-shared-key=...` pair the
+    # value is the secret, and \S* swallowed it as part of the keyword
+    r"(password|passwd|secret|community|pre-shared-key|psk\b|wpa[\w-]*|"
     r"auth(?:entication)?(?:-| )?(?:key|password|md5|sha)|"
     r"priv(?:acy)?(?:-| )?(?:key|password|protocol)|"
-    r"encrypted|private-key|otp\S*|totp\S*|\bseed\b|"
+    r"encrypted|private-key|otp[\w-]*|totp[\w-]*|\bseed\b|"
+    r"key-string|message-digest-key|(?:isakmp|tunnel) key\b|"
+    # the community string of `snmp-server host` follows the address and
+    # an optional notification type and version, with no keyword before it
+    r"snmp-server host \S+(?: (?:traps|informs))?(?: version (?:1|2c|3 \S+))?|"
     r"snmp-server user \S+|tacacs|radius[- ]server)",
     re.I)
 HASH_PAT = re.compile(r"\$\d+\w*\$\S+")  # $1$salt$hash and friends
+# any PEM key block, private or not: RSA/EC/ENCRYPTED PRIVATE KEY, an
+# OpenVPN static key, a PGP key block
+KEY_BEGIN = re.compile(
+    r"-----BEGIN [^-]*\bKEY\b[^-]*-----|BEGIN.*(?-i:PRIVATE KEY)", re.I)
+KEY_END = re.compile(
+    r"-----END [^-]*\bKEY\b[^-]*-----|END.*(?-i:PRIVATE KEY)", re.I)
 
 
 def scrub_config(text: str) -> tuple[str, int]:
-    """Redact secrets from a device config; returns (scrubbed text, count)."""
+    """Redact secrets from a device config; returns (scrubbed text, count).
+    Secret-bearing XML elements (a config.xml Oxidized backed up from a
+    firewall) go through the same element rules as patchbay's own firewall
+    history first; then each line is checked for secret keywords."""
+    text, redacted = redact_xml(text)
     out: list[str] = []
-    redacted = 0
     in_key_block = False
     for line in text.splitlines():
-        if "PRIVATE KEY" in line and "BEGIN" in line.upper():
-            in_key_block = True
+        begin = KEY_BEGIN.search(line)
+        if begin:
+            # a block that also ends on this line (an escaped one-liner) is
+            # dropped whole, without swallowing the lines after it
+            in_key_block = not KEY_END.search(line, begin.end())
             redacted += 1
             out.append("<redacted: private key block>")
             continue
         if in_key_block:
-            if "PRIVATE KEY" in line and "END" in line.upper():
+            if KEY_END.search(line):
                 in_key_block = False
             continue
         if HASH_PAT.search(line):
