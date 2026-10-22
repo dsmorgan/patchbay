@@ -17,6 +17,7 @@
   .snapgraphs figure { margin: 0; }
   .snapgraphs figcaption { color: var(--muted); font-size: 0.72rem;
                            font-family: ui-monospace, Menlo, monospace; }
+  .snapnote { font-size: 0.8rem; margin: 0.5rem 0 0; }
   .snapgraphs img { max-width: 640px; width: 100%; border-radius: 6px; }
 </style>
 </head>
@@ -94,6 +95,8 @@ network.{% endif %}</p>
       <img src="{{ g.uri }}" alt="{{ d.name }} {{ g.iface }} traffic"></figure>
     {% endfor %}
   </div>
+  {% elif d.graphs_missing %}
+  <p class="muted snapnote">Traffic graphs unavailable: LibreNMS was unreachable when this snapshot was generated ({{ graphs_error }}).</p>
   {% endif %}
 </section>
 {% endfor %}

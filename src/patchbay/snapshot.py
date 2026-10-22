@@ -71,6 +71,11 @@ def _data_uri(body: bytes | str, ctype: str) -> str:
     return f"data:{ctype.split(';')[0]};base64,{base64.b64encode(raw).decode()}"
 
 
+# A LibreNMS that doesn't answer must not hold a break-glass snapshot hostage:
+# 3 s to connect, 5 s per read, and the first failure ends graph fetching.
+GRAPH_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
+
+
 def generate(settings: Settings) -> str:
     """Render the snapshot HTML. Requires the web extra (jinja2/fastapi) —
     the generator reuses the live UI's graph builder, templates, and proxies."""
@@ -138,12 +143,21 @@ def generate(settings: Settings) -> str:
             if iface and iface not in ("?", "") and not dev.startswith("unmanaged@"):
                 linked_ports.add((dev, iface))
     graphs_by_dev: dict[str, list[dict]] = {}
-    for dev, iface in sorted(linked_ports):
-        got = web.fetch_graph_image(settings, dev, iface, "port_bits", 24, 620)
-        if got:
-            graphs_by_dev.setdefault(dev, []).append(
-                {"iface": iface, "uri": _data_uri(*got)})
-
+    graphs_error: str | None = None
+    if settings.librenms_url and settings.librenms_token:
+        for dev, iface in sorted(linked_ports):
+            try:
+                got = web.fetch_graph_image(settings, dev, iface, "port_bits", 24, 620,
+                                            timeout=GRAPH_TIMEOUT)
+            except web.GraphSourceError as e:
+                # LibreNMS is down — the outage this file exists for. Skip
+                # every remaining graph (one dead host costs one timeout, not
+                # one per port) and say so where the graphs would be.
+                graphs_error = str(e)
+                break
+            if got:
+                graphs_by_dev.setdefault(dev, []).append(
+                    {"iface": iface, "uri": _data_uri(*got)})
     # latest configs: patchbay-held firewall revisions first, then Oxidized,
     # all scrubbed; an unreachable Oxidized means a snapshot without its
     # configs, never no snapshot.
@@ -174,6 +188,8 @@ def generate(settings: Settings) -> str:
         d["ports"] = ports_by_dev.get(d["name"], [])
         d["tunnels"] = tunnels_by_dev.get(d["name"], [])
         d["graphs"] = graphs_by_dev.get(d["name"], [])
+        d["graphs_missing"] = bool(graphs_error) and not d["graphs"] and any(
+            dev == d["name"] for dev, _ in linked_ports)
 
     d3_js = (Path(__file__).parent / "static" / "d3.v7.min.js").read_text(encoding="utf-8")
     # the UI typeface rides along as a data URI, so the snapshot is set in
@@ -182,7 +198,7 @@ def generate(settings: Settings) -> str:
     font_url = "data:font/woff2;base64," + base64.b64encode(font).decode()
     return web.templates.env.get_template("snapshot.html").render(
         graph_json=graph_json, routed_json=routed_json, peak_ready=peak_ready, d3_js=d3_js,
-        generated=time.strftime("%Y-%m-%d %H:%M %Z"), ages=ages,
+        graphs_error=graphs_error, generated=time.strftime("%Y-%m-%d %H:%M %Z"), ages=ages,
         devices=devices, links=links, vlans=vlans, subnets=subnets,
         endpoints=endpoints, gateways=gateways, configs=configs,
         n_ipam=n_ipam, is_demo=is_demo, font_url=font_url, totals=totals,

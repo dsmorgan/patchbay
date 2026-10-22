@@ -201,3 +201,76 @@ def test_snapshot_embeds_firewall_history_scrubbed(clean_env, tmp_path):
     assert "<h2>Device configs (redacted)</h2>" in t
     assert "hostname&gt;fw1" in t                  # the latest revision is in
     assert "leftover-snmp-secret" not in t         # second scrub layer caught it
+
+
+def _librenms_down(clean_env, tmp_path):
+    """A seeded DB with LibreNMS configured at a port nothing listens on."""
+    from tests.test_web import seed
+
+    seed(str(tmp_path / "test.db"))
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    clean_env.setenv("LIBRENMS_URL", "http://127.0.0.1:9")
+    clean_env.setenv("LIBRENMS_TOKEN", "t0ken")
+
+
+def test_snapshot_survives_unreachable_librenms(clean_env, tmp_path):
+    """The outage the break-glass file exists for: LibreNMS is down, so the
+    graphs are skipped with a note and the snapshot is still written."""
+    _librenms_down(clean_env, tmp_path)
+    from patchbay.config import load_settings
+    from patchbay.snapshot import write_snapshot
+
+    path = write_snapshot(load_settings())
+    t = path.read_text()
+    assert (tmp_path / "snaps" / "patchbay-latest.html").exists()
+    assert 'id="dev-sw1"' in t and 'id="dev-hyp1"' in t       # tables intact
+    assert "const SNAPSHOT = true" in t                        # topology intact
+    assert "Traffic graphs unavailable" in t and "ConnectError" in t
+    assert "data:image/png" not in t
+    assert "127.0.0.1:9" not in t and "t0ken" not in t        # no URL or token leaks
+
+
+def test_snapshot_stops_graph_fetching_after_first_transport_error(clean_env, tmp_path, monkeypatch):
+    """One dead host costs one timeout, not one per linked port; and the
+    short snapshot timeout is what gets passed down."""
+    _librenms_down(clean_env, tmp_path)
+    from patchbay import snapshot, web
+    from patchbay.config import load_settings
+
+    calls = []
+
+    def boom(settings, dev, iface, gtype, hours, w, timeout=20):
+        calls.append((dev, iface, timeout))
+        raise web.GraphSourceError("ConnectTimeout")
+
+    monkeypatch.setattr(web, "fetch_graph_image", boom)
+    t = snapshot.generate(load_settings())
+    assert len(calls) == 1                       # two linked ports, one attempt
+    assert calls[0][2] is snapshot.GRAPH_TIMEOUT
+    assert snapshot.GRAPH_TIMEOUT.connect <= 5 and snapshot.GRAPH_TIMEOUT.read <= 10
+    assert t.count("Traffic graphs unavailable") == 2    # both linked devices
+    assert "ConnectTimeout" in t
+
+
+def test_alert_snapshot_survives_unreachable_librenms(clean_env, tmp_path):
+    """snapshot-on-critical goes through the same generate()."""
+    _librenms_down(clean_env, tmp_path)
+    from patchbay import snapshot
+    from patchbay.config import load_settings
+
+    path = snapshot.write_snapshot(load_settings(), alert_keep=5, stamp=1_700_000_000)
+    assert path.exists() and "Traffic graphs unavailable" in path.read_text()
+
+
+def test_fetch_graph_image_raises_source_error_on_transport_failure(clean_env, tmp_path):
+    import pytest
+    from patchbay import web
+    from patchbay.config import load_settings
+
+    _librenms_down(clean_env, tmp_path)
+    with pytest.raises(web.GraphSourceError):
+        web.fetch_graph_image(load_settings(), "sw1", "1/0/1", "port_bits")
+    # unconfigured stays "no graph", not an error
+    clean_env.delenv("LIBRENMS_URL")
+    assert web.fetch_graph_image(load_settings(), "sw1", "1/0/1", "port_bits") is None
+

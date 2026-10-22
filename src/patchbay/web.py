@@ -2193,11 +2193,26 @@ def _add_zero_line(svg: str) -> str:
     return svg
 
 
+class GraphSourceError(Exception):
+    """LibreNMS could not be reached (connection error or timeout). Distinct
+    from "no such graph" (None) so a caller can stop asking and say why."""
+
+
 def fetch_graph_image(settings, device: str, iface: str | None, gtype: str,
-                      hours: int = 24, w: int = 700) -> tuple[bytes | str, str] | None:
+                      hours: int = 24, w: int = 700,
+                      timeout: float | httpx.Timeout = 20,
+                      ) -> tuple[bytes | str, str] | None:
     """(body, content-type) for a LibreNMS-rendered graph, recolored to the
-    patchbay palette. None when LibreNMS is unconfigured or has no such graph.
+    patchbay palette. None when LibreNMS is unconfigured or has no such graph;
+    GraphSourceError when it is configured but unreachable.
     Shared by the /graph proxy and the snapshot generator."""
+    try:
+        return _fetch_graph_image(settings, device, iface, gtype, hours, w, timeout)
+    except httpx.TransportError as e:   # connect/read/timeout failures
+        raise GraphSourceError(type(e).__name__) from e
+
+
+def _fetch_graph_image(settings, device, iface, gtype, hours, w, timeout):
     if not (settings.librenms_url and settings.librenms_token):
         return None
     conn = _conn()
@@ -2221,7 +2236,7 @@ def fetch_graph_image(settings, device: str, iface: str | None, gtype: str,
     finally:
         conn.close()
     from urllib.parse import quote
-    with httpx.Client(verify=settings.tls_verify, timeout=20) as client:
+    with httpx.Client(verify=settings.tls_verify, timeout=timeout) as client:
         for cand in cands:
             if iface is None:
                 # only render health graphs backed by actual sensors — the
@@ -2269,7 +2284,10 @@ def graph(device: str, iface: str | None = None, gtype: str = "port_bits",
     elif gtype not in GRAPH_TYPES:
         raise HTTPException(400, f"graph type must be one of {sorted(GRAPH_TYPES)}")
     settings = load_settings()
-    got = fetch_graph_image(settings, device, iface, gtype, hours, w)
+    try:
+        got = fetch_graph_image(settings, device, iface, gtype, hours, w)
+    except GraphSourceError:
+        raise HTTPException(502, "LibreNMS is unreachable")
     if got is None:
         raise HTTPException(404, "no graph for this port")
     body, ctype = got
