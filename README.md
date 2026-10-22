@@ -42,6 +42,7 @@ cp .env.example .env                          # fill in the tools you already ru
 patchbay poll                                 # run every configured collector
 patchbay show devices|links|subnets|vlans|endpoints
 patchbay web                                  # dashboard on :8080 (the app default)
+patchbay backup patchbay-backup.db            # consistent, private copy of the database
 ```
 
 Same code either way — the difference is what runs it. The container starts

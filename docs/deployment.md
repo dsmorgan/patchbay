@@ -410,13 +410,96 @@ this recreates the `oxidized` container; if you reached its API from another
 machine, put an authenticating reverse proxy in front or use an SSH tunnel
 to the host.
 
+## Back up and restore
+
+`./data/patchbay.db` holds state that nothing can regenerate: your
+notification webhook URLs, silences, alert rules, the key that redacts config
+history, and the history itself. The next poll rebuilds the device model, but
+not these. Back the file up with `patchbay backup`, not with `cp`: while the
+poller writes, a plain copy can capture a half-finished transaction, but
+`backup` uses SQLite's backup API and always produces a consistent database.
+
+**The backup file contains secrets.** Treat it like `data/.env`. `patchbay
+backup` creates it with mode 600 and refuses to write inside
+`PATCHBAY_SNAPSHOT_DELIVER_DIR`, because the off-host share is meant to be
+read by a sync client. Encrypt a backup before it leaves your control.
+
+### Back up
+
+Run the command inside the container. It runs as uid 10001, the owner of
+`/data`, and the stack keeps running:
+
+```sh
+docker compose -f docker-compose.stack.yml exec patchbay \
+  patchbay backup /data/backups/patchbay-$(date +%F).db
+```
+
+The command creates `/data/backups` (mode 700) if needed, prints the path and
+size, and exits non-zero on failure. Pass a directory instead of a file to get
+a timestamped name, and `--force` to overwrite an existing file.
+
+On the host, the file appears at `data/backups/` owned by 10001 with mode 600,
+so copy it with `sudo`, then restrict the copy:
+
+```sh
+sudo cp data/backups/patchbay-2026-01-01.db /safe/place/
+sudo chown "$USER" /safe/place/patchbay-2026-01-01.db
+```
+
+A backup of `patchbay.db` doesn't cover everything. Also back up
+`data/.env` (collector credentials) and `oxidized/repo/` (device config
+history), per [Where the state lives](#where-the-state-lives).
+
+To schedule backups, run the same `exec` command from the host's cron or a
+systemd timer, and prune old files yourself.
+
+### Restore
+
+These steps assume the bind-mounted `./data` of the quickstart. Stop **both**
+patchbay services first, so nothing holds the database open:
+
+```sh
+docker compose -f docker-compose.stack.yml stop patchbay patchbay-poller
+sudo cp /safe/place/patchbay-2026-01-01.db data/patchbay.db
+sudo rm -f data/patchbay.db-wal data/patchbay.db-shm data/patchbay.db-journal
+sudo chown 10001:10001 data/patchbay.db
+sudo chmod 600 data/patchbay.db
+docker compose -f docker-compose.stack.yml start patchbay patchbay-poller
+```
+
+Removing the `-wal`, `-shm`, and `-journal` files matters: a leftover one
+from the replaced database can corrupt the restored file. If you run
+as your own user instead of 10001, use that uid in the `chown`
+([Container user](#container-user-and-upgrading)).
+
+Open `/ops`. The next poll refreshes the device model, so the restored
+database is only as old as its backup for the state that polling can't
+rebuild.
+
+## Upgrade
+
+1. Back up, as in [Back up](#back-up).
+1. Read the **Upgrade notes** in the [CHANGELOG](../CHANGELOG.md) for every
+   release between your version and the new one. Some releases change the
+   container user or migrate stored data on first start.
+1. Pull the new image and recreate the containers:
+
+   ```sh
+   docker compose -f docker-compose.stack.yml pull
+   docker compose -f docker-compose.stack.yml up -d
+   ```
+
+1. Open `/ops`: the header shows the running version, and every source
+   should report `[ok]` after the first poll. If something is wrong, roll back
+   by pinning the previous image tag and [restoring](#restore) the backup.
+
 ## Where the state lives
 
 | Data | Where | Survives `compose down`? |
 |---|---|---|
 | LibreNMS database + RRD graphs | named volumes `dbdata`, `lnms_data` | yes — destroyed only by `down -v` |
 | Device config history (git) | `./oxidized/repo/` | yes — and nothing can regenerate it; back it up |
-| patchbay model + snapshots | `./data/` | yes |
+| patchbay model, silences, rules, webhooks + snapshots | `./data/` | yes — `patchbay.db` can't be regenerated; [back it up](#back-up-and-restore) |
 | LibreNMS API token | inside `dbdata` | destroyed by `down -v` — regenerate and update `data/.env` after |
 
 ## Tearing down
