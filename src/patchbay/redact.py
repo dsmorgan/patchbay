@@ -121,13 +121,15 @@ def strip_stamps(text: str) -> str:
     return STAMP_RE.sub(PLACEHOLDER, text)
 
 
-# scheme://userinfo@ — the authority ends at the first '/', '?', '#',
-# whitespace, or quote, so an '@' in a path is not mistaken for one; within
-# it the userinfo runs to the LAST '@' (httpx accepts an unencoded '@' in a
-# password). The lookbehind starts a scheme only at the head of its run, so
-# a long run of scheme characters is scanned once, not once per position.
+# scheme://userinfo@ — the userinfo runs to the LAST '@' before the first
+# '/', whitespace, or quote: httpx accepts an unencoded '@', '?', or '#' in a
+# password, so stopping earlier would show its tail. The cost is a query or
+# fragment holding an '@' with no path before it, which is masked too —
+# over-masking, never a leak. The lookbehind starts a scheme only at the head
+# of its run, so a long run of scheme characters is scanned once, not once
+# per position.
 _USERINFO_RE = re.compile(
-    r"(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*://)[^/?#\s'\"<>]*@", re.I)
+    r"(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*://)[^/\s'\"<>]*@", re.I)
 
 
 def hide_userinfo(text: str | None) -> str | None:

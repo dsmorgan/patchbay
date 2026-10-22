@@ -125,7 +125,12 @@ def test_rule_change_bumps_redaction_version():
     ("http://ox.example:8888", "http://ox.example:8888"),
     ("http://ox.example/a@b", "http://ox.example/a@b"),   # '@' in the path
     ("http://u:FAKE@pw@ox.example/a@b", "http://***@ox.example/a@b"),  # last '@'
-    ("url 'http://u:p@ss@ox.example:8888?q=a@b'", "url 'http://***@ox.example:8888?q=a@b'"),
+    # a raw '?' or '#' in the password is still masked; the price is that an
+    # '@' in a query with no path before it is masked too (over, not under)
+    ("http://u:FA?KE#pw@ox.example:8888/x", "http://***@ox.example:8888/x"),
+    ("url 'http://u:p@ss@ox.example:8888/n?q=a@b'",
+     "url 'http://***@ox.example:8888/n?q=a@b'"),
+    ("http://ox.example?q=a@b", "http://***@b"),
     ("mail admin@example.net", "mail admin@example.net"),
     (None, None),
     ("", ""),
