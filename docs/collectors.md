@@ -67,6 +67,7 @@ Use the `db` helpers — they upsert by natural key so repeated polls converge:
 | `db.upsert_endpoint(conn, mac=…, source=…, **fields)` | mac | MAC lowercased |
 | `db.upsert_subnet(conn, cidr=…, source=…, **fields)` | cidr | |
 | `db.save_raw(conn, source=…, endpoint=…, payload=…)` | — | raw API payload for debugging; auto-expires after 7 days |
+| `db.record_rates(conn, device, iface, in_bps=…, out_bps=…, in_errors=…, …)` | appends one sample | a port's rates for the load view and the port canaries; see [Reporting port rates](#reporting-port-rates) |
 
 Link `source` values carry meaning in the UI (color = who reported, dash =
 stated vs inferred) and in supersede logic (`lldp` > `unifi` >
@@ -84,6 +85,79 @@ was learned in, and that is part of the key: a MAC on a trunk is one row per
 VLAN it talks in. Write the VLAN number when your platform reports it (the
 routed view places trunked hosts by it) and leave the default `0` when it
 doesn't — the view then falls back to the port's access VLAN.
+
+## Reporting port rates
+
+A collector that can read traffic or error rates feeds two features by
+writing them to `rate_history`: the topology and routed views' load mode, and
+the port canaries, which flag a port whose error rate jumps far above its own
+past. Both are optional. A collector that never writes a rate loses neither
+its devices nor its links.
+
+```python
+db.record_rates(conn, device, iface,
+                in_bps=…, out_bps=…,
+                in_errors=…, out_errors=…,
+                in_discards=…, out_discards=…)   # every figure optional
+```
+
+Call it once per port per poll, inside `collect()`'s transaction like any
+other write. It returns `False` and writes nothing when every figure is `None`.
+
+- **Units are per second.** `in_bps` and `out_bps` are bits per second, as
+  integers: multiply a bytes-per-second figure by 8. The error and discard
+  figures are events per second, as floats. `in` is traffic received on the
+  port and `out` is traffic sent from it. Counters are not rates: if your
+  source reports a running total, divide the difference between two polls by
+  the seconds between them, and report nothing for the first poll, for a
+  negative difference (a wrap or a restart), and for a gap of several missed
+  polls. The UniFi collector's `_error_rates` does this.
+- **Omit what you don't know, and everything when the port isn't live.** Pass
+  `None` for a figure your source does not report. A source that caches the
+  last reading of a powered-off device or a down port must pass `None` for all
+  six: a stale rate recorded as current shows a dead link as busy, and a
+  repeated error reading counts as a fresh sample. This is the same rule as
+  speed and oper-status in [`upsert_interface`](#writing-into-the-model):
+  rates are liveness. Zero is a measurement, not an omission.
+- **Name things as you do everywhere else.** `device` and `iface` are the names
+  you pass to `upsert_device` and `upsert_interface`. The views and the rules
+  join on them, and the normalizer renames a device in `rate_history` when it
+  canonicalizes the name.
+- **Also set the interface's current rate.** `record_rates` is the history. The
+  load view reads a port's current utilization from the `in_bps` and `out_bps`
+  fields on `upsert_interface` and its 24-hour peak from `rate_history`. Both
+  divide by the port's `speed_bps`, or by the capacity an operator declares in
+  `PATCHBAY_CAPACITY`, so a port with no speed shows no load.
+- **Samples age out after 7 days.** The normalizer prunes `rate_history` on
+  every poll, so you never delete from it.
+
+### How the canaries read the samples
+
+The `port-canary` rule judges one counter at a time (`in_errors`,
+`out_errors`, `in_discards`, `out_discards`) on each port whose newest sample
+is under 15 minutes old. A port with no sample that recent says nothing about
+now.
+
+- **Baseline:** the 95th percentile of that counter over the past 7 days,
+  leaving out the last hour so a flood never becomes its own baseline. Only
+  samples where you reported the counter count, so omitting a counter you
+  can't read costs nothing, and writing `0.0` for one you can't read teaches
+  the baseline that the port is perfectly quiet.
+- **Raise:** the rate is at least `multiplier` times the baseline (default
+  100) and at least `floor` per second (default 50). A port with less than
+  `warmup_h` hours of samples (default 24) is judged against the floor alone.
+- **Hold and clear:** the alert holds until the rate falls below `clear` times
+  the baseline (default 10).
+- **Two looks:** the alert becomes active after two samples with different
+  timestamps, so one bad sample is quiet. A poll that records no new sample
+  is not a second look. If your source refreshes its figures less often than
+  patchbay polls, record a sample only when the figures are new: the same
+  reading stored twice counts as two looks.
+
+The built-in collectors report error rates only: LibreNMS from its ports
+listing, UniFi from counter differences. Nobody collects discards yet
+([#86](https://github.com/dsmorgan/patchbay/issues/86)), but the rule judges
+them as soon as a collector records them.
 
 ## Configuration
 
