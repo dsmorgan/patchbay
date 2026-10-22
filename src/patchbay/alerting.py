@@ -52,7 +52,8 @@ from typing import Protocol
 from . import db
 from .attention import (CABLE_RETAIN_DAYS, CANARY_CLEAR, CANARY_FLOOR, CANARY_FOR,
                         CANARY_MULTIPLIER, CANARY_WARMUP_H, DEVICE_DOWN_ROLES,
-                        DEVICE_STALE_S, DOWN_STATES, GATEWAY_LOSS_PCT, attention_items)
+                        DEVICE_STALE_S, DOWN_STATES, EVENT_WINDOW_S,
+                        GATEWAY_LOSS_PCT, attention_items)
 from .silences import describe
 
 # History retention: a quarter covers "has this happened before?", and the
@@ -640,25 +641,36 @@ def dispatch(notes: list[Notification], dispatcher: Dispatcher | None = None) ->
     (dispatcher or NullDispatcher()).send([n for n in notes if n.route != "none"])
 
 
-def open_count(conn: sqlite3.Connection) -> dict[str, int]:
-    """The rail badge's number (#118): the engine's own open alerts, one
-    cheap read of the `alerts` table — never an `attention_items` run, since
-    the rail renders on every page. Counted by severity (the site's
-    override applied, as the Rules tab saves it): pending and active, the
-    states the Active tab lists; silenced rows, and rows of a rule that has
-    been switched off since the last poll, are not.
+def open_count(conn: sqlite3.Connection, now: float | None = None) -> dict[str, int]:
+    """The rail badge's number (#118): the engine's own rows, one cheap read
+    of the `alerts` table — never an `attention_items` run, since the rail
+    renders on every page. Returns {severity: n}, empty when nothing counts.
+    It counts what the Active tab lists:
 
-    It is the engine's view, so it differs from the Active tab in three
-    ways, all deliberate: the tab also lists one-shot events (config-changed,
-    snapshot-failed) for 24 hours, which the engine records as already
-    cleared; it also lists link and canary items the engine holds back while
-    their device is down (`inhibited`); and the tab is live where this is
-    as of the last poll. Returns {severity: n}, empty when nothing is open."""
+    - open alerts, pending and active (the tab marks pending ones);
+    - one-shot events (config-changed, snapshot-failed) inside the tab's
+      window, which the engine stores as already cleared; one that was
+      silenced when it fired has no `active_at`, and one older than its
+      rule's last switch-on is hidden, as `_apply_rule_settings` hides it.
+
+    Silenced rows and rows of a rule switched off since the last poll are
+    left out at once, the severity override applies, as it does on the tab.
+
+    What it cannot match is the live part: the table is as of the last poll,
+    so a silence or a new item shows on the tab first; and the tab still
+    lists link and canary items the engine holds back (`inhibited`) while
+    their device is down, which never reach the table."""
+    now = db.now() if now is None else now
+    events = tuple(n for n, r in RULES.items() if r.event)
+    marks = ",".join("?" * len(events))
     return {r["sev"]: r["n"] for r in conn.execute(
         "SELECT COALESCE(NULLIF(r.severity, ''), a.severity) AS sev, COUNT(*) AS n "
         "FROM alerts a LEFT JOIN alert_rules r ON r.name = a.rule "
-        "WHERE a.state IN ('pending', 'active') AND COALESCE(r.enabled, 1) = 1 "
-        "GROUP BY sev")}
+        "WHERE COALESCE(r.enabled, 1) = 1 AND ("
+        "  a.state IN ('pending', 'active')"
+        f"  OR (a.state = 'cleared' AND a.rule IN ({marks}) AND a.active_at IS NOT NULL"
+        "      AND a.raised_at >= ? AND a.raised_at >= COALESCE(r.enabled_at, 0))) "
+        "GROUP BY sev", (*events, now - EVENT_WINDOW_S))}
 
 
 def prune_history(conn: sqlite3.Connection, now: float | None = None) -> None:

@@ -163,18 +163,38 @@ def test_pending_alerts_count_because_the_tab_lists_them(net):
     assert _badge(net.client.get("/").text)[1] == _active_rows(net.client) == 1
 
 
-def test_one_shot_events_stay_out_of_the_badge(net):
-    """The one place the engine's count and the tab differ by design: an
-    event (a config change) is recorded as already cleared, so it is news on
-    the tab for 24 hours and never an open alert."""
-    now = pdb.now()
-    net.sql("INSERT INTO config_revisions (device, fetched_at, sha, message, author, text) "
-            "VALUES ('sw1', ?, 'a1', 'base', 'x', '')", now - 7200)
-    net.sql("INSERT INTO config_revisions (device, fetched_at, sha, message, author, text) "
-            "VALUES ('sw1', ?, 'b2', 'edit', 'x', '')", now - 3600)
+def _config_change(net, now):
+    for sha, msg, age in (("a1", "base", 7200), ("b2", "edit", 3600)):
+        net.sql("INSERT INTO config_revisions (device, fetched_at, sha, message, author, "
+                "text) VALUES ('sw1', ?, ?, ?, 'x', '')", now - age, sha, msg)
+
+
+def test_one_shot_events_count_while_the_tab_lists_them(net, clean_env):
+    # the engine stores a config change as already cleared; the tab lists it
+    # for 24 hours, so the badge does too, in the muted "info" color
+    _config_change(net, pdb.now())
     net.poll()
     assert "sw1 config changed" in net.client.get("/alerts").text
-    assert _active_rows(net.client) == 1
+    assert _badge(net.client.get("/").text)[:2] == ("info", _active_rows(net.client)) \
+        == ("info", 1)
+
+    # past the window the badge drops it, as the tab does when the revision ages
+    net.sql("UPDATE alerts SET raised_at = raised_at - 90000")
+    assert _badge(net.client.get("/").text) is None
+
+    # switching its rule off hides it at once, on both
+    net.sql("UPDATE alerts SET raised_at = raised_at + 90000")
+    assert _badge(net.client.get("/").text) is not None
+    net.sql("UPDATE alert_rules SET enabled = 0 WHERE name = 'config-changed'")
+    assert _badge(net.client.get("/").text) is None
+    assert _active_rows(net.client) == 0
+
+
+def test_an_event_silenced_when_it_fired_never_counts(net, clean_env):
+    clean_env.setenv("PATCHBAY_EXPECT", "sw1")
+    _config_change(net, pdb.now())
+    net.poll()
+    assert _active_rows(net.client) == 0
     assert _badge(net.client.get("/").text) is None
 
 
