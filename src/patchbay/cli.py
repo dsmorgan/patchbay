@@ -209,7 +209,12 @@ def cmd_poller(args: argparse.Namespace) -> int:
         nonlocal seen
         seen += 1
         stop.set()
-        if seen > 1 and child and child.poll() is None:
+        busy = child is not None and child.poll() is None
+        if seen == 1 and busy:
+            print("[wait]  stopping after this poll (signal again to abort it)",
+                  flush=True)
+        elif seen > 1 and busy:
+            print("[warn] aborting the poll", file=sys.stderr, flush=True)
             child.terminate()
 
     signal.signal(signal.SIGTERM, on_signal)
@@ -231,6 +236,8 @@ def cmd_poller(args: argparse.Namespace) -> int:
             warned = warning
         stop.wait(interval)
     if seen > 1:
+        print("[warn] poller: stopped, and the last poll was cut short",
+              file=sys.stderr, flush=True)
         return 1   # the second signal cut a poll short
     print("[ok]   poller: stopped", flush=True)
     return 0

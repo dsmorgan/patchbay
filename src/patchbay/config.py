@@ -30,6 +30,9 @@ DECLARATION_VARS = (
 
 # Seconds between polls when PATCHBAY_POLL_INTERVAL is unset.
 POLL_INTERVAL_DEFAULT = 300.0
+# The longest interval honored: a larger one would overflow the timers that
+# sleep it, and no poller meant to run is quieter than a day.
+POLL_INTERVAL_MAX = 86400.0
 
 
 def read_poll_interval() -> tuple[float, str | None]:
@@ -56,6 +59,9 @@ def read_poll_interval() -> tuple[float, str | None]:
         return POLL_INTERVAL_DEFAULT, (
             f"{var}: {raw!r} is not a number of seconds, 1 or more — using "
             f"{POLL_INTERVAL_DEFAULT:.0f}")
+    if seconds > POLL_INTERVAL_MAX:
+        return POLL_INTERVAL_MAX, (
+            f"{var}: {raw!r} is over a day — using {POLL_INTERVAL_MAX:.0f}")
     return seconds, None
 
 
