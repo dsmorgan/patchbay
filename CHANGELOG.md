@@ -14,6 +14,20 @@ put.
   off-host delivery share. A directory path gets a timestamped name.
   `docs/deployment.md` has new "Back up and restore" and "Upgrade" sections.
   The backup holds every secret patchbay stores; keep it private.
+- Poller health (#111). `/healthz` needs no sign-in and answers `200 ok`
+  while the last poll is within three poll intervals (15 minutes by
+  default), `503 stale` otherwise; point an Uptime Kuma HTTP or keyword
+  (`ok`) monitor at it. The compose files give the web service a healthcheck
+  and run the new `patchbay poller` command, which stops within a second
+  between polls and lets a running poll finish (up to `stop_grace_period:
+  1m`). `PATCHBAY_POLL_INTERVAL` can also go in `data/.env`.
+
+  **Upgrade notes:** if you keep your own compose file, copy the changes:
+  replace the poller's `sh -c` loop with `command: ["patchbay", "poller"]`
+  (the stack file adds `"--wait", "librenms:8000"`), add
+  `stop_grace_period: 1m`, add `PATCHBAY_POLL_INTERVAL=${PATCHBAY_POLL_INTERVAL:-}`
+  to both patchbay services, and add the web healthcheck. Set the interval in
+  one place only.
 
 ### Fixed
 - On a host where an ACL blocks the data folder even though its owner is
