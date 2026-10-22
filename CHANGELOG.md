@@ -34,6 +34,27 @@ put.
   right (Synology shares), the startup error says so and gives the command
   that removes it; `docs/deployment.md` has a Synology section. The error
   no longer assumes the folder is `./data`.
+- Alert engine fixes (#110):
+  - A port canary needs two distinct samples, and a silenced canary keeps
+    its hysteresis instead of clearing mid-flood.
+  - Notifications go out in the order polls decided them, one dispatch at
+    a time; a raise whose alert has already cleared is dropped and shown as
+    `dropped` in History.
+  - A failed delivery-record write is kept beside the database and written
+    in once by the next dispatch.
+  - Re-enabling a rule no longer replays past events, and disabling one
+    sends a clear (`detail: "rule disabled"`) to generic webhooks that heard
+    its alerts.
+  - Silences and canaries handle devices named by MAC or IP address, and
+    expected-tunnel names are canonicalized.
+  - `REQUEST_S` is a wall-clock limit on each webhook request.
+
+  **Upgrade notes:** first start adds two columns and an index on
+  `rate_history` (seconds at most). Generic webhook payloads gain a `detail`
+  field. A dispatch that can't start within 40 s queues its notifications
+  for the next poll. If the database stays locked, delivery records wait in
+  `<db>-dispatch-*.json` files beside it, so keep that folder writable by
+  the patchbay user.
 
 ## [0.22.0] — 2026-10-22
 
