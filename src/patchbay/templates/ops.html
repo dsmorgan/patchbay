@@ -148,6 +148,29 @@ poll.</p>
   <div class="dclwarn" data-var="{{ d.var }}" {% if not d.warnings %}hidden{% endif %}>
     {% for w in d.warnings %}<div class="mono">⚠ {{ w }}</div>{% endfor %}
   </div>
+  {% if d.var == "PATCHBAY_EXPECT" %}
+  {# #69 stage 1: the deprecation notice. The wrapper renders always, so the
+     live swap has an element to replace; the button is found by delegation
+     below, because a swap discards its listener #}
+  <div id="expectnotice" data-live>
+  {% if expect %}
+  <div class="dclwarn" style="margin-top: 0">
+    <div><strong>PATCHBAY_EXPECT is deprecated.</strong> A future release
+      ignores it. A silence can expire and carry a reason; an entry here cannot.</div>
+    <div style="margin-top: 0.3rem">
+      {% if expect.pending %}{{ expect.pending }} of {{ expect.count }}
+        {{ "entry is" if expect.count == 1 else "entries are" }} not yet a silence.
+      {% else %}All {{ expect.count }} {{ "entry is" if expect.count == 1 else "entries are" }}
+        now permanent silences, so you can remove the variable.{% endif %}
+      <button class="act" data-expect-import
+              style="margin-left: 0.4rem; padding: 0.2rem 0.7rem; font-size: 0.75rem">import as silences</button>
+    </div>
+    <div class="muted" style="margin-top: 0.3rem">Importing twice creates no
+      duplicates. {{ expect.removal }}</div>
+  </div>
+  {% endif %}
+  </div>
+  {% endif %}
 {% endfor %}
 </div>
 <div id="dclexport" data-live>
@@ -181,6 +204,26 @@ Nothing on this page writes to that file.</p>
 </div>
 
 <script>
+// import PATCHBAY_EXPECT as silences (#69). Delegated: the notice is a
+// data-live region, and a swap discards listeners on its button.
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-expect-import]");
+  if (!b) return;
+  const out = document.getElementById("out");
+  b.disabled = true;
+  out.style.display = "";
+  out.textContent = "importing…";
+  try {
+    const r = await fetch("/ops/expect/import", {method: "POST"});
+    const body = await r.json();
+    out.textContent = (body.lines || [body.detail || r.statusText]).join("\n");
+    await window.patchbayRefreshLive();
+  } catch (err) {
+    out.textContent = `failed: ${err}`;
+    b.disabled = false;
+  }
+});
+
 document.querySelectorAll(".dclq").forEach(q => q.addEventListener("click", () => {
   const help = document.getElementById(`help-${q.dataset.var}`);
   help.hidden = !help.hidden;

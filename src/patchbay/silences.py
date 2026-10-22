@@ -19,9 +19,12 @@ surface reads the same answer: the Overview hides a silenced item, the
 alert engine stores it as `silenced` and dispatches nothing for it, and
 the /alerts page lists it on its own tab rather than not at all.
 
-`PATCHBAY_EXPECT` is legacy input: each entry is a permanent, read-only
-silence (a bare name is a device, `dev:iface` a port), shown in the same
-list. It is edited where it always was, on /ops.
+`PATCHBAY_EXPECT` is deprecated (#69). Until it is removed, each entry is
+a permanent, read-only silence (a bare name is a device, `dev:iface` a
+port), shown in the same list and edited on /ops. `import_expect()` turns
+the entries into ordinary permanent silences; once one exists, the legacy
+row it duplicates drops out of the list, so nothing is shown or counted
+twice, and removing the variable changes no coverage.
 
 Like `attention.py`, this imports no web framework: the poller calls it.
 """
@@ -47,6 +50,7 @@ REASON_MAX = 500
 
 ENV_SOURCE = "env"
 ENV_REASON = "declared expected (PATCHBAY_EXPECT)"
+IMPORT_REASON = "imported from PATCHBAY_EXPECT"
 
 
 _MAC = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}", re.I)
@@ -64,6 +68,12 @@ def is_address_name(name: str) -> bool:
     return True
 
 
+def expect_kind(spec: str) -> str:
+    """The silence kind a PATCHBAY_EXPECT entry has always meant: a bare
+    name, or a MAC or IP address, is a device; `dev:iface` is a port."""
+    return "port" if ":" in spec and not is_address_name(spec) else "device"
+
+
 def env_silences(settings) -> list[dict]:
     """PATCHBAY_EXPECT as silences. The id is a string, so no form can
     address one: an env-sourced row is read-only here, as env-won values
@@ -72,7 +82,7 @@ def env_silences(settings) -> list[dict]:
     for spec in sorted(getattr(settings, "expected", None) or ()):
         out.append({
             "id": f"env:{spec}",
-            "kind": "port" if ":" in spec and not is_address_name(spec) else "device",
+            "kind": expect_kind(spec),
             "scope": spec, "until": None, "reason": ENV_REASON,
             "created_by": "PATCHBAY_EXPECT", "created_at": None,
             "source": ENV_SOURCE,
@@ -85,9 +95,65 @@ def db_silences(conn: sqlite3.Connection) -> list[dict]:
         "SELECT * FROM alert_silences ORDER BY created_at DESC, id DESC")]
 
 
+def _permanent(rows: list[dict]) -> set[tuple[str, str]]:
+    return {(r["kind"], r["scope"]) for r in rows if r["until"] is None}
+
+
 def all_silences(conn: sqlite3.Connection, settings) -> list[dict]:
-    """Every silence, live or expired, env-sourced first."""
-    return env_silences(settings) + db_silences(conn)
+    """Every silence, live or expired, env-sourced first. A legacy
+    PATCHBAY_EXPECT row drops out when a permanent silence of the same kind
+    and scope exists (an import, or one made by hand): it would cover
+    nothing more, and the list would show it twice. Ending that silence
+    brings the legacy row back, because the variable still silences."""
+    rows = db_silences(conn)
+    imported = _permanent(rows)
+    legacy = [s for s in env_silences(settings)
+              if (s["kind"], s["scope"]) not in imported]
+    return legacy + rows
+
+
+def expect_pending(conn: sqlite3.Connection, settings) -> int:
+    """How many PATCHBAY_EXPECT entries no permanent silence covers yet."""
+    have = _permanent(db_silences(conn))
+    return sum((expect_kind(spec), spec) not in have
+               for spec in getattr(settings, "expected", None) or ())
+
+
+def import_expect(conn: sqlite3.Connection, settings, *, now: float,
+                  created_by: str) -> dict:
+    """Turn each PATCHBAY_EXPECT entry into a permanent silence with the
+    reason "imported from PATCHBAY_EXPECT" and the scope the legacy row has
+    (a bare name or an address is a device, `dev:iface` a port).
+
+    Idempotent: an entry that a permanent silence of the same kind and scope
+    already covers is skipped, so a second import, or an entry silenced by
+    hand, creates nothing. A timed silence is not equivalent: it ends, and
+    the entry would go unsilenced once the variable is removed. An entry
+    that does not validate as a silence is reported, never imported.
+
+    Returns {"created", "covered", "invalid"}, lists of entries (invalid
+    ones as (entry, reason)). Starts its own write transaction so two
+    imports cannot both see an entry missing; the caller commits. Call it
+    with no transaction open."""
+    conn.execute("BEGIN IMMEDIATE")
+    have = _permanent(db_silences(conn))
+    out = {"created": [], "covered": [], "invalid": []}
+    for spec in sorted(getattr(settings, "expected", None) or ()):
+        kind = expect_kind(spec)
+        if (kind, spec) in have:
+            out["covered"].append(spec)
+            continue
+        try:
+            row = parse({"kind": kind, "scope": spec, "hours": "permanent",
+                         "reason": IMPORT_REASON},
+                        now=now, created_by=created_by, categories=set())
+        except ValueError as e:
+            out["invalid"].append((spec, str(e)))
+            continue
+        add(conn, row)
+        have.add((kind, row["scope"]))
+        out["created"].append(spec)
+    return out
 
 
 def is_live(s: dict, now: float) -> bool:
@@ -225,4 +291,5 @@ def page_context(conn: sqlite3.Connection, settings, *, now: float | None = None
                                      if s["created_at"] else None})
     rows.sort(key=lambda s: not s["live"])     # stable: env first within each
     return {"silences": rows, "silence_kinds": KINDS, "durations": DURATIONS,
-            "default_hours": DEFAULT_HOURS}
+            "default_hours": DEFAULT_HOURS,
+            "expect_set": bool(getattr(settings, "expected", None))}

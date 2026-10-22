@@ -772,15 +772,19 @@ def _silence_back(f: dict[str, str]):
                             status_code=303)
 
 
+def _silence_author(request: Request, settings) -> str:
+    """`created_by` is what the auth gate knows: the OIDC identity when the
+    site signs in that way, else "operator"."""
+    who = getattr(request.state, "auth", None) if settings.auth_mode == "oidc" else None
+    return who or "operator"
+
+
 @app.post("/alerts/silences")
 def silence_add(request: Request, f: dict[str, str] = Depends(_form)):
-    """Add a silence, from the Silences tab or an Active row's button.
-    `created_by` is what the auth gate knows: the OIDC identity when the
-    site signs in that way, else "operator"."""
+    """Add a silence, from the Silences tab or an Active row's button."""
     settings = load_settings()
-    who = getattr(request.state, "auth", None) if settings.auth_mode == "oidc" else None
     try:
-        row = silences.parse(f, now=db.now(), created_by=who or "operator",
+        row = silences.parse(f, now=db.now(), created_by=_silence_author(request, settings),
                              categories=_silence_categories())
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -808,6 +812,46 @@ def silence_delete(sid: int, f: dict[str, str] = Depends(_form)):
     finally:
         conn.close()
     return _silence_back(f)
+
+
+@app.post("/ops/expect/import")
+def ops_expect_import(request: Request):
+    """Import PATCHBAY_EXPECT as permanent silences (#69, stage 1 of its
+    deprecation): the one-click action beside the variable on /ops. Answers
+    {"lines": [...]} for the action pane. Safe to repeat: an entry a
+    permanent silence already covers is reported, not duplicated."""
+    settings = load_settings()
+    if not settings.expected:
+        return {"lines": ["[ok]   PATCHBAY_EXPECT is not set: nothing to import"]}
+    conn = _conn()
+    try:
+        db.init(conn)
+        if conn.in_transaction:
+            conn.commit()
+        result = silences.import_expect(
+            conn, settings, now=db.now(), created_by=_silence_author(request, settings))
+        conn.commit()
+    finally:
+        conn.close()
+    lines = [f"[ok]   {silences.describe({'kind': silences.expect_kind(e), 'scope': e})}:"
+             " imported as a permanent silence" for e in result["created"]]
+    lines += [f"[skip] {e}: a permanent silence already covers it" for e in result["covered"]]
+    lines += [f"[warn] {e}: not imported ({why})" for e, why in result["invalid"]]
+    lines.append(f"{len(result['created'])} imported, {len(result['covered'])} already "
+                 f"covered, {len(result['invalid'])} not imported.")
+    if not result["invalid"]:
+        lines.append(_expect_removal_text(settings.declaration_sources.get("PATCHBAY_EXPECT")))
+    return {"lines": lines}
+
+
+def _expect_removal_text(source: str | None) -> str:
+    """How the operator finishes the migration: patchbay never edits the env
+    file, so the removal is theirs."""
+    if source == "env":
+        return ("To finish, delete the PATCHBAY_EXPECT line from your env file "
+                "and restart patchbay. Coverage does not change.")
+    return ("To finish, clear the PATCHBAY_EXPECT field under Declarations "
+            "and click save. Coverage does not change.")
 
 
 # -- retire a cable (#79) -------------------------------------------------------
@@ -1801,10 +1845,12 @@ def ops(request: Request):
     last_poll = None
     ages: dict = {}
     conflicts: list = []
+    expect_pending = len(settings.expected)   # unknown: assume none imported
     conn = None
     try:
         conn = _conn()
         db.init(conn)
+        expect_pending = silences.expect_pending(conn, settings)
         raw_lp = db.get_state(conn, "last_poll")
         if raw_lp:
             try:
@@ -1831,6 +1877,11 @@ def ops(request: Request):
                      and not w.startswith("could not read stored declarations")],
         "unreadable": not readable,
         "decls": decls,
+        # the PATCHBAY_EXPECT deprecation notice (#69): only while it is set
+        "expect": ({"count": len(settings.expected), "pending": expect_pending,
+                    "removal": _expect_removal_text(
+                        settings.declaration_sources.get("PATCHBAY_EXPECT"))}
+                   if settings.expected else None),
         "export": "\n".join(f'{v}="{stored[v]}"' for v in DECLARATION_VARS
                             if stored.get(v)),
         "last_poll": last_poll,
