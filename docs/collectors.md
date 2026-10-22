@@ -19,6 +19,14 @@ class Collector(Protocol):
   after your return and **rolled back if you raise**. Raise freely on API
   failure — a half-finished collection must never land. Never call
   `conn.commit()` yourself.
+- **Fetch first, then write.** The transaction takes SQLite's write lock at
+  your first write and holds it until the caller commits, so make every
+  network call before your first write and keep the write phase free of
+  I/O. Reads (`SELECT`) don't take the lock and may come at any point.
+  While a collector holds the lock, every save in the web UI and the other
+  process's poll wait on it. A collector that interleaves requests and
+  writes still works, but it locks the UI out for the length of its
+  collection. The built-in collectors each fetch into memory, then write.
 - Return a one-line human summary (`"5 devices, 209 ports"`); it shows on
   `/ops` and in poll logs.
 - Timeouts on every network call. A hung collector stops the whole poll.
@@ -115,4 +123,6 @@ Capture a **sanitized** API payload (fake hostnames, RFC 5737/3849 addresses,
 scrubbed serials — never real site data; see the repo rule in README) as a
 JSON fixture, then drive `collect()` against an in-memory SQLite DB with the
 HTTP layer stubbed. Assert on the resulting model rows, not on internals.
-`tests/` has one of these per built-in collector to copy from.
+`tests/` has one of these per built-in collector to copy from. To check
+fetch-then-write, have the stub assert `not conn.in_transaction` on every
+request, as `test_collectors_fetch_before_they_write` does.

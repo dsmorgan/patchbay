@@ -215,79 +215,92 @@ class OxidizedCollector:
         base = settings.oxidized_url.rstrip("/")
         parsed = []
         seen_vids: set[int] = set()
+        # every config is fetched before the first write: the caller's
+        # transaction holds SQLite's write lock from then on (#109)
+        configs: dict[str, str] = {}
         with httpx.Client(verify=settings.tls_verify, timeout=20) as client:
             r = client.get(f"{base}/nodes.json")
             r.raise_for_status()
             nodes = r.json()
-            # before #98 an IP-named node was cut to its first octet; hand
-            # that name's rows to the node's full name (when only one node
-            # cut to it)
-            renames: dict[str, set[str]] = {}
-            for node in nodes:
-                n = node.get("name") or node.get("full_name") or ""
-                renames.setdefault(n.split(".")[0].lower(), set()).add(canonical_name(n))
-            retire_source_names(conn, NAME, renames)
             for node in nodes:
                 model = (node.get("model") or "").lower()
-                parser = PARSERS.get(model)
                 status = (node.get("last") or {}).get("status") or node.get("status")
-                if parser is None or status != "success":
+                if model not in PARSERS or status != "success":
                     continue
                 full = node.get("full_name") or node.get("name")
                 cr = client.get(f"{base}/node/fetch/{full}")
-                if cr.status_code != 200:
-                    continue
-                # the same name every other source's row merges under: an
-                # IP-named node stays whole instead of becoming its octet
-                dev = canonical_name(node.get("name") or full)
-                # config text parsed, then dropped
-                names, rows, roles = parser(cr.text)
-                if not rows and not names:
-                    # a fetched config that parses to nothing is a dialect the
-                    # parser doesn't understand (firmware change, truncated
-                    # backup) — keep the last good membership, don't wipe it
-                    continue
-                if model == "ironware" and 1 in names:
-                    # FastIron: ports untagged in no VLAN sit in the default VLAN
-                    untagged_elsewhere = {i for i, v, t in rows if not t and v != 1}
-                    physical = [x[0] for x in conn.execute(
-                        "SELECT i.name FROM interfaces i JOIN devices d ON d.id = i.device_id "
-                        "WHERE d.name = ?", (dev,)) if port_kind(x[0]) == "physical"]
-                    rows += [(p, 1, False) for p in physical
-                             if p not in untagged_elsewhere
-                             and not any(r0 == p and v0 == 1 for r0, v0, _ in rows)]
-                # source-scoped like the port_roles delete below: a device-only
-                # delete could remove rows another writer owns if parsers and
-                # firewall/vsphere sources ever overlap on a device name
-                conn.execute("DELETE FROM port_vlans WHERE device = ? AND source = ?",
-                             (dev, NAME))
-                conn.execute("DELETE FROM port_roles WHERE device = ? AND source = ?",
-                             (dev, NAME))
-                for iface, role, detail in roles:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO port_roles "
-                        "(device, interface, role, detail, source) VALUES (?, ?, ?, ?, ?)",
-                        (dev, iface, role, detail, NAME))
-                # config evidence replaces prior trunk *assumptions* (but never
-                # a live Q-BRIDGE report) for this device
-                conn.execute("DELETE FROM device_vlans WHERE device = ? AND source = 'trunk'",
-                             (dev,))
-                for iface, vid, tag in rows:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO port_vlans (device, interface, vid, tagged, source) "
-                        "VALUES (?, ?, ?, ?, ?)", (dev, iface, vid, int(tag), NAME))
-                    conn.execute(
-                        "INSERT OR IGNORE INTO device_vlans (device, vid, source) "
-                        "VALUES (?, ?, 'config')", (dev, vid))
-                for vid, vname in names.items():
-                    conn.execute(
-                        "INSERT INTO vlans (vid, name, source, last_seen) VALUES (?, ?, ?, ?) "
-                        "ON CONFLICT(vid) DO UPDATE SET last_seen=excluded.last_seen, "
-                        "name=COALESCE(vlans.name, excluded.name)",
-                        (vid, vname or None, NAME, db.now()))
-                seen_vids |= set(names)
-                parsed.append(f"{dev}: {len(rows)} port/vlan rows"
-                              + (f", {len(roles)} monitor ports" if roles else ""))
+                if cr.status_code == 200:
+                    configs[full] = cr.text
+
+        # the write phase: no network I/O from here on
+        # before #98 an IP-named node was cut to its first octet; hand
+        # that name's rows to the node's full name (when only one node
+        # cut to it)
+        renames: dict[str, set[str]] = {}
+        for node in nodes:
+            n = node.get("name") or node.get("full_name") or ""
+            renames.setdefault(n.split(".")[0].lower(), set()).add(canonical_name(n))
+        retire_source_names(conn, NAME, renames)
+        for node in nodes:
+            model = (node.get("model") or "").lower()
+            parser = PARSERS.get(model)
+            status = (node.get("last") or {}).get("status") or node.get("status")
+            if parser is None or status != "success":
+                continue
+            full = node.get("full_name") or node.get("name")
+            if full not in configs:
+                continue
+            # the same name every other source's row merges under: an
+            # IP-named node stays whole instead of becoming its octet
+            dev = canonical_name(node.get("name") or full)
+            # config text parsed, then dropped
+            names, rows, roles = parser(configs[full])
+            if not rows and not names:
+                # a fetched config that parses to nothing is a dialect the
+                # parser doesn't understand (firmware change, truncated
+                # backup) — keep the last good membership, don't wipe it
+                continue
+            if model == "ironware" and 1 in names:
+                # FastIron: ports untagged in no VLAN sit in the default VLAN
+                untagged_elsewhere = {i for i, v, t in rows if not t and v != 1}
+                physical = [x[0] for x in conn.execute(
+                    "SELECT i.name FROM interfaces i JOIN devices d ON d.id = i.device_id "
+                    "WHERE d.name = ?", (dev,)) if port_kind(x[0]) == "physical"]
+                rows += [(p, 1, False) for p in physical
+                         if p not in untagged_elsewhere
+                         and not any(r0 == p and v0 == 1 for r0, v0, _ in rows)]
+            # source-scoped like the port_roles delete below: a device-only
+            # delete could remove rows another writer owns if parsers and
+            # firewall/vsphere sources ever overlap on a device name
+            conn.execute("DELETE FROM port_vlans WHERE device = ? AND source = ?",
+                         (dev, NAME))
+            conn.execute("DELETE FROM port_roles WHERE device = ? AND source = ?",
+                         (dev, NAME))
+            for iface, role, detail in roles:
+                conn.execute(
+                    "INSERT OR REPLACE INTO port_roles "
+                    "(device, interface, role, detail, source) VALUES (?, ?, ?, ?, ?)",
+                    (dev, iface, role, detail, NAME))
+            # config evidence replaces prior trunk *assumptions* (but never
+            # a live Q-BRIDGE report) for this device
+            conn.execute("DELETE FROM device_vlans WHERE device = ? AND source = 'trunk'",
+                         (dev,))
+            for iface, vid, tag in rows:
+                conn.execute(
+                    "INSERT OR REPLACE INTO port_vlans (device, interface, vid, tagged, source) "
+                    "VALUES (?, ?, ?, ?, ?)", (dev, iface, vid, int(tag), NAME))
+                conn.execute(
+                    "INSERT OR IGNORE INTO device_vlans (device, vid, source) "
+                    "VALUES (?, ?, 'config')", (dev, vid))
+            for vid, vname in names.items():
+                conn.execute(
+                    "INSERT INTO vlans (vid, name, source, last_seen) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(vid) DO UPDATE SET last_seen=excluded.last_seen, "
+                    "name=COALESCE(vlans.name, excluded.name)",
+                    (vid, vname or None, NAME, db.now()))
+            seen_vids |= set(names)
+            parsed.append(f"{dev}: {len(rows)} port/vlan rows"
+                          + (f", {len(roles)} monitor ports" if roles else ""))
         # prune VLANs no parsed config defines any more: this source's rows
         # only, never one something still claims (a skipped or unparseable
         # device keeps its port_vlans rows, and those claims protect its

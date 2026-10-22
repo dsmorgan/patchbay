@@ -2655,3 +2655,80 @@ def test_opnsense_answered_empty_leases_still_leave_endpoints_alone(conn, clean_
     monkeypatch.setattr(httpx, "Client", _OnsClient)
     OpnsenseCollector().collect(_ons_settings(clean_env), conn)
     assert conn.execute("SELECT COUNT(*) FROM endpoints").fetchone()[0] == 1
+
+
+# --- #109: no network I/O inside the write transaction ------------------------
+# The caller's transaction takes SQLite's write lock at a collector's first
+# write and holds it until the commit. A request made after that point kept
+# every UI save (and the other process's poll) waiting on the lock for the
+# length of the collection. Each built-in collector fetches, then writes.
+
+def _no_io_in_transaction(client_cls, conn):
+    class Guarded(client_cls):
+        def get(self, *a, **k):
+            assert not conn.in_transaction, "HTTP request inside the write transaction"
+            return super().get(*a, **k)
+
+        def post(self, *a, **k):
+            assert not conn.in_transaction, "HTTP request inside the write transaction"
+            return super().post(*a, **k)
+    return Guarded
+
+
+class _OxTwoNodes(_OxClient):
+    nodes = [{"name": n, "full_name": n, "model": "ironware",
+              "last": {"status": "success"}}
+             for n in ("sw1.example.net", "sw2.example.net")]
+
+
+def _ipam_settings(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("IPAM_URL", "https://ipam.example/api")
+    clean_env.setenv("IPAM_APP_ID", "app")
+    clean_env.setenv("IPAM_TOKEN", "t")
+    return load_settings()
+
+
+@pytest.mark.parametrize("name, client, settings", [
+    ("librenms", "_LnmsFdbClient", _lnms_settings),
+    ("unifi", "_UnifiClient", _unifi_settings),
+    ("opnsense", "_OnsClientVpn", _ons_settings),
+    ("opnsense", "_OnsClientWithConfig", _ons_settings),
+    ("pfsense", "_PfClientVpn", _pf_settings),
+    ("phpipam", "_IpamAddresses", _ipam_settings),
+    ("oxidized", "_OxTwoNodes", _ox_settings),
+])
+def test_collectors_fetch_before_they_write(conn, clean_env, monkeypatch,
+                                            name, client, settings):
+    from patchbay.collectors import all_collectors
+
+    # the previous collector's commit: each one starts outside a transaction
+    pdb.upsert_device(conn, name="sw1", source="librenms")
+    conn.commit()
+    monkeypatch.setattr(httpx, "Client", _no_io_in_transaction(globals()[client], conn))
+    all_collectors()[name].collect(settings(clean_env), conn)
+    assert conn.in_transaction       # it did write, after every request
+
+
+def test_vsphere_reads_vcenter_before_it_writes(conn, clean_env, monkeypatch):
+    """pyVmomi fetches a managed object's property on access, so a walk
+    of the inventory between writes is a vCenter round trip per access."""
+    from patchbay.collectors.vsphere import VsphereCollector
+
+    class Watched:
+        def __init__(self, obj):
+            object.__setattr__(self, "_obj", obj)
+
+        def __getattr__(self, attr):
+            assert not conn.in_transaction, f"vCenter read of {attr!r} mid-transaction"
+            return getattr(self._obj, attr)
+
+    hyp = _vs_host("hyp1", portgroups=[("PG13", 13)])
+    vm = _vs_vm("vm-a", hyp, nics=[_VEthCard("02:00:00:00:0f:03", "PG13")])
+    vm.runtime.host = Watched(hyp)
+    _vs_stub(monkeypatch, [Watched(hyp)], [Watched(vm)])
+    conn.commit()
+    VsphereCollector().collect(_vs_settings(clean_env), conn)
+    assert conn.in_transaction
+    assert conn.execute("SELECT parent FROM devices WHERE name = 'vm-a'"
+                        ).fetchone()[0] == "hyp1"

@@ -38,132 +38,135 @@ class PhpIpamCollector:
 
     def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
         n_subnets = n_vlans = n_addrs = 0
+        # fetch everything before the first write: the caller's transaction
+        # holds SQLite's write lock from then until it commits (#109), and
+        # a timeout on subnet 40 of 50 must not leave a gutted address book
         with httpx.Client(verify=settings.tls_verify, timeout=15) as client:
             vlans = self._get(client, settings, "vlan/")
-            db.save_raw(conn, source=NAME, endpoint="vlan/", payload=vlans)
-            for v in vlans:
-                vid = int(v.get("number") or 0)
-                if vid:
-                    conn.execute(
-                        "INSERT INTO vlans (vid, name, source, last_seen) VALUES (?, ?, ?, ?) "
-                        "ON CONFLICT(vid) DO UPDATE SET name=excluded.name, last_seen=excluded.last_seen",
-                        (vid, v.get("name"), NAME, db.now()),
-                    )
-                    n_vlans += 1
-            # prune VLANs deleted from IPAM: this collector's rows only, and
-            # never one a device still claims — IPAM dropping its record of a
-            # real VLAN just demotes it to "no subnet documented in IPAM".
-            # Guarded on a non-empty listing: a failed or empty answer keeps
-            # last good data, same as the address book below.
-            if vlans:
-                seen_vids = [int(v.get("number") or 0) for v in vlans
-                             if v.get("number")]
-                conn.execute(
-                    "DELETE FROM vlans WHERE source = ? "
-                    f"AND vid NOT IN ({','.join('?' * len(seen_vids))}) "
-                    "AND vid NOT IN (SELECT vid FROM device_vlans) "
-                    "AND vid NOT IN (SELECT vid FROM port_vlans) "
-                    "AND vid NOT IN (SELECT vid FROM vnic_vlans)",
-                    (NAME, *seen_vids))
-
             subnets = self._get(client, settings, "subnets/")
-            db.save_raw(conn, source=NAME, endpoint="subnets/", payload=subnets)
-            vlan_by_internal_id = {str(v["vlanId"]): int(v["number"]) for v in vlans if v.get("vlanId")}
-            # fetch the whole address book BEFORE touching the table: a
-            # timeout on subnet 40 of 50 must not leave a gutted address book
             fetched: list[tuple[dict, list]] = []
             for s in subnets:
                 if not s.get("subnet") or s.get("isFolder") == "1":
                     continue
                 fetched.append((s, self._get(client, settings, f"subnets/{s['id']}/addresses/")))
-            if not fetched:
-                # a 404 or success-with-no-data listing is not "IPAM says
-                # empty" — keep the last good address book
-                return "phpipam returned no subnets; kept previous data"
-            conn.execute("DELETE FROM ipam_addresses")  # full refresh: IPAM is the master here
-            # migration guard (no-op once clean): rows this collector wrote
-            # as full endpoints under the old behavior are documentation
-            # wearing an observation's timestamps — drop them; real
-            # observers re-create the live ones within a poll
-            conn.execute("DELETE FROM endpoints WHERE source = ?", (NAME,))
-            seen_cidrs: list[str] = []
-            for s, addrs in fetched:
-                cidr = f"{s['subnet']}/{s['mask']}"
-                seen_cidrs.append(cidr)
-                db.upsert_subnet(
-                    conn, cidr=cidr, source=NAME,
-                    description=s.get("description"),
-                    vlan=vlan_by_internal_id.get(str(s.get("vlanId"))),
-                )
-                n_subnets += 1
-                for a in addrs:
-                    if not a.get("ip"):
-                        continue
-                    # every documented address feeds the drift report...
-                    state = {"1": "offline", "2": "used", "3": "reserved", "4": "dhcp"}.get(
-                        str(a.get("tag") or ""), None)
-                    conn.execute(
-                        "INSERT OR REPLACE INTO ipam_addresses "
-                        "(ip, hostname, mac, subnet_cidr, description, state, last_seen, "
-                        " ipam_id, ipam_subnet_id, ipam_section_id) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (a["ip"], a.get("hostname") or None,
-                         (a.get("mac") or "").strip().lower() or None,
-                         cidr, a.get("description") or None, state, db.now(),
-                         a.get("id"), s.get("id"), s.get("sectionId")),
-                    )
-                    n_addrs += 1
-            # ...and IPAM lends a *name* to endpoints some real observer
-            # (ARP, FDB, the controller) already saw. Documentation
-            # contributes identity, never liveness: writing whole endpoint
-            # rows here re-stamped last_seen every poll, so documented-but-
-            # gone hosts never aged out and stale device attribution never
-            # cleared. The exact address is the stronger match — one NIC
-            # can carry several documented addresses (a trunked storage
-            # box with a VLAN interface per network), and matching by MAC
-            # alone handed the wrong row's name to whichever address came
-            # first — so it goes first; MAC only fills what is left.
-            conn.execute(
-                "UPDATE endpoints SET hostname = ("
-                "  SELECT a.hostname FROM ipam_addresses a "
-                "  WHERE a.ip = endpoints.ip AND a.hostname IS NOT NULL) "
-                "WHERE hostname IS NULL AND ip IN "
-                "  (SELECT ip FROM ipam_addresses WHERE hostname IS NOT NULL)")
-            conn.execute(
-                "UPDATE endpoints SET hostname = ("
-                "  SELECT a.hostname FROM ipam_addresses a "
-                "  WHERE a.mac = endpoints.mac AND a.hostname IS NOT NULL "
-                "  ORDER BY a.ip LIMIT 1) "
-                "WHERE hostname IS NULL AND mac IN "
-                "  (SELECT mac FROM ipam_addresses "
-                "   WHERE mac IS NOT NULL AND hostname IS NOT NULL)")
-            # heal names an earlier MAC-only lend got wrong: an endpoint
-            # wearing the name IPAM gives a *different* address of the same
-            # MAC, while IPAM documents its own address under another name
-            conn.execute(
-                "UPDATE endpoints SET hostname = ("
-                "  SELECT a.hostname FROM ipam_addresses a "
-                "  WHERE a.ip = endpoints.ip AND a.hostname IS NOT NULL) "
-                "WHERE ip IN (SELECT ip FROM ipam_addresses WHERE hostname IS NOT NULL) "
-                "AND hostname IN (SELECT o.hostname FROM ipam_addresses o "
-                "  WHERE o.mac = endpoints.mac AND o.ip != endpoints.ip "
-                "  AND o.hostname IS NOT NULL) "
-                "AND hostname != (SELECT a.hostname FROM ipam_addresses a "
-                "  WHERE a.ip = endpoints.ip)")
-            # Retire subnets phpIPAM no longer documents. The address book
-            # above gets a full refresh, but subnets were upsert-only, so one
-            # deleted in phpIPAM stayed on the VLAN pages and in drift for
-            # good. Guarded on a non-empty listing, like every other prune: an
-            # IPAM hiccup returning zero subnets must not wipe the table.
-            # phpIPAM is the only writer of `subnets`, so scoping by source is
-            # both safe and complete. `vlans` gets no such prune -- three
-            # collectors write it and the conflict clause doesn't update
-            # `source`, so the column can't say who owns a row.
-            if seen_cidrs:
-                q = ",".join("?" * len(seen_cidrs))
+
+        # the write phase: no network I/O from here on
+        db.save_raw(conn, source=NAME, endpoint="vlan/", payload=vlans)
+        for v in vlans:
+            vid = int(v.get("number") or 0)
+            if vid:
                 conn.execute(
-                    f"DELETE FROM subnets WHERE source = ? AND cidr NOT IN ({q})",
-                    (NAME, *seen_cidrs))
+                    "INSERT INTO vlans (vid, name, source, last_seen) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(vid) DO UPDATE SET name=excluded.name, last_seen=excluded.last_seen",
+                    (vid, v.get("name"), NAME, db.now()),
+                )
+                n_vlans += 1
+        # prune VLANs deleted from IPAM: this collector's rows only, and
+        # never one a device still claims — IPAM dropping its record of a
+        # real VLAN just demotes it to "no subnet documented in IPAM".
+        # Guarded on a non-empty listing: a failed or empty answer keeps
+        # last good data, same as the address book below.
+        if vlans:
+            seen_vids = [int(v.get("number") or 0) for v in vlans
+                         if v.get("number")]
+            conn.execute(
+                "DELETE FROM vlans WHERE source = ? "
+                f"AND vid NOT IN ({','.join('?' * len(seen_vids))}) "
+                "AND vid NOT IN (SELECT vid FROM device_vlans) "
+                "AND vid NOT IN (SELECT vid FROM port_vlans) "
+                "AND vid NOT IN (SELECT vid FROM vnic_vlans)",
+                (NAME, *seen_vids))
+
+        db.save_raw(conn, source=NAME, endpoint="subnets/", payload=subnets)
+        vlan_by_internal_id = {str(v["vlanId"]): int(v["number"]) for v in vlans if v.get("vlanId")}
+        if not fetched:
+            # a 404 or success-with-no-data listing is not "IPAM says
+            # empty" — keep the last good address book
+            return "phpipam returned no subnets; kept previous data"
+        conn.execute("DELETE FROM ipam_addresses")  # full refresh: IPAM is the master here
+        # migration guard (no-op once clean): rows this collector wrote
+        # as full endpoints under the old behavior are documentation
+        # wearing an observation's timestamps — drop them; real
+        # observers re-create the live ones within a poll
+        conn.execute("DELETE FROM endpoints WHERE source = ?", (NAME,))
+        seen_cidrs: list[str] = []
+        for s, addrs in fetched:
+            cidr = f"{s['subnet']}/{s['mask']}"
+            seen_cidrs.append(cidr)
+            db.upsert_subnet(
+                conn, cidr=cidr, source=NAME,
+                description=s.get("description"),
+                vlan=vlan_by_internal_id.get(str(s.get("vlanId"))),
+            )
+            n_subnets += 1
+            for a in addrs:
+                if not a.get("ip"):
+                    continue
+                # every documented address feeds the drift report...
+                state = {"1": "offline", "2": "used", "3": "reserved", "4": "dhcp"}.get(
+                    str(a.get("tag") or ""), None)
+                conn.execute(
+                    "INSERT OR REPLACE INTO ipam_addresses "
+                    "(ip, hostname, mac, subnet_cidr, description, state, last_seen, "
+                    " ipam_id, ipam_subnet_id, ipam_section_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (a["ip"], a.get("hostname") or None,
+                     (a.get("mac") or "").strip().lower() or None,
+                     cidr, a.get("description") or None, state, db.now(),
+                     a.get("id"), s.get("id"), s.get("sectionId")),
+                )
+                n_addrs += 1
+        # ...and IPAM lends a *name* to endpoints some real observer
+        # (ARP, FDB, the controller) already saw. Documentation
+        # contributes identity, never liveness: writing whole endpoint
+        # rows here re-stamped last_seen every poll, so documented-but-
+        # gone hosts never aged out and stale device attribution never
+        # cleared. The exact address is the stronger match — one NIC
+        # can carry several documented addresses (a trunked storage
+        # box with a VLAN interface per network), and matching by MAC
+        # alone handed the wrong row's name to whichever address came
+        # first — so it goes first; MAC only fills what is left.
+        conn.execute(
+            "UPDATE endpoints SET hostname = ("
+            "  SELECT a.hostname FROM ipam_addresses a "
+            "  WHERE a.ip = endpoints.ip AND a.hostname IS NOT NULL) "
+            "WHERE hostname IS NULL AND ip IN "
+            "  (SELECT ip FROM ipam_addresses WHERE hostname IS NOT NULL)")
+        conn.execute(
+            "UPDATE endpoints SET hostname = ("
+            "  SELECT a.hostname FROM ipam_addresses a "
+            "  WHERE a.mac = endpoints.mac AND a.hostname IS NOT NULL "
+            "  ORDER BY a.ip LIMIT 1) "
+            "WHERE hostname IS NULL AND mac IN "
+            "  (SELECT mac FROM ipam_addresses "
+            "   WHERE mac IS NOT NULL AND hostname IS NOT NULL)")
+        # heal names an earlier MAC-only lend got wrong: an endpoint
+        # wearing the name IPAM gives a *different* address of the same
+        # MAC, while IPAM documents its own address under another name
+        conn.execute(
+            "UPDATE endpoints SET hostname = ("
+            "  SELECT a.hostname FROM ipam_addresses a "
+            "  WHERE a.ip = endpoints.ip AND a.hostname IS NOT NULL) "
+            "WHERE ip IN (SELECT ip FROM ipam_addresses WHERE hostname IS NOT NULL) "
+            "AND hostname IN (SELECT o.hostname FROM ipam_addresses o "
+            "  WHERE o.mac = endpoints.mac AND o.ip != endpoints.ip "
+            "  AND o.hostname IS NOT NULL) "
+            "AND hostname != (SELECT a.hostname FROM ipam_addresses a "
+            "  WHERE a.ip = endpoints.ip)")
+        # Retire subnets phpIPAM no longer documents. The address book
+        # above gets a full refresh, but subnets were upsert-only, so one
+        # deleted in phpIPAM stayed on the VLAN pages and in drift for
+        # good. Guarded on a non-empty listing, like every other prune: an
+        # IPAM hiccup returning zero subnets must not wipe the table.
+        # phpIPAM is the only writer of `subnets`, so scoping by source is
+        # both safe and complete. `vlans` gets no such prune -- three
+        # collectors write it and the conflict clause doesn't update
+        # `source`, so the column can't say who owns a row.
+        if seen_cidrs:
+            q = ",".join("?" * len(seen_cidrs))
+            conn.execute(
+                f"DELETE FROM subnets WHERE source = ? AND cidr NOT IN ({q})",
+                (NAME, *seen_cidrs))
         return f"{n_subnets} subnets, {n_vlans} vlans, {n_addrs} addresses"
 
 
