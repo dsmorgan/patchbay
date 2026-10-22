@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -30,6 +31,7 @@ from .config import load_settings
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 from .ports import port_kind
+from .redact import hide_userinfo
 
 app = FastAPI(title="patchbay")
 def _shell_context(request: Request) -> dict:
@@ -1618,8 +1620,10 @@ def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
         prefix = f"{label}=" if label else ""
         return f"{prefix}{dev}:{iface}"
 
+    # Oxidized has no credential setting of its own: a reverse proxy's
+    # basic auth rides in the URL's userinfo, which is masked for display
     src = [("LibreNMS", s.librenms_url, s.librenms_token),
-           ("Oxidized", s.oxidized_url, True),
+           ("Oxidized", s.oxidized_url, "@" in urlsplit(s.oxidized_url or "").netloc),
            ("phpIPAM", s.ipam_url, s.ipam_token),
            ("UniFi", s.unifi_url, s.unifi_pass),
            ("OPNsense", s.opnsense_host, s.opnsense_api_secret),
@@ -1636,7 +1640,8 @@ def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
              else ", ".join(s.allowed_hosts) or "loopback only (no usable entry)"),
         ]),
         ("sources", [
-            (name, (url or "—") + (" · credentials " + onoff(cred) if url else ""))
+            (name, (hide_userinfo(url) or "—")
+             + (" · credentials " + onoff(cred) if url else ""))
             for name, url, cred in src
         ]),
         ("declarations", [
@@ -2058,7 +2063,7 @@ def ops_poll(source: str | None = None):
                 conn.commit()
             except Exception as e:  # one failing source must not block the others
                 conn.rollback()
-                lines.append(f"[fail] {name}: {e}")
+                lines.append(f"[fail] {name}: {hide_userinfo(str(e))}")
         try:
             lines.append(f"[ok]   normalize: {normalize(conn, settings.aliases, settings.unmanaged, settings.links, settings.vlan_filters, prune_declared=settings.declarations_readable)}")
             conn.commit()
@@ -2520,13 +2525,14 @@ def configs(request: Request):
                 problems = [_canonical_label(p, canon) for p in problems]
                 entries.extend(ox_entries)
         except Exception as exc:  # unreachable oxidized is a state, not a crash
-            error = str(exc)
+            error = hide_userinfo(str(exc))  # httpx errors echo the full URL
     entries.sort(key=lambda e: e["ts"] or 0, reverse=True)
     if len(entries) > OX_TIMELINE_LIMIT:
         truncated = True
         entries = entries[:OX_TIMELINE_LIMIT]
     return templates.TemplateResponse(request, "configs.html", {
-        "nodes": nodes, "error": error, "oxidized_url": settings.oxidized_url,
+        "nodes": nodes, "error": error,
+        "oxidized_url": hide_userinfo(settings.oxidized_url),
         "entries": entries, "problems": problems, "truncated": truncated,
         "keep_text": _config_keep_text(settings),
     })
@@ -2629,7 +2635,7 @@ def config_node(request: Request, node: str):
     except HTTPException:
         raise
     except Exception as exc:
-        error = str(exc)
+        error = hide_userinfo(str(exc))
     pager = _paginate(versions, request.query_params.get("page"))
     return templates.TemplateResponse(request, "confignode.html", {
         "node": node, "label": label, "versions": pager["items"],
