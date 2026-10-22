@@ -305,11 +305,11 @@ def cmd_backup(args: argparse.Namespace) -> int:
               f"and the database holds secrets. Choose a private directory.",
               file=sys.stderr)
         return 2
-    try:
-        size = db.backup(settings.db_path, dest, force=args.force)
-    except FileExistsError:
+    if os.path.exists(dest) and not args.force:
         print(f"{dest} exists — use --force to overwrite it", file=sys.stderr)
         return 2
+    try:
+        size = db.backup(settings.db_path, dest, force=args.force)
     except (OSError, sqlite3.Error) as e:
         print(f"backup failed: {e}", file=sys.stderr)
         return 1

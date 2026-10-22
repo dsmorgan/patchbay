@@ -329,6 +329,9 @@ def backup(src_path: str, dest_path: str, *, force: bool = False) -> int:
         raise FileNotFoundError(f"no database at {src_path}")
     if os.path.exists(dest_path) and not force:
         raise FileExistsError(dest_path)
+    # `backup /data/backups/x.db` works on the first run; a directory made
+    # here is private, like the file
+    os.makedirs(os.path.dirname(os.path.abspath(dest_path)), mode=0o700, exist_ok=True)
     tmp = f"{dest_path}.partial"
     # O_EXCL: never write through a stale or planted file at the temp name
     try:

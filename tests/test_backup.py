@@ -142,9 +142,10 @@ def test_failures_exit_nonzero_and_leave_nothing(clean_env, tmp_path, capsys):
     assert _run(str(tmp_path / "out.db")) == 1
     assert "no database" in capsys.readouterr().err
     assert not os.path.exists(os.environ["PATCHBAY_DB"])
-    # missing destination directory
+    # a destination directory that can't exist (its parent is a file)
     _live(clean_env)
-    assert _run(str(tmp_path / "nope" / "out.db")) == 1
+    (tmp_path / "file").write_text("x")
+    assert _run(str(tmp_path / "file" / "out.db")) == 1
     assert "backup failed" in capsys.readouterr().err
     # a source that is not a database
     bad = tmp_path / "bad.db"
@@ -153,3 +154,9 @@ def test_failures_exit_nonzero_and_leave_nothing(clean_env, tmp_path, capsys):
     assert _run(str(tmp_path / "out.db")) == 1
     assert not (tmp_path / "out.db").exists()
     assert not [p for p in tmp_path.iterdir() if "partial" in p.name]
+
+
+def test_creates_a_private_missing_directory(clean_env, tmp_path):
+    _live(clean_env)
+    assert _run(str(tmp_path / "backups" / "out.db")) == 0
+    assert _mode(tmp_path / "backups") == 0o700
