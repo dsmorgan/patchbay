@@ -25,6 +25,9 @@ put.
   (`docs/collectors.md`). Route labels mark a disabled transport "(off)",
   and a poll warns when the default route points at one.
 
+### Changed
+- Ignore `PATCHBAY_EXPECT`: its entries no longer silence anything, and patchbay warns while the variable is set and names the alerts page (**Alerts > Silences**). Click **import as silences** on **Ops** to turn each entry into a permanent silence, then remove the variable. (#69)
+
 ### Deprecated
 - `PATCHBAY_EXPECT` is deprecated (#69). While it's set, `/ops` shows a
   notice with an **import as silences** button that turns each entry into a
