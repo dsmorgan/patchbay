@@ -2195,7 +2195,8 @@ def _add_zero_line(svg: str) -> str:
 
 
 class GraphSourceError(Exception):
-    """LibreNMS could not be reached (connection error or timeout). Distinct
+    """LibreNMS could not be reached or answered unusably (connection error,
+    timeout, undecodable body, redirect loop). Distinct
     from "no such graph" (None) so a caller can stop asking and say why."""
 
 
@@ -2209,7 +2210,7 @@ def fetch_graph_image(settings, device: str, iface: str | None, gtype: str,
     Shared by the /graph proxy and the snapshot generator."""
     try:
         return _fetch_graph_image(settings, device, iface, gtype, hours, w, timeout)
-    except httpx.TransportError as e:   # connect/read/timeout failures
+    except httpx.RequestError as e:   # connect/read/timeout, decoding, redirect loops
         raise GraphSourceError(type(e).__name__) from e
 
 
