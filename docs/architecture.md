@@ -32,8 +32,8 @@ is deferred to the final phase and starts with small, guarded actions.
   shared model independently.
 - **Outputs:**
   - A LAN-only browser UI.
-  - Self-contained HTML snapshots, daily, on demand, and on a critical alert, copied to
-    storage that is off the monitored failure domain ([Snapshots](#snapshots)).
+  - Self-contained HTML snapshots, daily, on demand, and (opt-in) on a critical alert,
+    copied to storage that is off the monitored failure domain ([Snapshots](#snapshots)).
   - Alerts from patchbay's own rules ([ADR-0003](adr/0003-alerting.md)). The poller
     evaluates them each cycle and sends them through transports: an Uptime Kuma push
     monitor or a generic JSON webhook. Each rule can route to a different transport or to
@@ -114,9 +114,9 @@ how much each source can actually know:
    VLAN/subnet across the fabric, with an IPAM drift report (live ARP/leases vs. IPAM
    records).
 4. **Config & change history** — one cross-device timeline with in-app diffs, from two
-   sources: the Oxidized git log for switches and APs, and patchbay's own revisions of the
-   firewall's `config.xml` (secret-bearing elements replaced by keyed stamps, the newest
-   `PATCHBAY_CONFIG_KEEP` kept per device, 50 by default). A stored change also raises
+   sources: the Oxidized git log for the devices Oxidized backs up, and patchbay's own
+   revisions of an OPNsense firewall's `config.xml` (secret-bearing elements replaced by
+   keyed stamps, the newest `PATCHBAY_CONFIG_KEEP` kept per device, 50 by default). A stored change also raises
    the `config-changed` alert, which informs and routes nowhere unless you route it.
    Snapshot-to-snapshot topology diffs are not planned; see [Snapshots](#snapshots).
 
@@ -126,11 +126,11 @@ how much each source can actually know:
   requests. It holds the topology map and the routed view, every device with its ports,
   links, VLANs, subnets, endpoints (from ARP, leases, the MAC table, and IPAM), gateways,
   tunnels, 24-hour traffic graphs for linked ports, and the latest stored config of each
-  device, including the firewall's.
+  device, including an OPNsense firewall's.
 - Three triggers:
   - Daily at `PATCHBAY_SNAPSHOT_AT`, run by the poller.
   - On demand: `patchbay snapshot`, or the button on `/ops`.
-  - With `PATCHBAY_ALERT_SNAPSHOT` on, after the poll that raises a critical alert or
+  - With `PATCHBAY_ALERT_SNAPSHOT` on (it is off by default), after the poll that raises a critical alert or
     escalates one to critical. The file is `patchbay-YYYYMMDD-HHMMSS-alert.html`, at most
     one per `PATCHBAY_ALERT_SNAPSHOT_COOLDOWN` (60 minutes by default). A silenced alert
     never takes one. `/snapshots` lists each alert snapshot with the alerts that took it.

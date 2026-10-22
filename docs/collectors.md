@@ -143,16 +143,23 @@ now.
   samples where you reported the counter count, so omitting a counter you
   can't read costs nothing, and writing `0.0` for one you can't read teaches
   the baseline that the port is perfectly quiet.
-- **Raise:** the rate is at least `multiplier` times the baseline (default
-  100) and at least `floor` per second (default 50). A port with less than
-  `warmup_h` hours of samples (default 24) is judged against the floor alone.
-- **Hold and clear:** the alert holds until the rate falls below `clear` times
-  the baseline (default 10).
-- **Two looks:** the alert becomes active after two samples with different
-  timestamps, so one bad sample is quiet. A poll that records no new sample
-  is not a second look. If your source refreshes its figures less often than
-  patchbay polls, record a sample only when the figures are new: the same
-  reading stored twice counts as two looks.
+- **Warm-up:** while the counter's first sample is younger than `warmup_h`
+  (default 24 hours), the port has no baseline and is judged against the
+  floor alone.
+- **Raise:** the rate is at least `multiplier` times the effective baseline
+  and at least `floor` per second. The effective baseline is the larger of
+  the measured baseline and `floor ÷ multiplier`, so a port whose baseline is
+  zero still needs `floor` to raise. At the defaults (`multiplier` 100,
+  `floor` 50), that is 50 per second.
+- **Hold and clear:** an alert that was already announced, meaning active or
+  announced before a silence, holds until the rate falls below `clear` times
+  the effective baseline (default 10, so 5 per second on a quiet port). An
+  alert that is still pending must meet the raise bar again on every poll.
+- **Two looks:** the alert becomes active after `for` polls (default 2) that
+  each judged a newer sample than the last one counted. The same sample read
+  again is not a second look. If your source refreshes its figures less often
+  than patchbay polls, record a sample only when the figures are new: the
+  same reading stored twice, with two timestamps, counts as two looks.
 
 The built-in collectors report error rates only: LibreNMS from its ports
 listing, UniFi from counter differences. Nobody collects discards yet

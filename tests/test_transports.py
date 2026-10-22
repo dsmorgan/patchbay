@@ -1087,3 +1087,32 @@ def test_corrupt_and_stale_side_files_are_removed(dbp):
     assert not os.path.exists(bad) and not os.path.exists(stale)
     assert os.path.exists(fresh)            # may be a writer at work
     assert any("unreadable held-over outcome" in line for line in d.lines)
+
+
+def test_a_disabled_default_transport_is_labeled_and_named_in_the_poll(dbp):
+    """The first transport is the default route; when it is off, everything
+    routed by default goes nowhere, and the page and the poll say why."""
+    off = _add(dbp, "first", "generic", HOOK, enabled=0)
+    on = _add(dbp, "second", "generic", HOOK)
+    c = _c(dbp)
+    assert transports.route_label(c, None) == "default (first (off), warn+)"
+    assert transports.route_label(c, f"{on}:crit") == "second, crit+"
+    assert transports.route_label(c, f"{off}:warn") == "first (off), warn+"
+    c.close()
+
+    rec = Recorder()
+    d = _poll(dbp, [_item("a")], 1000.0, rec)
+    assert rec.seen == []
+    assert any("default route points at first, which is disabled" in line
+               for line in d.lines)
+    assert not any("hooks" in line for line in d.lines)     # no URL in the report
+    # nothing routed by default this cycle: nothing to explain
+    d = _poll(dbp, [_item("a")], 1100.0, rec)
+    assert not any("default route" in line for line in d.lines)
+    # a pinned default clears the warning
+    c = _c(dbp)
+    pdb.set_state(c, transports.DEFAULT_ROUTE_KEY, f"{on}:warn")
+    c.commit()
+    c.close()
+    d = _poll(dbp, [_item("a"), _item("b")], 1200.0, rec)
+    assert not any("default route" in line for line in d.lines)

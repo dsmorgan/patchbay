@@ -14,7 +14,8 @@ findings of every kind, a firewall config change, and 24h of sine-wave rate
 history for the load view. Phase 6 shows too: an error-rate spike on one
 AP uplink that the port canary has flagged, a silence, a declared tunnel, a
 transport, and a few days of alert history, so every tab of /alerts has
-something on it.
+something on it. The canary reads samples under 15 minutes old, so it leaves
+the Active tab after that; running `patchbay demo` again restores it.
 """
 
 from __future__ import annotations
@@ -114,9 +115,9 @@ CANARY_PORT = ("edge1", "e1/0/4")
 # The tunnel the firewall reports above, declared as expected.
 EXPECTED_TUNNEL = ("fw1", "wireguard", "site-b · wg-peer")
 # The demo's one transport. Its host is under .invalid (RFC 2606): it can
-# never resolve. It is also disabled, so no poll dispatches to it and the
-# Test button has nothing to send; the history below reads as if it had been
-# on, which is only a story.
+# never resolve. It is also disabled, so a poll's dispatch sends nothing to
+# it. The Test button ignores that and does try, and fails at DNS. The
+# history below reads as if the transport had been on, which is only a story.
 TRANSPORT = ("demo-webhook", "generic",
              "https://alerts.example.invalid/patchbay/hooks/demo")
 H = 3600.0
