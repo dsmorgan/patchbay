@@ -52,6 +52,28 @@ put.
   - With `PATCHBAY_AUTH=none`, set `PATCHBAY_ALLOWED_HOSTS` to the names you
     reach patchbay by (behind a reverse proxy, the public name); `/ops` warns
     until you do. Unset keeps today's behavior.
+- The image runs as uid/gid 10001 instead of root and never changes file
+  ownership (#95). The stack's Oxidized REST port listens on `127.0.0.1`
+  only. Workflow actions are pinned to commit SHAs, and the `hatchling`
+  build backend to 1.32.4.
+
+  **Upgrade notes (breaking):** an existing `./data` is owned by root, so the
+  new containers refuse to start and print the fix until you run this once
+  (add your compose file's `-f` flag):
+
+  ```sh
+  docker compose down
+  sudo chown -R 10001:10001 data
+  sudo chmod 600 data/.env
+  docker compose pull && docker compose up -d
+  ```
+
+  Edit `data/.env` afterward with `sudoedit data/.env`. To run as your own
+  user instead, run `sudo chown -R "$(id -u):$(id -g)" data && chmod 600
+  data/.env` and set `user: "UID:GID"` on both patchbay services. Rootless
+  Docker or Podman: set `user: "0:0"`. The snapshot delivery share and any
+  custom snapshot directory must be writable by the same uid. If you reached
+  Oxidized's API from another machine, use an SSH tunnel.
 
 ## [0.21.0] — 2026-10-22
 
