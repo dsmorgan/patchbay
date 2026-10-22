@@ -165,6 +165,11 @@ def cmd_web(args: argparse.Namespace) -> int:
         if missing:
             print(f"PATCHBAY_AUTH=oidc needs {', '.join(missing)}", file=sys.stderr)
             return 2
+    # a misread host allowlist turns visitors away; say so where the
+    # operator starting the server will see it, as well as on /ops
+    for w in settings.parse_warnings:
+        if w.startswith("PATCHBAY_ALLOWED_HOSTS:"):
+            print(f"[warn] {w}", file=sys.stderr)
 
     if settings.tls_mode == "off":
         uvicorn.run("patchbay.web:app", host=args.host, port=args.port)

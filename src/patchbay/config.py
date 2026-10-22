@@ -573,6 +573,25 @@ def load_settings() -> Settings:
                             f"more — using {default}")
             return default
 
+    # Host allowlist entries are names, but a URL is an easy thing to paste:
+    # read "https://name:port/path" as "name:port" and say so, rather than
+    # keep an entry no Host header can ever match (that fails closed for
+    # everyone but loopback, with nothing on screen to say why)
+    allowed_hosts: list[str] = []
+    for raw in (env("PATCHBAY_ALLOWED_HOSTS") or "").split(","):
+        entry = raw.strip().lower()
+        if not entry:
+            continue
+        name = entry.split("://", 1)[-1].split("/", 1)[0].rpartition("@")[2]
+        if not name:
+            warn("PATCHBAY_ALLOWED_HOSTS", raw)
+            continue
+        if name != entry:
+            warnings.append(f"PATCHBAY_ALLOWED_HOSTS: read {raw.strip()!r} as "
+                            f"{name!r} — list hostnames, not URLs")
+        allowed_hosts.append(name)
+    allowed_hosts = tuple(allowed_hosts)
+
     alert_snapshot_cooldown = whole("PATCHBAY_ALERT_SNAPSHOT_COOLDOWN",
                                     ALERT_SNAPSHOT_COOLDOWN_DEFAULT)
     alert_snapshot_keep = whole("PATCHBAY_ALERT_SNAPSHOT_KEEP",
@@ -645,7 +664,5 @@ def load_settings() -> Settings:
         alert_snapshot=alert_snapshot,
         alert_snapshot_cooldown=alert_snapshot_cooldown,
         alert_snapshot_keep=alert_snapshot_keep,
-        allowed_hosts=tuple(
-            h.strip().lower() for h in (env("PATCHBAY_ALLOWED_HOSTS") or "").split(",")
-            if h.strip()),
+        allowed_hosts=allowed_hosts,
     )
