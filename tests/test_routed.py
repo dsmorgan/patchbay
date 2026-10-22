@@ -303,6 +303,20 @@ def test_dual_homed_endpoint_fuses_to_a_host_box(conn):
     assert {l["rail"] for l in fused["legs"]} == {"v1", "v20"}
 
 
+def test_dotted_device_name_matches_its_own_endpoint(conn):
+    """A device named with a dot that isn't a domain ("app-2.1") is the
+    same host as an ARP row carrying that hostname. Cut at the first dot,
+    the hostname became "app-2", missed the device, and drew it twice (#98)."""
+    seed_site(conn)
+    d = dev(conn, "app-2.1")
+    iface(conn, d, "eth0", ip="198.51.100.61")
+    before = {r["key"]: r["hosts"] for r in build_routed_graph(conn, _S())["rails"]}
+    pdb.upsert_endpoint(conn, mac="00:00:5e:00:53:41", source="test",
+                        ip="192.0.2.61", hostname="app-2.1")
+    after = {r["key"]: r["hosts"] for r in build_routed_graph(conn, _S())["rails"]}
+    assert after == before
+
+
 def test_gateway_addresses_never_become_hosts(conn):
     """dnsmasq hands the router's per-VLAN addresses one hostname; fusing
     those would invent a phantom multi-homed host spanning every network."""

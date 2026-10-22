@@ -15,6 +15,7 @@ import sqlite3
 from typing import Any
 
 from . import db
+from .normalize import canonical_name
 
 # rails are keyed by VLAN id where one is known ("v20"), else by the subnet
 # ("net:192.0.2.0/24") — a dual-stack VLAN is ONE rail, not two
@@ -443,7 +444,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             mac_ips.setdefault(r["mac"].lower(), []).append(r["ip"])
     for r in conn.execute(
             "SELECT hostname, ip, mac, device FROM endpoints WHERE ip IS NOT NULL"):
-        hn = (r["hostname"] or "").split(".")[0].lower()
+        hn = canonical_name(r["hostname"] or "")
         hn = alias_map.get(hn, hn)
         # a MAC some device's interface owns IS that device, whatever name
         # ARP attaches to the address (dnsmasq calls every firewall VLAN
@@ -511,8 +512,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             continue
         seen_mac_rails.add((mac, key))
         raw_hn = ep_names.get(mac) or ipam_names.get(mac) or ""
-        hn = alias_map.get(raw_hn.split(".")[0].lower(),
-                           raw_hn.split(".")[0].lower())
+        hn = canonical_name(raw_hn)
+        hn = alias_map.get(hn, hn)
         if hn in seen_devs:
             continue
         # the address that belongs on THIS network, if the MAC has one here
@@ -533,7 +534,7 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     ipam_legs: dict[str, list[tuple[str, str]]] = {}
     for r in conn.execute("SELECT hostname, ip, mac FROM ipam_addresses "
                           "WHERE hostname IS NOT NULL AND ip IS NOT NULL"):
-        hn = r["hostname"].split(".")[0].lower()
+        hn = canonical_name(r["hostname"])
         hn = alias_map.get(hn, hn)
         # a documented gateway address, or a device-owned NIC, is never a
         # host's leg — the router wearing a per-VLAN hat, or the device itself
