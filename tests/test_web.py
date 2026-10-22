@@ -1662,3 +1662,44 @@ def test_graph_proxy_answers_502_when_librenms_is_down(clean_env, tmp_path, clie
     clean_env.setenv("LIBRENMS_TOKEN", "t0ken")
     r = client.get("/graph", params={"device": "sw1", "iface": "1/0/1"})
     assert r.status_code == 502
+
+
+import re as _re
+
+GATEWAY_STATES = [
+    # (stored status, source, expected state) — OPNsense stores its translated
+    # words verbatim, pfSense's collector normalizes to lowercase
+    ("Online", "opnsense", "up"), ("Offline", "opnsense", "down"),
+    ("up", "pfsense", "up"), ("down", "pfsense", "down"),
+    ("unknown", "pfsense", "unknown"), ("Pending", "opnsense", "unknown"),
+    (None, "pfsense", "unknown"),
+]
+
+
+@pytest.mark.parametrize("status,source,state", GATEWAY_STATES)
+def test_gateway_status_reads_the_same_on_cloud_and_overview(
+        clean_env, tmp_path, client, status, source, state):
+    """The topology cloud and the Overview tile classify gateway status
+    through one helper, for both firewalls' vocabularies."""
+    seed(str(tmp_path / "test.db"))
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    c.execute("INSERT INTO interfaces (device_id, name, oper_status) "
+              "SELECT id, '1/0/16', 'up' FROM devices WHERE name='sw1'")
+    c.execute("INSERT INTO gateways (name, address, status, source) "
+              "VALUES ('WAN_GW', '192.0.2.254', ?, ?)", (status, source))
+    c.commit(); c.close()
+    clean_env.setenv("PATCHBAY_WAN_NAME", "Fiber")
+    clean_env.setenv("PATCHBAY_WAN_PORT", "sw1:1/0/16")
+    g = _graph(client, tmp_path)
+    cloud = next(n for n in g["nodes"] if n["name"] == "Fiber")
+    assert cloud["status"] == state
+    html = client.get("/").text
+    tile = _re.search(r'<span class="dot (\w+)"></span>[^<]*</div>\s*'
+                      r'<div class="l">WAN_GW</div>', html)
+    assert tile and tile.group(1) == state
+
+
+def test_gateway_state_agrees_with_the_down_alert_rule():
+    from patchbay.attention import GATEWAY_DOWN_STATES, gateway_state
+    assert all(gateway_state(s) == "down" for s in GATEWAY_DOWN_STATES)
+    assert gateway_state("ONLINE") == "up" and gateway_state("Up") == "up"
