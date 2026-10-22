@@ -894,24 +894,34 @@ def test_request_s_bounds_the_wait_for_headers(monkeypatch):
     assert not ok and result.startswith("_Deadline")
 
 
-def test_a_database_locked_from_the_start_still_delivers(dbp, monkeypatch):
-    # a long write elsewhere keeps the lease unclaimable: that is not
-    # another dispatch, so the notes go out now and the outcome waits
+def test_a_database_locked_from_the_start_fails_closed(dbp, monkeypatch):
+    # no lease, even because the database never answered: nothing is sent
+    # and the shared queue is not touched; the notes wait for the next
+    # lease holder, which delivers them in order
     monkeypatch.setattr(transports, "LEASE_WAIT_S", 0)
     monkeypatch.setattr(transports, "OUTCOME_TRIES", 1)
     monkeypatch.setattr(transports, "DB_TIMEOUT_S", 0.05)
     _add(dbp, "hook", "generic", HOOK)
+    c = _c(dbp)
+    queued = [transports._entry(1, _kind_note("raise", T0))]
+    pdb.set_state(c, transports.OUTBOX_KEY, json.dumps(queued))
+    c.commit(); c.close()
     blocker = sqlite3.connect(dbp)
     blocker.execute("BEGIN IMMEDIATE")
     rec = Recorder()
-    d = transports.WebhookDispatcher(dbp, transport=rec.transport, now=T0)
-    d.send([_note("a:1")])
+    d = transports.WebhookDispatcher(dbp, transport=rec.transport, now=T0 + 300)
+    d.send([_kind_note("clear", T0 + 300)])
     blocker.rollback()
     blocker.close()
-    assert len(rec.seen) == 1
-    assert any("without the lease" in line for line in d.lines)
-    transports.WebhookDispatcher(dbp, transport=Recorder().transport, now=T0 + 300).send([])
-    assert [e["event"] for e in _events(dbp)] == ["notified"]
+    assert rec.seen == []
+    assert any("database is busy" in line for line in d.lines)
+    c = _c(dbp)
+    assert json.loads(pdb.get_state(c, transports.OUTBOX_KEY)) == queued
+    c.close()
+    assert len(transports._pending_paths(dbp)) == 1     # this cycle's clear
+    transports.WebhookDispatcher(dbp, transport=rec.transport, now=T0 + 600).send([])
+    assert [json.loads(r.content)["event"] for r in rec.seen] == ["raise", "clear"]
+    assert transports._pending_paths(dbp) == []
 
 
 def test_a_burst_over_the_outbox_cap_is_all_sent(dbp, monkeypatch):
