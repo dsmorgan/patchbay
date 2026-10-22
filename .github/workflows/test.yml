@@ -16,6 +16,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          # match the image's Python (Dockerfile FROM)
+          python-version: "3.13"
 
       # the same lock the image installs from, so a Dependabot bump is
       # tested against exactly what would ship

@@ -782,7 +782,7 @@ def test_router_legs_carry_load(conn):
     fw = conn.execute("SELECT id FROM devices WHERE name='fw1'").fetchone()[0]
     iface(conn, fw, "vmx0", in_bps=500_000_000, out_bps=100_000_000)   # 5% of 10G
     conn.execute("INSERT INTO rate_history (device, interface, ts, in_bps, out_bps) "
-                 "VALUES ('fw1', 'vmx1', ?, 2_000_000_000, 0)", (pdb.now() - 600,))
+                 "VALUES ('fw1', 'vmx1', ?, 2000000000, 0)", (pdb.now() - 600,))
     conn.execute("INSERT INTO routes (device, destination, gateway, interface, "
                  "proto, flags, source, last_seen) VALUES ('fw1', '0.0.0.0/0', "
                  "'192.0.2.254', 'vmx0', 'static', 'UGS', 'test', ?)", (pdb.now(),))
