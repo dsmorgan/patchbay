@@ -812,10 +812,15 @@ function writeState() {
   } catch (e) {}
 }
 
+// keys that only repaint: selection and the two label toggles change no node's
+// visibility or position, so they skip applyFilters — which restarts the
+// simulation and re-fits, throwing away the user's zoom and pan (#97)
+const REPAINT_ONLY = new Set(["sel", "ports", "chips"]);
 function set(patch) {
   Object.assign(state, patch);
   writeState();
-  render();
+  if (Object.keys(patch).every(k => REPAINT_ONLY.has(k))) renderLight();
+  else render();
 }
 
 // --- visibility toggles -----------------------------------------------------
@@ -847,6 +852,9 @@ function nodeVisible(n) {
 // — a screenshot with no wait, or just a fast page load — catches nodes
 // mid-drift past the frame fit() sized for their starting spread.
 let firstSettle = true;
+function applySelection() {
+  node.classed("selected", d => state.sel != null && d.name === state.sel);
+}
 function applyFilters() {
   const vis = new Set(graph.nodes.filter(nodeVisible).map(n => n.name));
   graph.nodes.forEach(n => n._vis = vis.has(n.name));
@@ -859,7 +867,7 @@ function applyFilters() {
       && !(edgeSourceCls(d) === "virtualized" && zoneCovers(d));
   node.style("display", d => vis.has(d.name) ? null : "none");
   node.classed("focused", d => state.focus != null && d.name === state.focus);
-  node.classed("selected", d => state.sel != null && d.name === state.sel);
+  applySelection();
   link.style("display", d => linkShown(d) ? null : "none");
   hit.style("display", d => linkShown(d) ? null : "none");
   alab.style("display", d => linkShown(d) ? null : "none");
@@ -1147,6 +1155,13 @@ function render() {
   applyPanel();
 }
 
+// selection and label toggles: no re-layout, no re-fit
+function renderLight() {
+  applyControls();
+  applySelection();
+  applyPanel();
+}
+
 ["hideoff", "coreonly", "hosts", "unmhosts"].forEach(id => {
   document.getElementById(id).addEventListener("click", () => set({ [id]: !state[id] }));
 });
@@ -1207,33 +1222,49 @@ let multiSel = new Set();
 // Pre-drag positions captured at drag start
 let dragPrev = null;
 
+// pointer travel (screen px) below which a press-release is a click; d3's
+// clickDistance keeps the browser's click for the same slop
+const CLICK_SLOP = 3;
 node.call(d3.drag()
+    .clickDistance(CLICK_SLOP)
     // Y is owned by the tier (d.fy is always its band centre and is never
     // touched here) — drag only ever sets d.fx, so a node slides along its lane
     .on("start", (e, d) => {
-      if (!e.active) sim.alphaTarget(0.25).restart();
       const prevFx = d.fx ?? d.x, prevFy = d.fy ?? d.y;
       const prevPx = d.px ?? null, prevPy = d.py ?? null;  // what undo restores server-side
-      d.fx = d.x; if (!TIERS) d.fy = d.y;
       const groupOffsets = [];
       if (multiSel.has(d.name) && multiSel.size > 1) {
         multiSel.forEach(name => {
           if (name === d.name) return;
           const gn = graph.nodes.find(n => n.name === name);
           if (!gn || !gn._vis) return;
-          if (gn.fx == null) gn.fx = gn.x;
-          if (!TIERS && gn.fy == null) gn.fy = gn.y;
-          groupOffsets.push({ name, node: gn, dx: gn.fx - d.fx,
-                              dy: (d.fy != null ? gn.fy - d.fy : 0),
-                              prevFx: gn.fx, prevFy: gn.fy,
+          const gfx = gn.fx ?? gn.x, gfy = gn.fy ?? gn.y;
+          groupOffsets.push({ name, node: gn, dx: gfx - d.x,
+                              dy: TIERS ? 0 : gfy - d.y,
+                              prevFx: gfx, prevFy: gfy,
                               prevPx: gn.px ?? null, prevPy: gn.py ?? null });
         });
       }
-      dragPrev = { name: d.name, prevFx, prevFy, prevPx, prevPy, groupOffsets };
+      // nothing moves, pins, or reheats the simulation until the pointer has
+      // really travelled: a click is a click, not a one-pixel drag (#97)
+      dragPrev = { name: d.name, prevFx, prevFy, prevPx, prevPy, groupOffsets,
+                   x0: e.x, y0: e.y, moved: false };
     })
     .on("drag", (e, d) => {
+      if (!dragPrev) return;
+      if (!dragPrev.moved) {
+        const k = d3.zoomTransform(svg.node()).k;   // e.x/e.y are graph units
+        if (Math.hypot(e.x - dragPrev.x0, e.y - dragPrev.y0) * k <= CLICK_SLOP) return;
+        dragPrev.moved = true;
+        if (!e.active) sim.alphaTarget(0.25).restart();
+        d.fx = d.x; if (!TIERS) d.fy = d.y;
+        dragPrev.groupOffsets.forEach(g => {
+          if (g.node.fx == null) g.node.fx = g.node.x;
+          if (!TIERS && g.node.fy == null) g.node.fy = g.node.y;
+        });
+      }
       d.fx = e.x; if (!TIERS) d.fy = e.y;
-      if (dragPrev && dragPrev.groupOffsets.length) {
+      if (dragPrev.groupOffsets.length) {
         dragPrev.groupOffsets.forEach(g => {
           g.node.fx = d.fx + g.dx;
           if (!TIERS) g.node.fy = d.fy + g.dy;
@@ -1242,22 +1273,22 @@ node.call(d3.drag()
       }
     })
     .on("end", (e, d) => {
+      const moved = dragPrev && dragPrev.moved;
+      if (!moved) { dragPrev = null; return; }   // a click: select/unpin handle it
       if (!e.active) sim.alphaTarget(0);
-      if (dragPrev) {
-        const entry = [{ name: d.name, prevFx: dragPrev.prevFx, prevFy: dragPrev.prevFy,
-                         prevPx: dragPrev.prevPx, prevPy: dragPrev.prevPy }];
-        dragPrev.groupOffsets.forEach(g => {
-          entry.push({ name: g.name, prevFx: g.prevFx, prevFy: g.prevFy,
-                       prevPx: g.prevPx, prevPy: g.prevPy });
-          g.node.px = g.node.fx; g.node.py = g.node.fy;
-          savePos(g.name, g.node.fx, g.node.fy);
-          const gEl = node.nodes()[graph.nodes.indexOf(g.node)];
-          if (gEl) d3.select(gEl).classed("pinned", true);
-        });
-        undoStack.push(entry);
-        if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-        dragPrev = null;
-      }
+      const entry = [{ name: d.name, prevFx: dragPrev.prevFx, prevFy: dragPrev.prevFy,
+                       prevPx: dragPrev.prevPx, prevPy: dragPrev.prevPy }];
+      dragPrev.groupOffsets.forEach(g => {
+        entry.push({ name: g.name, prevFx: g.prevFx, prevFy: g.prevFy,
+                     prevPx: g.prevPx, prevPy: g.prevPy });
+        g.node.px = g.node.fx; g.node.py = g.node.fy;
+        savePos(g.name, g.node.fx, g.node.fy);
+        const gEl = node.nodes()[graph.nodes.indexOf(g.node)];
+        if (gEl) d3.select(gEl).classed("pinned", true);
+      });
+      undoStack.push(entry);
+      if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+      dragPrev = null;
       d.px = d.fx; d.py = d.fy;
       savePos(d.name, d.fx, d.fy);
       d3.select(node.nodes()[graph.nodes.indexOf(d)]).classed("pinned", true);

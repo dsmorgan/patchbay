@@ -114,6 +114,35 @@ def test_positions_api_validation(client):
                        ).status_code == 200
 
 
+def test_positions_api_pin_then_unpin(clean_env, tmp_path, client):
+    # shift-click unpin sends (null, null); with #97 it is the only request
+    # a click makes, so it must clear exactly the pinned row
+    db_path = str(tmp_path / "test.db")
+
+    def rows():
+        c = sqlite3.connect(db_path)
+        try:
+            return c.execute("SELECT name, x, y FROM positions").fetchall()
+        finally:
+            c.close()
+
+    assert client.post("/api/positions", json={"name": "sw1", "x": 10.5, "y": 20}
+                       ).status_code == 200
+    assert rows() == [("sw1", 10.5, 20.0)]
+    assert client.post("/api/positions", json={"name": "sw1", "x": None, "y": None}
+                       ).status_code == 200
+    assert rows() == []
+
+
+def test_topology_click_is_not_a_drag_and_selection_keeps_the_view(client):
+    # the map script is browser-verified (#97); these pin the two guards so a
+    # refactor can't silently drop them: a drag needs real movement before
+    # it pins, and selection repaints without the re-fit in applyFilters
+    t = client.get("/topology").text
+    assert "dragPrev.moved" in t and "CLICK_SLOP" in t
+    assert 'REPAINT_ONLY = new Set(["sel", "ports", "chips"])' in t
+
+
 def test_ops_renders_last_poll(clean_env, tmp_path, client):
     # the last-poll panel only renders when a poll has been recorded, so the
     # bare smoke test never exercised it (a Jinja error hid here once)
