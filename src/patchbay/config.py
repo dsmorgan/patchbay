@@ -479,10 +479,10 @@ def load_settings(*, read_db: bool = True) -> Settings:
             expected.add(":".join(part.strip() for part in s.split(":", 1)))
     if expected:
         warnings.append(
-            "PATCHBAY_EXPECT: ignored, its entries no longer silence "
-            "anything. Import them as silences with the import action on "
-            "/ops, then remove the variable; silences are listed on the "
-            "alerts page (/alerts?tab=silences)")
+            "PATCHBAY_EXPECT: ignored, so its entries silence nothing on "
+            "their own. Import any that are not yet silences with the "
+            "import action on /ops, then remove the variable. Silences are "
+            "on the alerts page (/alerts?tab=silences)")
     unmanaged = []
     for spec in (env("PATCHBAY_UNMANAGED") or "").split(","):
         spec = spec.strip()

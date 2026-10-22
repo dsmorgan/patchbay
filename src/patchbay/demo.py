@@ -366,7 +366,7 @@ def _seed_alerts(conn: sqlite3.Connection, now: float) -> None:
     expected_tunnels.add(conn, *EXPECTED_TUNNEL)
 
     # no site settings: the rules judge the seeded model and nothing else
-    bare = SimpleNamespace(ipam_url=None, expected=set())
+    bare = SimpleNamespace(ipam_url=None)
     live, _ = attention_items(conn, bare, now=now)
     ipam = next(i for i in live if i["rule"] == "ipam-drift")
     canary = next(i for i in live if i["rule"] == "port-canary")
