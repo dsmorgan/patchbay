@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 import sqlite3
@@ -17,6 +18,8 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 from . import redact
+
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS devices (
@@ -395,6 +398,20 @@ def redaction_key(conn: sqlite3.Connection) -> bytes:
                         (REDACTION_KEY,)).fetchone()[0].encode()
 
 
+def _stored_redaction_version(conn: sqlite3.Connection) -> int | None:
+    """The recorded redaction version: 0 when none was ever recorded (a
+    database from before #93), None when the value doesn't parse."""
+    # read by index: init also runs on connections without a Row factory
+    row = conn.execute("SELECT value FROM app_state WHERE key = ?",
+                       (REDACTION_STATE,)).fetchone()
+    if not row:
+        return 0
+    try:
+        return int(row[0])
+    except (TypeError, ValueError):
+        return None
+
+
 def _reredact_config_revisions(conn: sqlite3.Connection) -> None:
     """Once per redaction-rule version (#93), re-apply the current element
     rules to every stored firewall config revision, so secrets the old rules
@@ -402,35 +419,57 @@ def _reredact_config_revisions(conn: sqlite3.Connection) -> None:
     idempotent: stamps already in place stay put, so old and new revisions
     still diff cleanly, and the recomputed sha matches what
     save_config_revision derives from the same config next poll (no
-    spurious revision). One transaction: the rewrite and the version mark
-    land together or not at all.
+    spurious revision).
 
     Version 2 also keys the stamps: a pre-#93 stamp is sha256(content)[:8],
     and redact.rekey turns it into exactly the keyed stamp a new poll writes
-    for the same content, so history stays continuous across the upgrade."""
-    # read by index: init also runs on connections without a Row factory
-    row = conn.execute("SELECT value FROM app_state WHERE key = ?",
-                       (REDACTION_STATE,)).fetchone()
-    try:
-        done = int(row[0]) if row else 0
-    except ValueError:
-        done = 0
-    if done >= redact.REDACTION_VERSION:
+    for the same content, so history stays continuous across the upgrade.
+    Rekeying is NOT idempotent (a stamp keyed twice no longer matches the
+    next poll), so it runs only when the recorded version reads as below 2,
+    and only under the write lock: BEGIN IMMEDIATE, then the version is
+    read again, so of two processes starting init at once (every request
+    runs it, and so does the poller) only the first rewrites. An unreadable
+    version value is not trusted to mean "old": rows are re-redacted, never
+    rekeyed. One transaction: the rewrite and the version mark land together
+    or not at all. A row that can't be re-redacted is logged and left as
+    stored rather than failing every init after it."""
+    done = _stored_redaction_version(conn)
+    if done is not None and done >= redact.REDACTION_VERSION:
         return
-    with conn:
+    if conn.in_transaction:   # as executescript would: never nest
+        conn.commit()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as e:   # another writer held the lock past
+        log.warning("config history re-redaction deferred: %s", e)  # the timeout
+        return
+    try:
+        done = _stored_redaction_version(conn)
+        if done is not None and done >= redact.REDACTION_VERSION:
+            conn.rollback()   # another process finished it first
+            return
         key = redaction_key(conn)
         for rid, text in conn.execute(
                 "SELECT id, text FROM config_revisions").fetchall():
-            new = text
-            if done < 2:   # convert unkeyed stamps first, never a keyed one
-                new = redact.STAMP_RE.sub(
-                    lambda m: "redacted:" + redact.rekey(m.group(1), key), new)
-            new, _ = redact.redact_xml(new, key)
+            try:
+                new = text
+                if done is not None and done < 2:   # unkeyed stamps first
+                    new = redact.STAMP_RE.sub(
+                        lambda m: "redacted:" + redact.rekey(m.group(1), key), new)
+                new, _ = redact.redact_xml(new, key)
+            except Exception:
+                log.exception("config revision %s could not be re-redacted; "
+                              "left as stored", rid)
+                continue
             if new != text:
                 conn.execute(
                     "UPDATE config_revisions SET text = ?, sha = ? WHERE id = ?",
                     (new, hashlib.sha256(new.encode()).hexdigest(), rid))
         set_state(conn, REDACTION_STATE, str(redact.REDACTION_VERSION))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 def now() -> float:
