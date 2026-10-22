@@ -571,8 +571,10 @@ rebuild.
 Stopping is quick: the poller (`patchbay poller`) handles `SIGTERM`, so a
 stop between polls takes about a second. A stop during a poll lets that poll
 finish, which keeps its data and notifications together, for up to the
-poller's `stop_grace_period` (1 minute in the compose files). Press the
-interrupt again, or send a second `SIGTERM`, to abort the poll instead.
+poller's `stop_grace_period` (1 minute in the compose files). To abort the
+poll instead, send a second `SIGTERM` while it runs:
+`docker compose kill -s SIGTERM patchbay-poller`. Outside a container,
+press the interrupt key again.
 
 `docker compose -f docker-compose.stack.yml down` stops everything and keeps
 all data — `up -d` resumes with history intact. Adding `-v` destroys the

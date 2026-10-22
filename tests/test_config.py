@@ -182,3 +182,16 @@ def test_poll_interval_reads_the_env_file_without_loading_it(clean_env, tmp_path
     assert "PATCHBAY_POLL_INTERVAL" not in os.environ   # a child poll re-reads the file
     clean_env.setenv("PATCHBAY_POLL_INTERVAL", "120")   # the environment wins
     assert read_poll_interval() == (120, None)
+
+
+def test_poll_interval_is_capped_at_a_day(clean_env):
+    from patchbay.config import POLL_INTERVAL_MAX, load_settings
+
+    clean_env.setenv("PATCHBAY_POLL_INTERVAL", "86400")
+    s = load_settings()
+    assert s.poll_interval == 86400 and not s.parse_warnings
+    for huge in ("86401", "1e30"):
+        clean_env.setenv("PATCHBAY_POLL_INTERVAL", huge)
+        s = load_settings()
+        assert s.poll_interval == POLL_INTERVAL_MAX
+        assert any("over a day" in w for w in s.parse_warnings)

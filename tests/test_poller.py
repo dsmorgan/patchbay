@@ -75,7 +75,7 @@ def test_stop_during_sleep_exits_at_once(fake_polls):
     assert len(fake_polls.instances) == 1
 
 
-def test_stop_during_poll_lets_it_finish(fake_polls):
+def test_stop_during_poll_lets_it_finish(fake_polls, capsys):
     after(0.2, term)
     after(0.6, lambda: fake_polls.instances[0].released.set())
     rc, took = run_poller()
@@ -83,15 +83,18 @@ def test_stop_during_poll_lets_it_finish(fake_polls):
     assert 0.5 < took < 3             # waited for the poll, then stopped
     assert not fake_polls.instances[0].terminated
     assert len(fake_polls.instances) == 1   # and began no second one
+    assert "stopping after this poll" in capsys.readouterr().out
 
 
-def test_second_signal_aborts_the_poll(fake_polls):
+def test_second_signal_aborts_the_poll(fake_polls, capsys):
     after(0.2, term)
     after(0.4, term)
     rc, took = run_poller()
     assert rc == 1
     assert took < 3
     assert fake_polls.instances[0].terminated
+    err = capsys.readouterr().err
+    assert "aborting the poll" in err and "cut short" in err
 
 
 def test_wait_stops_with_the_signal(fake_polls, monkeypatch):
