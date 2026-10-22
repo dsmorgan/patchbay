@@ -100,6 +100,9 @@ class PfsenseCollector:
             from urllib.parse import urlsplit
             _hostname = urlsplit(base).hostname or base
             dev_name = host_device_name(base)
+            # the first-octet name an address-configured pfSense had before #98
+            from ..normalize import first_label_of_host, retire_source_names
+            retire_source_names(conn, NAME, {first_label_of_host(base): {dev_name}})
 
             sysinfo = get("api/v2/status/system") or {}
             version = None

@@ -17,7 +17,7 @@ import httpx
 from ..config import Settings
 from .. import db
 from . import register
-from ..normalize import canonical_name
+from ..normalize import canonical_name, retire_source_names
 from ..ports import port_kind
 
 NAME = "oxidized"
@@ -218,7 +218,16 @@ class OxidizedCollector:
         with httpx.Client(verify=settings.tls_verify, timeout=20) as client:
             r = client.get(f"{base}/nodes.json")
             r.raise_for_status()
-            for node in r.json():
+            nodes = r.json()
+            # before #98 an IP-named node was cut to its first octet; hand
+            # that name's rows to the node's full name (when only one node
+            # cut to it)
+            renames: dict[str, set[str]] = {}
+            for node in nodes:
+                n = node.get("name") or node.get("full_name") or ""
+                renames.setdefault(n.split(".")[0].lower(), set()).add(canonical_name(n))
+            retire_source_names(conn, NAME, renames)
+            for node in nodes:
                 model = (node.get("model") or "").lower()
                 parser = PARSERS.get(model)
                 status = (node.get("last") or {}).get("status") or node.get("status")
