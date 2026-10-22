@@ -31,25 +31,33 @@ SECRET_TAG_WORDS = ("prv", "crt", "cert", "pass", "pw", "secret", "psk",
                     "shared", "private", "key", "seed", "otp", "community",
                     "auth", "token", "hash", "credential", "tls")
 
-_ATTRS = r"(\s[^>]*)?"                       # optional attributes, kept
-_CONTENT = r"(<!\[CDATA\[.*?\]\]>|[^<]+)"    # text or one CDATA section
-_SECRET_TAG_RE = re.compile(
-    r"<([a-z0-9_-]*(?:" + "|".join(SECRET_TAG_WORDS) + r")[a-z0-9_-]*)"
-    + _ATTRS + ">" + _CONTENT + r"</\1\s*>", re.I | re.S)
-# PEM material under any tag name: a key or certificate block pasted as-is
-_PEM_ELEMENT_RE = re.compile(
-    r"<([a-z0-9_-]+)" + _ATTRS + r">([^<]*-----BEGIN [^<]*)</\1\s*>", re.I)
+_SECRET_NAME_RE = re.compile("|".join(SECRET_TAG_WORDS), re.I)
+# a leaf element: optional attributes (kept), and content that is any mix of
+# text, whitespace, CDATA sections, and comments (either may hold '<'). Only
+# leaves match, so a secret is redacted where it sits, never its parent.
+_ELEMENT_RE = re.compile(
+    r"<([a-z0-9_-]+)(\s[^>]*)?>"
+    r"((?:<!\[CDATA\[.*?\]\]>|<!--.*?-->|[^<])+)</\1\s*>",
+    re.I | re.S)
+_CDATA_RE = re.compile(r"<!\[CDATA\[(.*?)\]\]>", re.S)
 # catch-all for key material hiding under tags the list doesn't know: any
 # element whose content is one long base64-ish run gets the same treatment
 # (a real ACME account key surfaced under a bare <key> before this existed;
-# unknown plugins will invent more names, so shape catches what names miss)
-_LONG_BLOB_RE = re.compile(
-    r"<([a-z0-9_-]+)" + _ATTRS + r">([A-Za-z0-9+/=\s]{200,})</\1\s*>", re.I)
+# unknown plugins will invent more names, so shape catches what names miss),
+# and so does a PEM block pasted under any name
+_LONG_BLOB_RE = re.compile(r"[A-Za-z0-9+/=\s]{200,}")
 _ALREADY = re.compile(r"redacted:[0-9a-f]{8}")
 
 
 def _digest(content: str) -> str:
     return "redacted:" + hashlib.sha256(content.encode()).hexdigest()[:8]
+
+
+def _is_secret(tag: str, content: str) -> bool:
+    if _SECRET_NAME_RE.search(tag):
+        return True
+    inner = _CDATA_RE.sub(r"\1", content)
+    return "-----BEGIN " in inner or bool(_LONG_BLOB_RE.fullmatch(inner))
 
 
 def redact_xml(text: str) -> tuple[str, int]:
@@ -60,14 +68,12 @@ def redact_xml(text: str) -> tuple[str, int]:
     def sub(m: re.Match) -> str:
         nonlocal count
         tag, attrs, content = m.group(1), m.group(2) or "", m.group(3)
-        if _ALREADY.fullmatch(content):
+        if _ALREADY.fullmatch(content) or not _is_secret(tag, content):
             return m.group(0)
         count += 1
         return f"<{tag}{attrs}>{_digest(content)}</{tag}>"
 
-    for pat in (_SECRET_TAG_RE, _PEM_ELEMENT_RE, _LONG_BLOB_RE):
-        text = pat.sub(sub, text)
-    return text, count
+    return _ELEMENT_RE.sub(sub, text), count
 
 
 # scheme://userinfo@ — the userinfo stops at the first '/', whitespace, or
