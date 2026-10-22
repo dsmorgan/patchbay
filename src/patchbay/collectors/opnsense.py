@@ -142,6 +142,27 @@ def _forbidden_note(path: str) -> str:
     return f"{path}: 403 ({hint})"
 
 
+def _all_leases(get) -> list[dict]:
+    """Every DHCPv4 lease. searchLease paginates: walk every page rather
+    than trusting one oversized rowCount (leases beyond it would be
+    silently dropped)."""
+    page, all_rows = 1, []
+    while True:
+        # ISC-only: a site on Dnsmasq or Kea has no such endpoint, and
+        # a 404 is "no opinion", not a failed poll (endpoints are
+        # upsert-only here, so there is nothing to prune either way)
+        leases = get(f"dhcpv4/leases/searchLease?current={page}&rowCount=500",
+                     optional=True)
+        if leases is None:
+            break
+        rows = leases.get("rows", [])
+        all_rows += rows
+        if len(rows) < 500:
+            break
+        page += 1
+    return all_rows
+
+
 class OpnsenseCollector:
     name = NAME
 
@@ -151,18 +172,17 @@ class OpnsenseCollector:
 
     def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
         base, short_name = base_and_name(settings.opnsense_host)
-        # before #98 an address-configured firewall was named by its first
-        # octet; hand that name's tunnels, routes and history to the new one
-        from ..normalize import first_label_of_host, retire_source_names
-        retire_source_names(conn, NAME, {
-            first_label_of_host(settings.opnsense_host): {short_name}})
         auth = (settings.opnsense_api_key, settings.opnsense_api_secret)
         notes: list[str] = []
+        # a refused endpoint's note, held until the write phase reaches that
+        # endpoint's data, so the summary reads in the same order as before
+        refused: dict[str, list[str]] = {}
+        key = ""
 
         def get(path: str, optional: bool = False) -> Any | None:
             r = client.get(f"{base}/{path}", auth=auth)
             if r.status_code == 403:
-                notes.append(_forbidden_note(path))
+                refused.setdefault(key, []).append(_forbidden_note(path))
                 return None
             if optional and r.status_code in (400, 404):
                 # an endpoint this OPNsense doesn't have (older release,
@@ -175,246 +195,260 @@ class OpnsenseCollector:
         def get_text(path: str) -> str | None:
             r = client.get(f"{base}/{path}", auth=auth)
             if r.status_code == 403:
-                notes.append(_forbidden_note(path))
+                refused.setdefault(key, []).append(_forbidden_note(path))
                 return None
             r.raise_for_status()
             return r.text
 
+        # Every request before the first write: the caller's transaction
+        # holds SQLite's write lock from then until it commits, and a
+        # dozen API round trips inside it locked the UI out (#109).
+        got: dict[str, Any] = {}
         with httpx.Client(verify=settings.tls_verify, timeout=20) as client:
-            # the firewall knows what it is — SNMP only sees "FreeBSD/amd64"
-            fw = get("core/firmware/info") or {}
-            version = fw.get("product_version")
-            from urllib.parse import urlsplit
-            mgmt_hostname = urlsplit(base).hostname or settings.opnsense_host
-            dev_id = db.upsert_device(conn, name=short_name,
-                                      source=NAME, role="firewall", status="up",
-                                      vendor="OPNsense",
-                                      os=(f"opnsense {version}" if version else None),
-                                      mgmt_ip=mgmt_hostname)
+            for key, fetch in (
+                ("fw", lambda: get("core/firmware/info")),
+                ("ifaces", lambda: get("interfaces/overview/export")),
+                ("gws", lambda: get("routes/gateway/status")),
+                ("wg", lambda: get("wireguard/service/show", optional=True)),
+                ("ovpn", lambda: get("openvpn/service/searchSessions", optional=True)),
+                ("ipsec", lambda: get("ipsec/sessions/searchPhase1", optional=True)),
+                ("arp", lambda: get("diagnostics/interface/get_arp")
+                 or get("diagnostics/interface/getArp")),
+                ("routes", lambda: get("diagnostics/interface/get_routes")),
+                ("leases", lambda: _all_leases(get)),
+                ("cfg", lambda: get_text("core/backup/download/this")),
+            ):
+                got[key] = fetch()
 
-            ifaces = get("interfaces/overview/export")
-            vlan_rows: list[tuple] = []
-            n_ifaces = 0
-            # truthiness, not `is not None`: a 200 with an empty body must
-            # not run the delete-then-insert or the tunnel purge below —
-            # same empty-response stance as the librenms/unifi fdb paths
-            if ifaces:
-                db.save_raw(conn, source=NAME, endpoint="interfaces/overview/export", payload=ifaces)
-                for i in ifaces if isinstance(ifaces, list) else []:
-                    name = i.get("device") or i.get("identifier")
-                    if not name:
-                        continue
-                    if name.lower().startswith(_TUNNEL_PREFIXES):
-                        continue
-                    enabled = i.get("enabled")
-                    admin_status = ("up" if enabled else "down") if enabled is not None else None
-                    vlan_tag = i.get("vlan_tag")
-                    if vlan_tag is not None:
-                        try:
-                            vlan_rows.append((short_name, name, int(vlan_tag), NAME))
-                        except (ValueError, TypeError):
-                            pass
-                    db.upsert_interface(
-                        conn, device_id=dev_id, name=name,
-                        oper_status="up" if i.get("status") == "up" else i.get("status"),
-                        admin_status=admin_status,
-                        mac=(i.get("macaddr") or None),
-                        description=i.get("description"),
-                        ip=(i.get("addr4") or None),
-                        ip6=(i.get("addr6") or None),
-                        speed_bps=_parse_line_rate(i.get("statistics") or {}),
-                    )
-                    n_ifaces += 1
-                # This collector owns its port_vlans rows: delete-then-insert,
-                # so a VLAN sub-interface removed from OPNsense leaves the
-                # model too. Only when the export succeeded — a 403 above must
-                # not wipe rows that are still true.
-                conn.execute("DELETE FROM port_vlans WHERE source = ? AND device = ?",
-                             (NAME, short_name))
-                conn.executemany(
-                    "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
-                    "VALUES (?, ?, ?, 0, ?) ON CONFLICT(device, interface, vid) DO NOTHING",
-                    vlan_rows)
-                # Purge tunnel interfaces written before the filter was in
-                # place. interfaces has no source column, so target by prefix.
+        def take(k: str) -> Any:
+            notes.extend(refused.get(k, ()))
+            return got[k]
+
+        # the write phase: no network I/O from here on.
+        # Before #98 an address-configured firewall was named by its first
+        # octet; hand that name's tunnels, routes and history to the new one
+        from ..normalize import first_label_of_host, retire_source_names
+        retire_source_names(conn, NAME, {
+            first_label_of_host(settings.opnsense_host): {short_name}})
+        # the firewall knows what it is — SNMP only sees "FreeBSD/amd64"
+        fw = take("fw") or {}
+        version = fw.get("product_version")
+        from urllib.parse import urlsplit
+        mgmt_hostname = urlsplit(base).hostname or settings.opnsense_host
+        dev_id = db.upsert_device(conn, name=short_name,
+                                  source=NAME, role="firewall", status="up",
+                                  vendor="OPNsense",
+                                  os=(f"opnsense {version}" if version else None),
+                                  mgmt_ip=mgmt_hostname)
+
+        ifaces = take("ifaces")
+        vlan_rows: list[tuple] = []
+        n_ifaces = 0
+        # truthiness, not `is not None`: a 200 with an empty body must
+        # not run the delete-then-insert or the tunnel purge below —
+        # same empty-response stance as the librenms/unifi fdb paths
+        if ifaces:
+            db.save_raw(conn, source=NAME, endpoint="interfaces/overview/export", payload=ifaces)
+            for i in ifaces if isinstance(ifaces, list) else []:
+                name = i.get("device") or i.get("identifier")
+                if not name:
+                    continue
+                if name.lower().startswith(_TUNNEL_PREFIXES):
+                    continue
+                enabled = i.get("enabled")
+                admin_status = ("up" if enabled else "down") if enabled is not None else None
+                vlan_tag = i.get("vlan_tag")
+                if vlan_tag is not None:
+                    try:
+                        vlan_rows.append((short_name, name, int(vlan_tag), NAME))
+                    except (ValueError, TypeError):
+                        pass
+                db.upsert_interface(
+                    conn, device_id=dev_id, name=name,
+                    oper_status="up" if i.get("status") == "up" else i.get("status"),
+                    admin_status=admin_status,
+                    mac=(i.get("macaddr") or None),
+                    description=i.get("description"),
+                    ip=(i.get("addr4") or None),
+                    ip6=(i.get("addr6") or None),
+                    speed_bps=_parse_line_rate(i.get("statistics") or {}),
+                )
+                n_ifaces += 1
+            # This collector owns its port_vlans rows: delete-then-insert,
+            # so a VLAN sub-interface removed from OPNsense leaves the
+            # model too. Only when the export succeeded — a 403 above must
+            # not wipe rows that are still true.
+            conn.execute("DELETE FROM port_vlans WHERE source = ? AND device = ?",
+                         (NAME, short_name))
+            conn.executemany(
+                "INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                "VALUES (?, ?, ?, 0, ?) ON CONFLICT(device, interface, vid) DO NOTHING",
+                vlan_rows)
+            # Purge tunnel interfaces written before the filter was in
+            # place. interfaces has no source column, so target by prefix.
+            conn.execute(
+                "DELETE FROM interfaces WHERE device_id = ? AND ("
+                "name LIKE 'tun%' OR name LIKE 'ovpn%' OR name LIKE 'gif%' "
+                "OR name LIKE 'gre%' OR name LIKE 'ipsec%' OR name LIKE 'wg%')",
+                (dev_id,),
+            )
+
+        gws = take("gws")
+        if gws is not None:
+            db.save_raw(conn, source=NAME, endpoint="routes/gateway/status", payload=gws)
+            for g in gws.get("items", []):
                 conn.execute(
-                    "DELETE FROM interfaces WHERE device_id = ? AND ("
-                    "name LIKE 'tun%' OR name LIKE 'ovpn%' OR name LIKE 'gif%' "
-                    "OR name LIKE 'gre%' OR name LIKE 'ipsec%' OR name LIKE 'wg%')",
-                    (dev_id,),
+                    "INSERT INTO gateways (name, address, status, loss, delay, source, last_seen) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(name) DO UPDATE SET address=excluded.address, "
+                    "status=excluded.status, loss=excluded.loss, delay=excluded.delay, "
+                    "last_seen=excluded.last_seen",
+                    (g.get("name"), g.get("address"), g.get("status_translated") or g.get("status"),
+                     g.get("loss"), g.get("delay"), NAME, db.now()),
                 )
 
-            gws = get("routes/gateway/status")
-            if gws is not None:
-                db.save_raw(conn, source=NAME, endpoint="routes/gateway/status", payload=gws)
-                for g in gws.get("items", []):
-                    conn.execute(
-                        "INSERT INTO gateways (name, address, status, loss, delay, source, last_seen) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?) "
-                        "ON CONFLICT(name) DO UPDATE SET address=excluded.address, "
-                        "status=excluded.status, loss=excluded.loss, delay=excluded.delay, "
-                        "last_seen=excluded.last_seen",
-                        (g.get("name"), g.get("address"), g.get("status_translated") or g.get("status"),
-                         g.get("loss"), g.get("delay"), NAME, db.now()),
-                    )
-
-            # VPN tunnels (#42): first-class objects, never interfaces (the
-            # export above keeps skipping tun/ovpn/wg/ipsec). Each type's
-            # endpoint is guarded independently — a 403 on one must not
-            # wipe another's rows, and an answered-but-empty listing is the
-            # truth ("no tunnels of this type"). No key material is stored,
-            # not even public keys.
-            n_tunnels = 0
-            wg = get("wireguard/service/show", optional=True)
-            if wg is not None:
-                rows = wg.get("rows", []) if isinstance(wg, dict) else []
-                peers = []
-                iface_name: dict[str, str] = {}   # wg device -> instance name
-                for r in rows:
-                    if r.get("type") == "interface":
-                        dev_if = r.get("if") or r.get("device")
-                        if dev_if and r.get("name"):
-                            iface_name[dev_if] = r["name"]
-                for r in rows:
-                    if r.get("type") != "peer":
-                        continue
+        # VPN tunnels (#42): first-class objects, never interfaces (the
+        # export above keeps skipping tun/ovpn/wg/ipsec). Each type's
+        # endpoint is guarded independently — a 403 on one must not
+        # wipe another's rows, and an answered-but-empty listing is the
+        # truth ("no tunnels of this type"). No key material is stored,
+        # not even public keys.
+        n_tunnels = 0
+        wg = take("wg")
+        if wg is not None:
+            rows = wg.get("rows", []) if isinstance(wg, dict) else []
+            peers = []
+            iface_name: dict[str, str] = {}   # wg device -> instance name
+            for r in rows:
+                if r.get("type") == "interface":
                     dev_if = r.get("if") or r.get("device")
-                    try:
-                        hs = float(r.get("latest-handshake") or 0) or None
-                    except (TypeError, ValueError):
-                        hs = None
-                    pname = r.get("name") or r.get("public-key", "")[:8] or "peer"
-                    inst = iface_name.get(dev_if)
-                    peers.append({
-                        "name": f"{inst} · {pname}" if inst else pname,
-                        "peer": r.get("endpoint") or None,
-                        "interface": dev_if,
-                        "status": wg_status(hs, db.now()),
-                        "last_handshake": hs,
-                        "detail": (f"allowed {r['allowed-ips']}"
-                                   if r.get("allowed-ips") else None),
-                        "allowed_ips": _cidr_list(r.get("allowed-ips")),
-                    })
-                db.save_tunnels(conn, device=short_name, source=NAME,
-                             type_="wireguard", rows=peers)
-                n_tunnels += len(peers)
+                    if dev_if and r.get("name"):
+                        iface_name[dev_if] = r["name"]
+            for r in rows:
+                if r.get("type") != "peer":
+                    continue
+                dev_if = r.get("if") or r.get("device")
+                try:
+                    hs = float(r.get("latest-handshake") or 0) or None
+                except (TypeError, ValueError):
+                    hs = None
+                pname = r.get("name") or r.get("public-key", "")[:8] or "peer"
+                inst = iface_name.get(dev_if)
+                peers.append({
+                    "name": f"{inst} · {pname}" if inst else pname,
+                    "peer": r.get("endpoint") or None,
+                    "interface": dev_if,
+                    "status": wg_status(hs, db.now()),
+                    "last_handshake": hs,
+                    "detail": (f"allowed {r['allowed-ips']}"
+                               if r.get("allowed-ips") else None),
+                    "allowed_ips": _cidr_list(r.get("allowed-ips")),
+                })
+            db.save_tunnels(conn, device=short_name, source=NAME,
+                         type_="wireguard", rows=peers)
+            n_tunnels += len(peers)
 
-            ovpn = get("openvpn/service/searchSessions", optional=True)
-            if ovpn is not None:
-                rows = ovpn.get("rows", []) if isinstance(ovpn, dict) else []
-                # a server instance lists one row per connected client; fold
-                # to one tunnel per instance with a client count
-                by_name: dict[str, dict] = {}
-                for r in rows:
-                    nm = r.get("description") or f"instance {r.get('id', '?')}"
-                    st = str(r.get("status") or "").lower()
-                    up = st in ("connected", "ok", "up", "online")
-                    t = by_name.setdefault(nm, {
-                        "name": nm, "peer": None, "interface": None,
-                        "status": "down", "sessions": 0})
-                    t["sessions"] += 1 if up else 0
-                    if up:
-                        t["status"] = "up"
-                        t["peer"] = t["peer"] or r.get("real_address") or None
-                for t in by_name.values():
-                    n_sess = t.pop("sessions")
-                    t["detail"] = f"{n_sess} sessions" if n_sess > 1 else None
-                db.save_tunnels(conn, device=short_name, source=NAME,
-                             type_="openvpn", rows=list(by_name.values()))
-                n_tunnels += len(by_name)
+        ovpn = take("ovpn")
+        if ovpn is not None:
+            rows = ovpn.get("rows", []) if isinstance(ovpn, dict) else []
+            # a server instance lists one row per connected client; fold
+            # to one tunnel per instance with a client count
+            by_name: dict[str, dict] = {}
+            for r in rows:
+                nm = r.get("description") or f"instance {r.get('id', '?')}"
+                st = str(r.get("status") or "").lower()
+                up = st in ("connected", "ok", "up", "online")
+                t = by_name.setdefault(nm, {
+                    "name": nm, "peer": None, "interface": None,
+                    "status": "down", "sessions": 0})
+                t["sessions"] += 1 if up else 0
+                if up:
+                    t["status"] = "up"
+                    t["peer"] = t["peer"] or r.get("real_address") or None
+            for t in by_name.values():
+                n_sess = t.pop("sessions")
+                t["detail"] = f"{n_sess} sessions" if n_sess > 1 else None
+            db.save_tunnels(conn, device=short_name, source=NAME,
+                         type_="openvpn", rows=list(by_name.values()))
+            n_tunnels += len(by_name)
 
-            ipsec = get("ipsec/sessions/searchPhase1", optional=True)
-            if ipsec is not None:
-                rows = ipsec.get("rows", []) if isinstance(ipsec, dict) else []
-                sas = []
-                for r in rows:
-                    nm = r.get("phase1desc") or r.get("name") \
-                        or f"ikeid {r.get('ikeid', '?')}"
-                    connected = r.get("connected")
-                    up = connected is True or str(connected).lower() in ("1", "true", "connected")
-                    remote = r.get("remote-addrs") or r.get("remote_addrs")
-                    sas.append({"name": nm, "peer": remote or None,
-                                "interface": None,
-                                "status": "up" if up else "down",
-                                "detail": (f"IKEv{r['version']}"
-                                           if r.get("version") else None)})
-                db.save_tunnels(conn, device=short_name, source=NAME,
-                             type_="ipsec", rows=sas)
-                n_tunnels += len(sas)
-            if n_tunnels:
-                notes.append(f"{n_tunnels} vpn tunnels")
+        ipsec = take("ipsec")
+        if ipsec is not None:
+            rows = ipsec.get("rows", []) if isinstance(ipsec, dict) else []
+            sas = []
+            for r in rows:
+                nm = r.get("phase1desc") or r.get("name") \
+                    or f"ikeid {r.get('ikeid', '?')}"
+                connected = r.get("connected")
+                up = connected is True or str(connected).lower() in ("1", "true", "connected")
+                remote = r.get("remote-addrs") or r.get("remote_addrs")
+                sas.append({"name": nm, "peer": remote or None,
+                            "interface": None,
+                            "status": "up" if up else "down",
+                            "detail": (f"IKEv{r['version']}"
+                                       if r.get("version") else None)})
+            db.save_tunnels(conn, device=short_name, source=NAME,
+                         type_="ipsec", rows=sas)
+            n_tunnels += len(sas)
+        if n_tunnels:
+            notes.append(f"{n_tunnels} vpn tunnels")
 
-            arp = get("diagnostics/interface/get_arp") or get("diagnostics/interface/getArp")
-            if arp is not None:
-                db.save_raw(conn, source=NAME, endpoint="get_arp", payload=arp)
-                rows = arp if isinstance(arp, list) else arp.get("rows", [])
-                for e in rows:
-                    mac = (e.get("mac") or "").lower()
-                    if mac and mac != "(incomplete)":
-                        db.upsert_endpoint(conn, mac=mac, source=NAME,
-                                           ip=e.get("ip"), hostname=(e.get("hostname") or None))
+        arp = take("arp")
+        if arp is not None:
+            db.save_raw(conn, source=NAME, endpoint="get_arp", payload=arp)
+            rows = arp if isinstance(arp, list) else arp.get("rows", [])
+            for e in rows:
+                mac = (e.get("mac") or "").lower()
+                if mac and mac != "(incomplete)":
+                    db.upsert_endpoint(conn, mac=mac, source=NAME,
+                                       ip=e.get("ip"), hostname=(e.get("hostname") or None))
 
-            # the routing table proves reachability that addresses can't: a
-            # delegated IPv6 prefix (or any downstream network) is routed via
-            # a next-hop the firewall doesn't have an address in, so without
-            # this it looks isolated. Needs "Diagnostics: Routing Tables".
-            routes = get("diagnostics/interface/get_routes")
-            n_routes = 0
-            if routes:
-                db.save_raw(conn, source=NAME, endpoint="routes", payload=routes)
-                fw_name = short_name
-                conn.execute("DELETE FROM routes WHERE source = ?", (NAME,))
-                for rt in routes if isinstance(routes, list) else []:
-                    dest, proto = rt.get("destination"), rt.get("proto")
-                    if not dest or not proto:
-                        continue
-                    if dest == "default":
-                        # a default route can't say a subnet is *reachable*
-                        # (consumers skip /0 destinations), but it names the
-                        # WAN exit interface — the routed view's internet rail
-                        dest = "0.0.0.0/0" if proto == "ipv4" else "::/0"
-                    conn.execute(
-                        "INSERT OR REPLACE INTO routes (device, destination, gateway, "
-                        "interface, proto, flags, source, last_seen) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (fw_name, dest, rt.get("gateway"), rt.get("netif"),
-                         proto, rt.get("flags"), NAME, db.now()))
-                    n_routes += 1
-                notes.append(f"{n_routes} routes")
+        # the routing table proves reachability that addresses can't: a
+        # delegated IPv6 prefix (or any downstream network) is routed via
+        # a next-hop the firewall doesn't have an address in, so without
+        # this it looks isolated. Needs "Diagnostics: Routing Tables".
+        routes = take("routes")
+        n_routes = 0
+        if routes:
+            db.save_raw(conn, source=NAME, endpoint="routes", payload=routes)
+            fw_name = short_name
+            conn.execute("DELETE FROM routes WHERE source = ?", (NAME,))
+            for rt in routes if isinstance(routes, list) else []:
+                dest, proto = rt.get("destination"), rt.get("proto")
+                if not dest or not proto:
+                    continue
+                if dest == "default":
+                    # a default route can't say a subnet is *reachable*
+                    # (consumers skip /0 destinations), but it names the
+                    # WAN exit interface — the routed view's internet rail
+                    dest = "0.0.0.0/0" if proto == "ipv4" else "::/0"
+                conn.execute(
+                    "INSERT OR REPLACE INTO routes (device, destination, gateway, "
+                    "interface, proto, flags, source, last_seen) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (fw_name, dest, rt.get("gateway"), rt.get("netif"),
+                     proto, rt.get("flags"), NAME, db.now()))
+                n_routes += 1
+            notes.append(f"{n_routes} routes")
 
-            # searchLease paginates: walk every page rather than trusting one
-            # oversized rowCount (leases beyond it would be silently dropped)
-            page, all_rows = 1, []
-            while True:
-                # ISC-only: a site on Dnsmasq or Kea has no such endpoint, and
-                # a 404 is "no opinion", not a failed poll (endpoints are
-                # upsert-only here, so there is nothing to prune either way)
-                leases = get(f"dhcpv4/leases/searchLease?current={page}&rowCount=500",
-                             optional=True)
-                if leases is None:
-                    break
-                rows = leases.get("rows", [])
-                all_rows += rows
-                if len(rows) < 500:
-                    break
-                page += 1
-            if all_rows:
-                db.save_raw(conn, source=NAME, endpoint="dhcpv4/leases",
-                            payload={"rows": all_rows})
-                for l in all_rows:
-                    mac = (l.get("mac") or "").lower()
-                    if mac:
-                        db.upsert_endpoint(conn, mac=mac, source=NAME,
-                                           ip=l.get("address"), hostname=(l.get("hostname") or None))
+        all_rows = take("leases")
+        if all_rows:
+            db.save_raw(conn, source=NAME, endpoint="dhcpv4/leases",
+                        payload={"rows": all_rows})
+            for l in all_rows:
+                mac = (l.get("mac") or "").lower()
+                if mac:
+                    db.upsert_endpoint(conn, mac=mac, source=NAME,
+                                       ip=l.get("address"), hostname=(l.get("hostname") or None))
 
-            # firewall config history (#23): the raw XML is redacted and
-            # noise-stripped by save_config_revision before storage; the raw
-            # document itself is discarded here and never saved to raw_payloads
-            cfg = get_text("core/backup/download/this")
-            new_rev = False
-            if cfg and cfg.lstrip().startswith("<"):
-                new_rev = save_config_revision(conn, short_name, cfg,
-                                               settings.config_keep)
+        # firewall config history (#23): the raw XML is redacted and
+        # noise-stripped by save_config_revision before storage; the raw
+        # document itself is discarded here and never saved to raw_payloads
+        cfg = take("cfg")
+        new_rev = False
+        if cfg and cfg.lstrip().startswith("<"):
+            new_rev = save_config_revision(conn, short_name, cfg,
+                                           settings.config_keep)
 
         summary = f"{n_ifaces} interfaces/gateways/arp/leases polled"
         if new_rev:

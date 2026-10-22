@@ -120,165 +120,183 @@ class LibreNmsCollector:
         r.raise_for_status()
         return r.json()
 
-    def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
-        n_devices = n_ports = n_links = 0
+    def _fetch(self, settings: Settings) -> dict[str, Any]:
+        """Every API call the collection needs, before anything is written:
+        the caller's transaction takes SQLite's write lock at the first
+        write, and holding it across one ports request per device locked
+        the UI out for the whole collection (#109)."""
         with httpx.Client(verify=settings.tls_verify, timeout=30) as client:
             devices = self._get(client, settings, "devices").get("devices", [])
-            db.save_raw(conn, source=NAME, endpoint="devices", payload=devices)
-            id_to_name: dict[int, str] = {}
-            port_map: dict[int, tuple[str, str]] = {}  # port_id -> (device, ifName)
+            ports = {}
             for d in devices:
-                name = d.get("sysName") or d.get("hostname")
-                if not name:
+                if d.get("sysName") or d.get("hostname"):
+                    ports[d["device_id"]] = self._get(
+                        client, settings,
+                        f"devices/{d['device_id']}/ports?columns={PORTS_COLUMNS}",
+                    ).get("ports", [])
+            return {
+                "devices": devices, "ports": ports,
+                "links": self._get(client, settings, "resources/links").get("links", []),
+                "vlans": self._get(client, settings, "resources/vlans").get("vlans", []),
+                "fdb": self._get(client, settings, "resources/fdb").get("ports_fdb", []),
+            }
+
+    def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
+        fetched = self._fetch(settings)
+        n_devices = n_ports = n_links = 0
+        # the write phase: no network I/O from here on
+        devices = fetched["devices"]
+        db.save_raw(conn, source=NAME, endpoint="devices", payload=devices)
+        id_to_name: dict[int, str] = {}
+        port_map: dict[int, tuple[str, str]] = {}  # port_id -> (device, ifName)
+        for d in devices:
+            name = d.get("sysName") or d.get("hostname")
+            if not name:
+                continue
+            status = "disabled" if d.get("disabled") else ("up" if d.get("status") else "down")
+            dev_id = db.upsert_device(
+                conn, name=name, source=NAME,
+                mgmt_ip=d.get("ip") or d.get("overwrite_ip"),
+                vendor=HARDWARE_ALIASES.get(d.get("hardware"), d.get("hardware")),
+                os=d.get("os"),
+                role=OS_ROLE.get(d.get("os")),
+                serial=(d.get("serial") or None),
+                status=status,
+            )
+            id_to_name[d["device_id"]] = name
+            n_devices += 1
+
+            for p in fetched["ports"][d["device_id"]]:
+                if not p.get("ifName"):
                     continue
-                status = "disabled" if d.get("disabled") else ("up" if d.get("status") else "down")
-                dev_id = db.upsert_device(
-                    conn, name=name, source=NAME,
-                    mgmt_ip=d.get("ip") or d.get("overwrite_ip"),
-                    vendor=HARDWARE_ALIASES.get(d.get("hardware"), d.get("hardware")),
-                    os=d.get("os"),
-                    role=OS_ROLE.get(d.get("os")),
-                    serial=(d.get("serial") or None),
-                    status=status,
+                if p.get("port_id"):
+                    port_map[p["port_id"]] = (name, p["ifName"])
+                db.upsert_interface(
+                    conn, device_id=dev_id, name=p["ifName"],
+                    ifindex=p.get("ifIndex"),
+                    admin_status=p.get("ifAdminStatus"),
+                    oper_status=p.get("ifOperStatus"),
+                    speed_bps=_speed(p.get("ifSpeed")),
+                    mac=_colon_mac(p.get("ifPhysAddress")),
+                    description=_descr(p.get("ifAlias"), p["ifName"]),
+                    # librenms rates are octets/sec from the 5-min poller
+                    in_bps=(int(p["ifInOctets_rate"] * 8)
+                            if p.get("ifInOctets_rate") is not None else None),
+                    out_bps=(int(p["ifOutOctets_rate"] * 8)
+                             if p.get("ifOutOctets_rate") is not None else None),
                 )
-                id_to_name[d["device_id"]] = name
-                n_devices += 1
-
-                ports = self._get(
-                    client, settings,
-                    f"devices/{d['device_id']}/ports?columns={PORTS_COLUMNS}",
-                ).get("ports", [])
-                for p in ports:
-                    if not p.get("ifName"):
-                        continue
-                    if p.get("port_id"):
-                        port_map[p["port_id"]] = (name, p["ifName"])
-                    db.upsert_interface(
-                        conn, device_id=dev_id, name=p["ifName"],
-                        ifindex=p.get("ifIndex"),
-                        admin_status=p.get("ifAdminStatus"),
-                        oper_status=p.get("ifOperStatus"),
-                        speed_bps=_speed(p.get("ifSpeed")),
-                        mac=_colon_mac(p.get("ifPhysAddress")),
-                        description=_descr(p.get("ifAlias"), p["ifName"]),
-                        # librenms rates are octets/sec from the 5-min poller
-                        in_bps=(int(p["ifInOctets_rate"] * 8)
-                                if p.get("ifInOctets_rate") is not None else None),
-                        out_bps=(int(p["ifOutOctets_rate"] * 8)
-                                 if p.get("ifOutOctets_rate") is not None else None),
-                    )
-                    n_ports += 1
-                    sample = _rate_sample(p)
-                    if sample is not None:
-                        conn.execute(
-                            "INSERT INTO rate_history (device, interface, ts, in_bps, "
-                            f"out_bps, {', '.join(db.RATE_COUNTERS)}) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (name, p["ifName"], db.now(), *sample),
-                        )
-
-            # Retire devices removed from LibreNMS — they stayed on every page
-            # with frozen status forever (disabled devices still appear in the
-            # listing, so this only fires on real deletion). Scoped to rows
-            # this collector owns; guarded on a non-empty listing. Stored
-            # names are post-normalize canonical, so match both forms.
-            if devices:
-                from ..normalize import canonical_name
-                seen_names: set[str] = set()
-                for d in devices:
-                    n = d.get("sysName") or d.get("hostname")
-                    if n:
-                        seen_names |= {n, canonical_name(n)}
-                if seen_names:
+                n_ports += 1
+                sample = _rate_sample(p)
+                if sample is not None:
                     conn.execute(
-                        f"DELETE FROM devices WHERE source = ? "
-                        f"AND name NOT IN ({','.join('?' * len(seen_names))})",
-                        (NAME, *sorted(seen_names)))
+                        "INSERT INTO rate_history (device, interface, ts, in_bps, "
+                        f"out_bps, {', '.join(db.RATE_COUNTERS)}) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (name, p["ifName"], db.now(), *sample),
+                    )
 
-            links = self._get(client, settings, "resources/links").get("links", [])
-            db.save_raw(conn, source=NAME, endpoint="resources/links", payload=links)
-            for l in links:
-                local_dev = id_to_name.get(l.get("local_device_id"))
-                remote = l.get("remote_hostname") or l.get("remote_device_id")
-                if isinstance(remote, int):
-                    remote = id_to_name.get(remote, str(remote))
-                local_if = (l.get("local_port_name")
-                            or (port_map.get(l.get("local_port_id")) or (None, None))[1]
-                            or (str(l["local_port_id"]) if l.get("local_port_id") else "?"))
-                remote_if = (l.get("remote_port_name") or l.get("remote_port")
-                             or l.get("remote_port_descr") or "?")
-                if MACISH_PORT.match(remote_if):
-                    remote_if = "?"
-                if not (local_dev and remote):
-                    continue
-                if local_dev == remote and local_if == remote_if:
-                    continue  # LLDP self-loop artifact (seen on OPNsense vmx ports)
-                db.upsert_link(
-                    conn, a_device=local_dev, a_interface=local_if,
-                    b_device=str(remote), b_interface=str(remote_if), source="lldp",
-                )
-                n_links += 1
-            vlans = self._get(client, settings, "resources/vlans").get("vlans", [])
-            db.save_raw(conn, source=NAME, endpoint="resources/vlans", payload=vlans)
-            # refresh-by-replace, but never on an empty response: a transient
-            # empty payload must not wipe the table until the next good poll
-            if vlans:
-                conn.execute("DELETE FROM device_vlans WHERE source = ?", (NAME,))
-            n_vlans = 0
-            for v in vlans:
-                dev = id_to_name.get(v.get("device_id"))
-                vid = int(v.get("vlan_vlan") or 0)
-                if not dev or not vid:
-                    continue
-                # phpIPAM names win; Q-BRIDGE only fills gaps and proves presence
+        # Retire devices removed from LibreNMS — they stayed on every page
+        # with frozen status forever (disabled devices still appear in the
+        # listing, so this only fires on real deletion). Scoped to rows
+        # this collector owns; guarded on a non-empty listing. Stored
+        # names are post-normalize canonical, so match both forms.
+        if devices:
+            from ..normalize import canonical_name
+            seen_names: set[str] = set()
+            for d in devices:
+                n = d.get("sysName") or d.get("hostname")
+                if n:
+                    seen_names |= {n, canonical_name(n)}
+            if seen_names:
                 conn.execute(
-                    "INSERT INTO vlans (vid, name, source, last_seen) VALUES (?, ?, ?, ?) "
-                    "ON CONFLICT(vid) DO UPDATE SET last_seen=excluded.last_seen, "
-                    "name=COALESCE(vlans.name, excluded.name)",
-                    (vid, v.get("vlan_name"), NAME, db.now()),
-                )
-                conn.execute(
-                    "INSERT OR IGNORE INTO device_vlans (device, vid, source) VALUES (?, ?, ?)",
-                    (dev, vid, NAME),
-                )
-                n_vlans += 1
-            # prune VLANs Q-BRIDGE no longer reports anywhere: this source's
-            # rows only, and never one something still claims (same
-            # claim-aware guard as the phpipam prune — `source` records the
-            # first creator, so a claimed row may belong to a live VLAN
-            # another source still reports). Guarded on a non-empty listing.
-            seen_vids = sorted({int(v.get("vlan_vlan") or 0) for v in vlans} - {0})
-            if seen_vids:
-                conn.execute(
-                    "DELETE FROM vlans WHERE source = ? "
-                    f"AND vid NOT IN ({','.join('?' * len(seen_vids))}) "
-                    "AND vid NOT IN (SELECT vid FROM device_vlans) "
-                    "AND vid NOT IN (SELECT vid FROM port_vlans) "
-                    "AND vid NOT IN (SELECT vid FROM vnic_vlans)",
-                    (NAME, *seen_vids))
+                    f"DELETE FROM devices WHERE source = ? "
+                    f"AND name NOT IN ({','.join('?' * len(seen_names))})",
+                    (NAME, *sorted(seen_names)))
 
-            fdb = self._get(client, settings, "resources/fdb").get("ports_fdb", [])
-            if fdb:  # same empty-response guard as device_vlans above
-                conn.execute("DELETE FROM fdb WHERE source = 'librenms'")
-            # each MAC-table entry names the VLAN it was learned in by
-            # LibreNMS's internal vlan id; the vlans listing maps that to the
-            # VLAN number. Not every platform reports it (0 = unknown) — on
-            # those the routed view falls back to the port's access VLAN.
-            vlan_num = {v.get("vlan_id"): int(v.get("vlan_vlan") or 0)
-                        for v in vlans if v.get("vlan_id") is not None}
-            n_fdb = 0
-            for e in fdb:
-                where = port_map.get(e.get("port_id"))
-                mac = e.get("mac_address") or ""
-                if not where or len(mac) != 12:
-                    continue
-                mac = ":".join(mac[i:i + 2] for i in range(0, 12, 2)).lower()
-                conn.execute(
-                    "INSERT OR IGNORE INTO fdb (device, interface, mac, source, vlan) "
-                    "VALUES (?, ?, ?, 'librenms', ?)",
-                    (*where, mac, vlan_num.get(e.get("vlan_id"), 0)),
-                )
-                n_fdb += 1
+        links = fetched["links"]
+        db.save_raw(conn, source=NAME, endpoint="resources/links", payload=links)
+        for l in links:
+            local_dev = id_to_name.get(l.get("local_device_id"))
+            remote = l.get("remote_hostname") or l.get("remote_device_id")
+            if isinstance(remote, int):
+                remote = id_to_name.get(remote, str(remote))
+            local_if = (l.get("local_port_name")
+                        or (port_map.get(l.get("local_port_id")) or (None, None))[1]
+                        or (str(l["local_port_id"]) if l.get("local_port_id") else "?"))
+            remote_if = (l.get("remote_port_name") or l.get("remote_port")
+                         or l.get("remote_port_descr") or "?")
+            if MACISH_PORT.match(remote_if):
+                remote_if = "?"
+            if not (local_dev and remote):
+                continue
+            if local_dev == remote and local_if == remote_if:
+                continue  # LLDP self-loop artifact (seen on OPNsense vmx ports)
+            db.upsert_link(
+                conn, a_device=local_dev, a_interface=local_if,
+                b_device=str(remote), b_interface=str(remote_if), source="lldp",
+            )
+            n_links += 1
+        vlans = fetched["vlans"]
+        db.save_raw(conn, source=NAME, endpoint="resources/vlans", payload=vlans)
+        # refresh-by-replace, but never on an empty response: a transient
+        # empty payload must not wipe the table until the next good poll
+        if vlans:
+            conn.execute("DELETE FROM device_vlans WHERE source = ?", (NAME,))
+        n_vlans = 0
+        for v in vlans:
+            dev = id_to_name.get(v.get("device_id"))
+            vid = int(v.get("vlan_vlan") or 0)
+            if not dev or not vid:
+                continue
+            # phpIPAM names win; Q-BRIDGE only fills gaps and proves presence
+            conn.execute(
+                "INSERT INTO vlans (vid, name, source, last_seen) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(vid) DO UPDATE SET last_seen=excluded.last_seen, "
+                "name=COALESCE(vlans.name, excluded.name)",
+                (vid, v.get("vlan_name"), NAME, db.now()),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO device_vlans (device, vid, source) VALUES (?, ?, ?)",
+                (dev, vid, NAME),
+            )
+            n_vlans += 1
+        # prune VLANs Q-BRIDGE no longer reports anywhere: this source's
+        # rows only, and never one something still claims (same
+        # claim-aware guard as the phpipam prune — `source` records the
+        # first creator, so a claimed row may belong to a live VLAN
+        # another source still reports). Guarded on a non-empty listing.
+        seen_vids = sorted({int(v.get("vlan_vlan") or 0) for v in vlans} - {0})
+        if seen_vids:
+            conn.execute(
+                "DELETE FROM vlans WHERE source = ? "
+                f"AND vid NOT IN ({','.join('?' * len(seen_vids))}) "
+                "AND vid NOT IN (SELECT vid FROM device_vlans) "
+                "AND vid NOT IN (SELECT vid FROM port_vlans) "
+                "AND vid NOT IN (SELECT vid FROM vnic_vlans)",
+                (NAME, *seen_vids))
+
+        fdb = fetched["fdb"]
+        if fdb:  # same empty-response guard as device_vlans above
+            conn.execute("DELETE FROM fdb WHERE source = 'librenms'")
+        # each MAC-table entry names the VLAN it was learned in by
+        # LibreNMS's internal vlan id; the vlans listing maps that to the
+        # VLAN number. Not every platform reports it (0 = unknown) — on
+        # those the routed view falls back to the port's access VLAN.
+        vlan_num = {v.get("vlan_id"): int(v.get("vlan_vlan") or 0)
+                    for v in vlans if v.get("vlan_id") is not None}
+        n_fdb = 0
+        for e in fdb:
+            where = port_map.get(e.get("port_id"))
+            mac = e.get("mac_address") or ""
+            if not where or len(mac) != 12:
+                continue
+            mac = ":".join(mac[i:i + 2] for i in range(0, 12, 2)).lower()
+            conn.execute(
+                "INSERT OR IGNORE INTO fdb (device, interface, mac, source, vlan) "
+                "VALUES (?, ?, ?, 'librenms', ?)",
+                (*where, mac, vlan_num.get(e.get("vlan_id"), 0)),
+            )
+            n_fdb += 1
         return (f"{n_devices} devices, {n_ports} ports, {n_links} lldp links, "
                 f"{n_vlans} vlan memberships, {n_fdb} fdb")
 

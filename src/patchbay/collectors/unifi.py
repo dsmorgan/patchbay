@@ -122,6 +122,8 @@ class UnifiCollector:
         base = settings.unifi_url.rstrip("/")
         site = "default"
         n_aps = n_clients = 0
+        # every request first, then the writes: the caller's transaction
+        # holds SQLite's write lock from the first write on (#109)
         with httpx.Client(verify=settings.tls_verify, timeout=20) as client:
             r = client.post(f"{base}/api/login",
                             json={"username": settings.unifi_user, "password": settings.unifi_pass})
@@ -132,214 +134,216 @@ class UnifiCollector:
             dr = client.get(f"{base}/api/s/{site}/stat/device")
             dr.raise_for_status()
             devices = dr.json().get("data", [])
-            db.save_raw(conn, source=NAME, endpoint="stat/device", payload=devices)
-            try:
-                prev_err = json.loads(db.get_state(conn, ERR_STATE_KEY) or "{}")
-            except ValueError:
-                prev_err = {}
-            seen_err: dict[str, list] = {}
-            err_ts = db.now()
-            ap_by_mac: dict[str, str] = {}
-            sw_mac_to_name: dict[str, str] = {}        # switch chassis MAC → device name
-            sw_port_names: dict[str, dict[int, str]] = {}  # device name → {port_idx: port_name}
-            # uplinks buffered until every switch's port names are known:
-            # (device, local port name, upstream device, remote port index)
-            pending_links: list[tuple[str, str, str, int]] = []
-            n_switches = 0
-            for d in devices:
-                dev_type = d.get("type")
-                dev_name = d.get("name") or d.get("mac")
-                status = DEVICE_STATES.get(d.get("state"), "unknown")
-
-                # A non-up device's port_table is the controller's cache, not
-                # an observation: port oper/admin/speed are liveness and must
-                # be omitted rather than written stale (same gate temperature
-                # already had). Port names are identity and still land.
-                live = status == "up"
-
-                if dev_type == "usw":
-                    sw_id = db.upsert_device(
-                        conn, name=dev_name, source=NAME,
-                        mgmt_ip=d.get("ip"), vendor="Ubiquiti",
-                        model=MODEL_NAMES.get(d.get("model"), d.get("model")),
-                        os=f"unifi {d.get('version', '')}".strip(), role="switch",
-                        status=status,
-                        temperature=_temperature(d) if live else None,
-                    )
-                    if d.get("mac"):
-                        sw_mac_to_name[d["mac"].lower()] = dev_name
-                    port_idx_map: dict[int, str] = {}
-                    for port in (d.get("port_table") or []):
-                        idx = port.get("port_idx")
-                        port_name = port.get("name") or (f"Port {idx}" if idx else None)
-                        if not port_name:
-                            continue
-                        if idx is not None:
-                            port_idx_map[idx] = port_name
-                        speed = port.get("speed") or 0
-                        in_bps = _bps(port, "rx_bytes-r", live)
-                        out_bps = _bps(port, "tx_bytes-r", live)
-                        db.upsert_interface(
-                            conn, device_id=sw_id, name=port_name,
-                            oper_status=("up" if port.get("up") else "down")
-                                        if live else None,
-                            admin_status=("up" if port.get("enable") else "down")
-                                         if live else None,
-                            speed_bps=(speed * 1_000_000 or None) if live else None,
-                            in_bps=in_bps,
-                            out_bps=out_bps,
-                        )
-                        in_err, out_err = _error_rates(
-                            prev_err, err_ts, json.dumps([dev_name, port_name]),
-                            port, live, seen_err)
-                        _sample(conn, dev_name, port_name, in_bps, out_bps,
-                                in_err, out_err)
-                    sw_port_names[dev_name] = port_idx_map
-                    # Switch-to-switch uplink (same LLDP data as APs). The
-                    # remote port name isn't knowable yet — the upstream
-                    # switch may come later in the device list — so buffer
-                    # the link and resolve names after the loop.
-                    uplink = d.get("uplink") or {}
-                    upstream = uplink.get("uplink_device_name")
-                    upstream_port = uplink.get("uplink_remote_port")
-                    local_idx = uplink.get("port_idx")
-                    if upstream and upstream_port is not None and local_idx is not None:
-                        local_port = port_idx_map.get(local_idx, f"Port {local_idx}")
-                        pending_links.append(
-                            (dev_name, local_port, upstream, upstream_port))
-                    n_switches += 1
-                    continue
-
-                if dev_type != "uap":
-                    continue
-                ap_by_mac[d["mac"].lower()] = dev_name
-                dev_id = db.upsert_device(
-                    conn, name=dev_name, source=NAME,
-                    mgmt_ip=d.get("ip"), vendor="Ubiquiti",
-                    model=MODEL_NAMES.get(d.get("model"), d.get("model")),
-                    os=f"unifi {d.get('version', '')}".strip(), role="ap",
-                    status=status,
-                    temperature=_temperature(d) if live else None,
-                )
-                uplink = d.get("uplink") or {}
-                iface_name = uplink.get("name") or uplink.get("ifname") or "eth0"
-                # the uplink carries the same rolling rates as a switch port;
-                # where the switch is polled too, the load view shows the
-                # busier of the two readings of that cable
-                ap_in = _bps(uplink, "rx_bytes-r", live)
-                ap_out = _bps(uplink, "tx_bytes-r", live)
-                db.upsert_interface(
-                    conn, device_id=dev_id,
-                    name=iface_name,
-                    # the MAC is identity (it's how switch FDB inference finds
-                    # this AP); status and speed are liveness, gated like the
-                    # switch ports above
-                    oper_status=("up" if uplink.get("up") else
-                                 ("down" if uplink else None)) if live else None,
-                    speed_bps=((uplink.get("speed") or 0) * 1_000_000 or None)
-                              if live else None,
-                    in_bps=ap_in, out_bps=ap_out,
-                    mac=d.get("mac"),
-                    description="uplink",
-                )
-                _sample(conn, dev_name, iface_name, ap_in, ap_out)
-                # Physical link to the upstream switch via LLDP-discovered
-                # port. Buffered like the switch uplinks so a renamed port
-                # on the upstream switch resolves to its stored name.
-                upstream = uplink.get("uplink_device_name")
-                upstream_port = uplink.get("uplink_remote_port")
-                if upstream and upstream_port is not None:
-                    pending_links.append(
-                        (dev_name, iface_name, upstream, upstream_port))
-                n_aps += 1
-
-            db.set_state(conn, ERR_STATE_KEY, json.dumps(seen_err))
-
-            # uplink_remote_port is a port index; resolve it through the
-            # upstream switch's port_table so a renamed port still matches
-            # the stored interface. "Port N" is the unmodified-USW fallback.
-            for a_dev, a_if, upstream, remote_idx in pending_links:
-                remote_port = sw_port_names.get(upstream, {}).get(
-                    remote_idx, f"Port {remote_idx}")
-                db.upsert_link(conn, a_device=a_dev, a_interface=a_if,
-                               b_device=upstream, b_interface=remote_port,
-                               source=NAME)
-
-            # Retire APs/switches forgotten by the controller — a device
-            # removed there stayed on every page with frozen status forever.
-            # Scoped to rows this collector owns (a merged record whose
-            # primary source is librenms is that collector's to retire), and
-            # guarded on a non-empty listing like every other prune. Stored
-            # names are post-normalize canonical, so match both forms.
-            if devices:
-                from ..normalize import canonical_name
-                seen: set[str] = set()
-                for d in devices:
-                    n = d.get("name") or d.get("mac")
-                    if n and d.get("type") in ("usw", "uap"):
-                        seen |= {n, canonical_name(n)}
-                if seen:
-                    conn.execute(
-                        f"DELETE FROM devices WHERE source = ? "
-                        f"AND role IN ('ap', 'switch') "
-                        f"AND name NOT IN ({','.join('?' * len(seen))})",
-                        (NAME, *sorted(seen)))
-
             cr = client.get(f"{base}/api/s/{site}/stat/sta")
             cr.raise_for_status()
             clients = cr.json().get("data", [])
-            db.save_raw(conn, source=NAME, endpoint="stat/sta", payload=clients)
-            fdb_rows: list[tuple[str, str, str]] = []
-            for c in clients:
-                mac = (c.get("mac") or "").lower()
-                if not mac:
-                    continue
-                ap_name = ap_by_mac.get((c.get("ap_mac") or "").lower())
-                db.upsert_endpoint(
-                    conn, mac=mac, source=NAME,
-                    ip=c.get("ip") or None,
-                    hostname=c.get("name") or c.get("hostname") or None,
-                    device=ap_name,
-                    interface=c.get("essid") or None,   # SSID as the "port" for wireless
-                    vlan=c.get("vlan"),
+
+        # the write phase: no network I/O from here on
+        db.save_raw(conn, source=NAME, endpoint="stat/device", payload=devices)
+        try:
+            prev_err = json.loads(db.get_state(conn, ERR_STATE_KEY) or "{}")
+        except ValueError:
+            prev_err = {}
+        seen_err: dict[str, list] = {}
+        err_ts = db.now()
+        ap_by_mac: dict[str, str] = {}
+        sw_mac_to_name: dict[str, str] = {}        # switch chassis MAC → device name
+        sw_port_names: dict[str, dict[int, str]] = {}  # device name → {port_idx: port_name}
+        # uplinks buffered until every switch's port names are known:
+        # (device, local port name, upstream device, remote port index)
+        pending_links: list[tuple[str, str, str, int]] = []
+        n_switches = 0
+        for d in devices:
+            dev_type = d.get("type")
+            dev_name = d.get("name") or d.get("mac")
+            status = DEVICE_STATES.get(d.get("state"), "unknown")
+
+            # A non-up device's port_table is the controller's cache, not
+            # an observation: port oper/admin/speed are liveness and must
+            # be omitted rather than written stale (same gate temperature
+            # already had). Port names are identity and still land.
+            live = status == "up"
+
+            if dev_type == "usw":
+                sw_id = db.upsert_device(
+                    conn, name=dev_name, source=NAME,
+                    mgmt_ip=d.get("ip"), vendor="Ubiquiti",
+                    model=MODEL_NAMES.get(d.get("model"), d.get("model")),
+                    os=f"unifi {d.get('version', '')}".strip(), role="switch",
+                    status=status,
+                    temperature=_temperature(d) if live else None,
                 )
-                n_clients += 1
-                # wired clients carry sw_mac + sw_port — write into fdb so
-                # normalize's fdb-uplink inference can place them on switch ports
-                if c.get("is_wired"):
-                    sw_mac = (c.get("sw_mac") or "").lower()
-                    sw_port_idx = c.get("sw_port")
-                    if sw_mac and sw_port_idx is not None:
-                        sw_name = sw_mac_to_name.get(sw_mac)
-                        port_name = sw_port_names.get(sw_name or "", {}).get(sw_port_idx)
-                        if sw_name and port_name:
-                            fdb_rows.append((sw_name, port_name, mac))
-            if clients:  # same empty-response guard as librenms fdb
-                conn.execute("DELETE FROM fdb WHERE source = 'unifi'")
-                conn.executemany(
-                    "INSERT OR IGNORE INTO fdb (device, interface, mac, source) VALUES (?, ?, ?, 'unifi')",
-                    fdb_rows,
-                )
-                # a client absent from the controller's current station list
-                # is no longer on any of these APs: clear the stale AP
-                # attribution but keep the endpoint — its identity (and any
-                # ARP-refreshed liveness) is still real. Without this, a
-                # laptop that went wired kept counting as a wireless client
-                # until the endpoint TTL fired.
-                seen_macs = {(c.get("mac") or "").lower() for c in clients}
-                ap_names = [d["name"] for d in conn.execute(
-                    "SELECT name FROM devices WHERE source = ? AND role = 'ap'",
-                    (NAME,))]
-                if ap_names:
-                    q = ",".join("?" * len(ap_names))
-                    stale = [r["mac"] for r in conn.execute(
-                        f"SELECT mac FROM endpoints WHERE device IN ({q})",
-                        ap_names) if r["mac"] not in seen_macs]
-                    if stale:
-                        qm = ",".join("?" * len(stale))
-                        conn.execute(
-                            f"UPDATE endpoints SET device = NULL, interface = NULL "
-                            f"WHERE mac IN ({qm})", stale)
+                if d.get("mac"):
+                    sw_mac_to_name[d["mac"].lower()] = dev_name
+                port_idx_map: dict[int, str] = {}
+                for port in (d.get("port_table") or []):
+                    idx = port.get("port_idx")
+                    port_name = port.get("name") or (f"Port {idx}" if idx else None)
+                    if not port_name:
+                        continue
+                    if idx is not None:
+                        port_idx_map[idx] = port_name
+                    speed = port.get("speed") or 0
+                    in_bps = _bps(port, "rx_bytes-r", live)
+                    out_bps = _bps(port, "tx_bytes-r", live)
+                    db.upsert_interface(
+                        conn, device_id=sw_id, name=port_name,
+                        oper_status=("up" if port.get("up") else "down")
+                                    if live else None,
+                        admin_status=("up" if port.get("enable") else "down")
+                                     if live else None,
+                        speed_bps=(speed * 1_000_000 or None) if live else None,
+                        in_bps=in_bps,
+                        out_bps=out_bps,
+                    )
+                    in_err, out_err = _error_rates(
+                        prev_err, err_ts, json.dumps([dev_name, port_name]),
+                        port, live, seen_err)
+                    _sample(conn, dev_name, port_name, in_bps, out_bps,
+                            in_err, out_err)
+                sw_port_names[dev_name] = port_idx_map
+                # Switch-to-switch uplink (same LLDP data as APs). The
+                # remote port name isn't knowable yet — the upstream
+                # switch may come later in the device list — so buffer
+                # the link and resolve names after the loop.
+                uplink = d.get("uplink") or {}
+                upstream = uplink.get("uplink_device_name")
+                upstream_port = uplink.get("uplink_remote_port")
+                local_idx = uplink.get("port_idx")
+                if upstream and upstream_port is not None and local_idx is not None:
+                    local_port = port_idx_map.get(local_idx, f"Port {local_idx}")
+                    pending_links.append(
+                        (dev_name, local_port, upstream, upstream_port))
+                n_switches += 1
+                continue
+
+            if dev_type != "uap":
+                continue
+            ap_by_mac[d["mac"].lower()] = dev_name
+            dev_id = db.upsert_device(
+                conn, name=dev_name, source=NAME,
+                mgmt_ip=d.get("ip"), vendor="Ubiquiti",
+                model=MODEL_NAMES.get(d.get("model"), d.get("model")),
+                os=f"unifi {d.get('version', '')}".strip(), role="ap",
+                status=status,
+                temperature=_temperature(d) if live else None,
+            )
+            uplink = d.get("uplink") or {}
+            iface_name = uplink.get("name") or uplink.get("ifname") or "eth0"
+            # the uplink carries the same rolling rates as a switch port;
+            # where the switch is polled too, the load view shows the
+            # busier of the two readings of that cable
+            ap_in = _bps(uplink, "rx_bytes-r", live)
+            ap_out = _bps(uplink, "tx_bytes-r", live)
+            db.upsert_interface(
+                conn, device_id=dev_id,
+                name=iface_name,
+                # the MAC is identity (it's how switch FDB inference finds
+                # this AP); status and speed are liveness, gated like the
+                # switch ports above
+                oper_status=("up" if uplink.get("up") else
+                             ("down" if uplink else None)) if live else None,
+                speed_bps=((uplink.get("speed") or 0) * 1_000_000 or None)
+                          if live else None,
+                in_bps=ap_in, out_bps=ap_out,
+                mac=d.get("mac"),
+                description="uplink",
+            )
+            _sample(conn, dev_name, iface_name, ap_in, ap_out)
+            # Physical link to the upstream switch via LLDP-discovered
+            # port. Buffered like the switch uplinks so a renamed port
+            # on the upstream switch resolves to its stored name.
+            upstream = uplink.get("uplink_device_name")
+            upstream_port = uplink.get("uplink_remote_port")
+            if upstream and upstream_port is not None:
+                pending_links.append(
+                    (dev_name, iface_name, upstream, upstream_port))
+            n_aps += 1
+
+        db.set_state(conn, ERR_STATE_KEY, json.dumps(seen_err))
+
+        # uplink_remote_port is a port index; resolve it through the
+        # upstream switch's port_table so a renamed port still matches
+        # the stored interface. "Port N" is the unmodified-USW fallback.
+        for a_dev, a_if, upstream, remote_idx in pending_links:
+            remote_port = sw_port_names.get(upstream, {}).get(
+                remote_idx, f"Port {remote_idx}")
+            db.upsert_link(conn, a_device=a_dev, a_interface=a_if,
+                           b_device=upstream, b_interface=remote_port,
+                           source=NAME)
+
+        # Retire APs/switches forgotten by the controller — a device
+        # removed there stayed on every page with frozen status forever.
+        # Scoped to rows this collector owns (a merged record whose
+        # primary source is librenms is that collector's to retire), and
+        # guarded on a non-empty listing like every other prune. Stored
+        # names are post-normalize canonical, so match both forms.
+        if devices:
+            from ..normalize import canonical_name
+            seen: set[str] = set()
+            for d in devices:
+                n = d.get("name") or d.get("mac")
+                if n and d.get("type") in ("usw", "uap"):
+                    seen |= {n, canonical_name(n)}
+            if seen:
+                conn.execute(
+                    f"DELETE FROM devices WHERE source = ? "
+                    f"AND role IN ('ap', 'switch') "
+                    f"AND name NOT IN ({','.join('?' * len(seen))})",
+                    (NAME, *sorted(seen)))
+
+        db.save_raw(conn, source=NAME, endpoint="stat/sta", payload=clients)
+        fdb_rows: list[tuple[str, str, str]] = []
+        for c in clients:
+            mac = (c.get("mac") or "").lower()
+            if not mac:
+                continue
+            ap_name = ap_by_mac.get((c.get("ap_mac") or "").lower())
+            db.upsert_endpoint(
+                conn, mac=mac, source=NAME,
+                ip=c.get("ip") or None,
+                hostname=c.get("name") or c.get("hostname") or None,
+                device=ap_name,
+                interface=c.get("essid") or None,   # SSID as the "port" for wireless
+                vlan=c.get("vlan"),
+            )
+            n_clients += 1
+            # wired clients carry sw_mac + sw_port — write into fdb so
+            # normalize's fdb-uplink inference can place them on switch ports
+            if c.get("is_wired"):
+                sw_mac = (c.get("sw_mac") or "").lower()
+                sw_port_idx = c.get("sw_port")
+                if sw_mac and sw_port_idx is not None:
+                    sw_name = sw_mac_to_name.get(sw_mac)
+                    port_name = sw_port_names.get(sw_name or "", {}).get(sw_port_idx)
+                    if sw_name and port_name:
+                        fdb_rows.append((sw_name, port_name, mac))
+        if clients:  # same empty-response guard as librenms fdb
+            conn.execute("DELETE FROM fdb WHERE source = 'unifi'")
+            conn.executemany(
+                "INSERT OR IGNORE INTO fdb (device, interface, mac, source) VALUES (?, ?, ?, 'unifi')",
+                fdb_rows,
+            )
+            # a client absent from the controller's current station list
+            # is no longer on any of these APs: clear the stale AP
+            # attribution but keep the endpoint — its identity (and any
+            # ARP-refreshed liveness) is still real. Without this, a
+            # laptop that went wired kept counting as a wireless client
+            # until the endpoint TTL fired.
+            seen_macs = {(c.get("mac") or "").lower() for c in clients}
+            ap_names = [d["name"] for d in conn.execute(
+                "SELECT name FROM devices WHERE source = ? AND role = 'ap'",
+                (NAME,))]
+            if ap_names:
+                q = ",".join("?" * len(ap_names))
+                stale = [r["mac"] for r in conn.execute(
+                    f"SELECT mac FROM endpoints WHERE device IN ({q})",
+                    ap_names) if r["mac"] not in seen_macs]
+                if stale:
+                    qm = ",".join("?" * len(stale))
+                    conn.execute(
+                        f"UPDATE endpoints SET device = NULL, interface = NULL "
+                        f"WHERE mac IN ({qm})", stale)
         parts = []
         if n_switches:
             parts.append(f"{n_switches} switches")
