@@ -31,6 +31,28 @@ put.
   and shift-click unpin keep your zoom and pan. The map re-fits on first
   load, a filter change, or the fit button.
 
+### Security
+- Web sign-in hardening (#94). A failed password sign-in no longer stalls
+  the server; under a flood of attempts the sign-in page asks you to try
+  again. Sessions are tied to the auth settings they were issued under, and
+  removing someone from `PATCHBAY_OIDC_ALLOWED` ends their session at once.
+  OIDC sign-in by email requires `email_verified`. The sign-in page shows
+  only fixed messages, and no page can be framed by another site. A new
+  optional `PATCHBAY_ALLOWED_HOSTS` restricts the host names patchbay answers
+  to (localhost and loopback always work).
+
+  **Upgrade notes:**
+  - Everyone signs in again once. From now on, changing `PATCHBAY_AUTH`, the
+    password, or the OIDC provider or identity path signs everyone out.
+  - OIDC with the default identity path (`email`) and a provider that sends
+    no `email_verified` (Microsoft Entra ID, GitHub) can't sign in until you
+    change `PATCHBAY_OIDC_IDENTITY_PATH` (Entra ID: `preferred_username` or
+    `sub`; GitHub: `login`) and list the new values in
+    `PATCHBAY_OIDC_ALLOWED`.
+  - With `PATCHBAY_AUTH=none`, set `PATCHBAY_ALLOWED_HOSTS` to the names you
+    reach patchbay by (behind a reverse proxy, the public name); `/ops` warns
+    until you do. Unset keeps today's behavior.
+
 ## [0.21.0] — 2026-10-22
 
 ### Added
