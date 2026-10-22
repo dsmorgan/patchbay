@@ -184,6 +184,9 @@ CREATE TABLE IF NOT EXISTS rate_history (
     out_discards REAL
 );
 CREATE INDEX IF NOT EXISTS idx_rate_hist ON rate_history (device, interface, ts);
+-- the newest samples across every port (the port canary's last 15 minutes,
+-- retention) without reading the whole week through idx_rate_hist
+CREATE INDEX IF NOT EXISTS idx_rate_hist_ts ON rate_history (ts);
 CREATE TABLE IF NOT EXISTS gateways (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
@@ -242,8 +245,10 @@ CREATE TABLE IF NOT EXISTS alert_rules (
     enabled INTEGER NOT NULL DEFAULT 1,
     severity TEXT,             -- override; NULL = what the rule says per item
     params TEXT NOT NULL DEFAULT '{}',  -- JSON: `for`, `remind`, rule knobs
-    route TEXT                 -- NULL = the site's default route; 'none' =
-);                             -- attention list only, never dispatched
+    route TEXT,                -- NULL = the site's default route; 'none' =
+                               -- attention list only, never dispatched
+    enabled_at REAL            -- when last switched on; NULL = always on.
+);                             -- An event older than this is not replayed.
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY,
     key TEXT NOT NULL,         -- the attention item's key
@@ -257,8 +262,9 @@ CREATE TABLE IF NOT EXISTS alerts (
     cleared_at REAL,
     last_notified_at REAL,
     text TEXT,
-    href TEXT
-);
+    href TEXT,
+    sample_ts REAL             -- the sample the last counted poll judged, for
+);                             -- rules whose items carry one (port canary)
 -- one open alert per key; a cleared one is history, and the same condition
 -- returning raises a new row
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_open ON alerts (key)
@@ -396,6 +402,12 @@ def init(conn: sqlite3.Connection) -> None:
     for col in RATE_COUNTERS:  # #64: port-counter canaries
         if col not in hcols:
             conn.execute(f"ALTER TABLE rate_history ADD COLUMN {col} REAL")
+    alcols = {r[1] for r in conn.execute("PRAGMA table_info(alerts)")}
+    if "sample_ts" not in alcols:  # #110: `for` counts distinct samples
+        conn.execute("ALTER TABLE alerts ADD COLUMN sample_ts REAL")
+    rucols = {r[1] for r in conn.execute("PRAGMA table_info(alert_rules)")}
+    if "enabled_at" not in rucols:  # #110: re-enabling replays no events
+        conn.execute("ALTER TABLE alert_rules ADD COLUMN enabled_at REAL")
     tcols = {r[1] for r in conn.execute("PRAGMA table_info(tunnels)")}
     if tcols and "allowed_ips" not in tcols:  # #98: route-to-peer matching
         conn.execute("ALTER TABLE tunnels ADD COLUMN allowed_ips TEXT")

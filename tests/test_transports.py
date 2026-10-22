@@ -621,7 +621,7 @@ def test_kuma_crit_route_goes_down_on_escalation_to_crit(dbp):
     assert ev["detail"] == "kuma: pushed down" and ev["severity"] == "crit"
 
 
-def test_disabling_a_rule_dispatches_nothing(dbp):
+def test_disabling_a_rule_clears_generic_and_releases_kuma(dbp):
     _add(dbp, "hook", "generic", HOOK)
     kuma = _add(dbp, "kuma", "kuma", KUMA)
     _route(dbp, "stale-source", "2:warn")       # held down on kuma
@@ -638,12 +638,15 @@ def test_disabling_a_rule_dispatches_nothing(dbp):
     c.commit(); c.close()
     rec = Recorder()
     _poll(dbp, items, T0 + 300, rec)
-    # no clear goes out: the condition may still hold. Kuma follows state,
-    # and an unwatched rule holds nothing down.
-    assert [r.method for r in rec.seen] == ["GET"]
-    assert rec.seen[0].url.params["status"] == "up"
+    # #110: the generic receiver heard the raise, so it hears a clear that
+    # says why (the condition may still hold); Kuma follows state and is
+    # released on the same push
+    assert [r.method for r in rec.seen] == ["POST", "GET"]
+    body = json.loads(rec.seen[0].content)
+    assert (body["event"], body["key"], body["detail"]) == (
+        "clear", "ipam:conflicts", "rule disabled")
+    assert rec.seen[1].url.params["status"] == "up"
     assert [e["detail"] for e in _events(dbp, "cleared")] == ["rule disabled"] * 2
-    assert len(_events(dbp, "notified")) == 2      # only the first poll's
 
 
 def test_rules_tab_shows_route_labels(clean_env, tmp_path):

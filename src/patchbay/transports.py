@@ -275,6 +275,9 @@ def generic_payload(n: alerting.Notification, *, transport: str, base: str | Non
         "text": n.text, "href": n.href, "url": _link(base, n.href),
         "raised_at": n.raised_at, "firing_s": round(max(0.0, now - n.raised_at)),
         "sent_at": now,
+        # why, when the event alone does not say: a clear for a disabled
+        # rule ("rule disabled") or a retired cable; empty otherwise
+        "detail": n.detail,
     }
 
 
