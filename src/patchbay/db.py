@@ -558,10 +558,12 @@ def get_state(conn: sqlite3.Connection, key: str) -> str | None:
 # containers, usually), so an in-process lock can't keep them apart, and a
 # file lock would lean on how a bind mount implements locking. The database
 # both already share holds the lease instead: an app_state row naming its
-# holder and when it lapses. A holder renews it between collectors; one
-# that dies leaves a lease that lapses on its own after POLL_LEASE_TTL.
+# holder and when it lapses. A holder renews it every POLL_LEASE_RENEW
+# seconds from a heartbeat thread (lease_heartbeat); one that dies, even
+# killed outright, leaves a lease that lapses within POLL_LEASE_TTL.
 POLL_LEASE = "poll_lease"
-POLL_LEASE_TTL = 900.0
+POLL_LEASE_TTL = 180.0
+POLL_LEASE_RENEW = 60.0
 
 
 def lease_owner(kind: str) -> str:
@@ -636,6 +638,38 @@ def release_poll_lease(conn: sqlite3.Connection, owner: str) -> None:
     except BaseException:
         conn.rollback()
         raise
+
+
+@contextmanager
+def lease_heartbeat(path: str, owner: str, *,
+                    every: float = POLL_LEASE_RENEW) -> Iterator[None]:
+    """Renew owner's poll lease every `every` seconds while the with body
+    runs, on a thread with its own connection: a collector's fetch can
+    outlast the TTL, and renewing only between collectors would let the
+    lease lapse mid-poll. A renewal that finds the database locked (the
+    poll itself writing) just tries again next beat."""
+    import threading
+
+    stop = threading.Event()
+
+    def beat() -> None:
+        conn = sqlite3.connect(path)
+        try:
+            while not stop.wait(every):
+                try:
+                    claim_poll_lease(conn, owner)
+                except sqlite3.Error as e:
+                    log.warning("poll lease renewal failed: %s", e)
+        finally:
+            conn.close()
+
+    thread = threading.Thread(target=beat, name="poll-lease", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=10)
 
 
 def save_last_poll(conn: sqlite3.Connection, lines: list[str]) -> None:
