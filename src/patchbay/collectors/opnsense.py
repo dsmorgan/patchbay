@@ -112,8 +112,8 @@ def base_and_name(host: str) -> tuple[str, str]:
     bare hostname (https assumed) or a scheme-prefixed URL for installations
     that don't terminate TLS on the management interface."""
     base = f"{host.rstrip('/')}/api" if "://" in host else f"https://{host}/api"
-    name = host.split("://")[-1].split(":")[0].split(".")[0]
-    return base, name
+    from ..normalize import host_device_name
+    return base, host_device_name(host)
 
 
 # path prefix → the privilege page that guards it, so a 403 note names the
@@ -179,7 +179,8 @@ class OpnsenseCollector:
             # the firewall knows what it is — SNMP only sees "FreeBSD/amd64"
             fw = get("core/firmware/info") or {}
             version = fw.get("product_version")
-            mgmt_hostname = settings.opnsense_host.split("://")[-1].split(":")[0]
+            from urllib.parse import urlsplit
+            mgmt_hostname = urlsplit(base).hostname or settings.opnsense_host
             dev_id = db.upsert_device(conn, name=short_name,
                                       source=NAME, role="firewall", status="up",
                                       vendor="OPNsense",

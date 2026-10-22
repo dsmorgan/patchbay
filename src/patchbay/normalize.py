@@ -72,6 +72,19 @@ def canonical_name(name: str) -> str:
     return n
 
 
+def host_device_name(host: str) -> str:
+    """The device name for a configured host setting ("fw1.lan",
+    "https://192.0.2.1:8443/", "[2001:db8::1]"): the host part alone, by
+    the same rule as every other source's names."""
+    from urllib.parse import urlsplit
+    host = (host or "").strip()
+    try:
+        hostname = urlsplit(host if "://" in host else f"//{host}").hostname
+    except ValueError:
+        hostname = None
+    return canonical_name(hostname or host)
+
+
 def _first_label(name: str) -> str:
     """The rule canonical_name used before #98: everything up to the first
     dot. Kept only to recognize the aliases that rule wrote."""
