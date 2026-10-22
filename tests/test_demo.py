@@ -109,3 +109,113 @@ def test_demo_routed_view_finds_the_uplink(clean_env, tmp_path):
     assert g["tunnels"][0]["rails"] == ["net:172.16.44.0/24"]
     assert g["tunnels"][0]["label"] == "WireGuard"
     c.close()
+
+
+# --- phase 6: the Alerts page has something on every tab (#119) --------------
+
+ALERT_TABS = {
+    "active": "in errors at",              # the canary's flood
+    "history": "notified",
+    "rules": "port-canary",
+    "tunnels": "site-b",
+    "transports": "demo-webhook",
+    "silenced": "IPAM conflicts",
+    "silences": "IPAM catches up",
+}
+
+
+def test_demo_alert_tabs_all_show_something(clean_env, tmp_path):
+    path = str(tmp_path / "demo.db")
+    _seed(path)[0].close()
+    clean_env.setenv("PATCHBAY_DB", path)
+    import patchbay.web as web
+    client = TestClient(web.app)
+    for tab, marker in ALERT_TABS.items():
+        r = client.get(f"/alerts?tab={tab}")
+        assert r.status_code == 200, tab
+        assert marker in r.text, (tab, marker)
+    # every kind of history line the engine and the dispatcher write
+    history = client.get("/alerts?tab=history").text
+    for event in ("raised", "active", "notified", "escalated", "silenced", "cleared"):
+        assert event in history, event
+
+
+def test_demo_canary_is_active_on_a_flooded_port(tmp_path):
+    from types import SimpleNamespace
+
+    from patchbay.attention import attention_items
+
+    c, _ = _seed(str(tmp_path / "demo.db"))
+    items, _ = attention_items(c, SimpleNamespace(ipam_url=None, expected=set()))
+    [canary] = [i for i in items if i["rule"] == "port-canary"]
+    assert canary["key"] == "port:canary:edge1:e1/0/4:in_errors"
+    assert canary["severity"] == "warn" and not canary["silenced"]
+    # held for two samples, and the engine says so
+    state = c.execute("SELECT state, polls FROM alerts WHERE key = ?",
+                      (canary["key"],)).fetchone()
+    assert tuple(state) == ("active", 2)
+    # a week of its own baseline stands behind the verdict
+    assert "baseline" in canary["text"] and "no baseline yet" not in canary["text"]
+    # the IPAM drift item is the one the silence covers
+    [ipam] = [i for i in items if i["rule"] == "ipam-drift"]
+    assert ipam["silenced"]["reason"]
+    c.close()
+
+
+def test_demo_history_has_a_raise_a_notification_and_a_clear(tmp_path):
+    c, _ = _seed(str(tmp_path / "demo.db"))
+    events = [r[0] for r in c.execute(
+        "SELECT event FROM alert_events WHERE key = 'device:ap-garage' ORDER BY id")]
+    assert events == ["raised", "active", "notified", "cleared", "notified"]
+    c.close()
+
+
+def test_demo_declares_an_expected_tunnel_the_firewall_reports(tmp_path):
+    from patchbay import expected_tunnels
+
+    c, _ = _seed(str(tmp_path / "demo.db"))
+    [entry] = expected_tunnels.load(c)
+    assert (entry["device"], entry["type"]) == ("fw1", "wireguard")
+    assert c.execute("SELECT status FROM tunnels WHERE name = ?",
+                     (entry["name"],)).fetchone()[0] == "up"
+    c.close()
+
+
+def test_demo_transport_can_never_be_reached(tmp_path):
+    """The demo's webhook is a story, not a receiver: its host never
+    resolves (.invalid, RFC 2606), it is disabled, and a dispatch with
+    notifications due sends nothing."""
+    import httpx
+
+    from patchbay import alerting, transports
+
+    path = str(tmp_path / "demo.db")
+    c, _ = _seed(path)
+    [t] = c.execute("SELECT * FROM alert_transports").fetchall()
+    assert httpx.URL(t["url"]).host.endswith(".invalid")
+    assert t["enabled"] == 0
+    c.commit()
+    c.close()
+
+    seen = []
+    note = alerting.Notification(kind="raise", key="k", rule="device-down",
+                                 severity="crit", text="t", href="/", raised_at=1.0,
+                                 route=None)
+    transports.WebhookDispatcher(path, transport=httpx.MockTransport(
+        lambda req: seen.append(req) or httpx.Response(200))).send([note])
+    assert seen == []
+
+
+def test_demo_phase_6_is_deterministic(tmp_path, monkeypatch):
+    monkeypatch.setattr(pdb, "now", lambda: 1_800_000_000.0)
+    dumps = []
+    for name in ("a.db", "b.db"):
+        c, _ = _seed(str(tmp_path / name))
+        dumps.append([
+            c.execute(f"SELECT * FROM {t} ORDER BY 1, 2").fetchall()
+            for t in ("alerts", "alert_events", "alert_silences", "alert_transports")
+        ] + [c.execute("SELECT * FROM rate_history WHERE in_errors IS NOT NULL "
+                       "ORDER BY ts, device, interface").fetchall()])
+        c.close()
+    assert dumps[0] == dumps[1]
+    assert len(dumps[0][-1]) > 1700          # a week of the canary port

@@ -18,6 +18,9 @@ def _demo(tmp_path):
     c = sqlite3.connect(str(tmp_path / "demo.db"))
     c.row_factory = sqlite3.Row
     demo.seed(c)
+    # the demo declares its tunnel for the Tunnels tab; these tests declare
+    # their own, from nothing
+    c.execute("DELETE FROM app_state WHERE key = ?", (expected_tunnels.STATE_KEY,))
     return c
 
 

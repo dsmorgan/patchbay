@@ -11,7 +11,10 @@ What a viewer gets: a two-switch fabric with a firewall VM, two hypervisors
 and their guests, three APs with wireless clients, an inferred unmanaged
 switch, a declared cable to a NAS, a mirror port, a patch panel, IPAM drift
 findings of every kind, a firewall config change, and 24h of sine-wave rate
-history for the load view.
+history for the load view. Phase 6 shows too: an error-rate spike on one
+AP uplink that the port canary has flagged, a silence, a declared tunnel, a
+transport, and a few days of alert history, so every tab of /alerts has
+something on it.
 """
 
 from __future__ import annotations
@@ -20,8 +23,10 @@ import hashlib
 import math
 import random
 import sqlite3
+from types import SimpleNamespace
 
-from . import db
+from . import alerting, db, expected_tunnels, silences, transports
+from .attention import attention_items
 from .normalize import normalize
 
 MARKER = "demo_seed"          # app_state key marking a DB as demo-generated
@@ -101,6 +106,20 @@ IPAM = [  # (ip, hostname, state) — the "documented" side of drift
     ("192.0.2.62", "old-scanner", "reserved"),
     ("203.0.113.50", "thermostat", "dhcp"), ("203.0.113.51", "doorbell", "dhcp"),
 ]
+
+
+# Phase 6 (#119). The canary's port: ap-garage's uplink, one of the seeded
+# links that already has a day of rate samples.
+CANARY_PORT = ("edge1", "e1/0/4")
+# The tunnel the firewall reports above, declared as expected.
+EXPECTED_TUNNEL = ("fw1", "wireguard", "site-b · wg-peer")
+# The demo's one transport. Its host is under .invalid (RFC 2606): it can
+# never resolve. It is also disabled, so no poll dispatches to it and the
+# Test button has nothing to send; the history below reads as if it had been
+# on, which is only a story.
+TRANSPORT = ("demo-webhook", "generic",
+             "https://alerts.example.invalid/patchbay/hooks/demo")
+H = 3600.0
 
 
 def _mac(n: int) -> str:
@@ -320,8 +339,118 @@ def seed(conn: sqlite3.Connection, *, rnd: random.Random | None = None) -> str:
     # the real engine derives the rest: endpoint placement from fdb, the
     # unmanaged-switch inference, declared links, guest VLAN resolution
     summary = normalize(conn, declared_links=DECLARED_LINKS)
+    _seed_alerts(conn, now)
     db.save_last_poll(conn, [
         "[ok]   demo: fictional network seeded — nothing here is real",
         f"[ok]   normalize: {summary}"])
     db.set_state(conn, MARKER, "1")
     return summary
+
+
+def _seed_alerts(conn: sqlite3.Connection, now: float) -> None:
+    """Phase 6: the alerts a few days of this network would have left, made
+    by the real engine so the lifecycle rows are the ones a poll writes.
+
+    The port canary is live data: an error-rate spike on one port, over a
+    week of its quiet samples. Everything else is history the engine walks
+    through with the clock set back, plus the declarations a site makes: a
+    transport, an expected tunnel, and a silence. Nothing here is sent
+    anywhere; the demo runs no poller."""
+    rnd = random.Random(119)   # its own stream: the network above is untouched
+    _seed_canary_samples(conn, now, rnd)
+
+    name, kind, url = TRANSPORT
+    conn.execute("INSERT INTO alert_transports (name, kind, url, enabled) "
+                 "VALUES (?, ?, ?, 0)", (name, kind, url))
+    expected_tunnels.add(conn, *EXPECTED_TUNNEL)
+
+    # no site settings: the rules judge the seeded model and nothing else
+    bare = SimpleNamespace(ipam_url=None, expected=set())
+    live, _ = attention_items(conn, bare, now=now)
+    ipam = next(i for i in live if i["rule"] == "ipam-drift")
+    canary = next(i for i in live if i["rule"] == "port-canary")
+    ap_down = {"rule": "device-down", "key": "device:ap-garage", "category": "device",
+               "severity": "crit", "text": "ap ap-garage is down",
+               "href": "/device/ap-garage", "devices": ["ap-garage"]}
+    gw = {"rule": "gateway-degraded", "key": "gateway:WAN_GW", "category": "gateway",
+          "href": "/", "devices": ["WAN_GW"]}
+    steps = [
+        (now - 52 * H, [ap_down]),
+        (now - 51.5 * H, []),
+        (now - 30 * H, [{**gw, "severity": "warn",
+                         "text": "gateway WAN_GW loses 14 % (threshold 10 %)"}]),
+        (now - 29.5 * H, [{**gw, "severity": "crit",
+                           "text": "gateway WAN_GW is Offline"}]),
+        (now - 28.5 * H, []),
+        (now - 20 * H, [ipam]),
+        # one sample over the bar is quiet: the canary needs two
+        (now - 300, [ipam, {**canary, "sample_ts": now - 300}]),
+    ]
+    sent = None
+    for at, items in steps:
+        sent = _step(conn, items, at) or sent
+
+    # the silence arrives, and the engine's next look finds the IPAM item
+    # covered while the canary has its second sample
+    silences.add(conn, {
+        "kind": "key", "scope": ipam["key"], "until": now + 3 * 86400,
+        "reason": "web-staging is being retired; IPAM catches up when the "
+                  "migration closes",
+        "created_by": "demo", "created_at": now - 120})
+    items, _ = attention_items(conn, bare, now=now)
+    sent = _step(conn, items, now) or sent
+    if sent is not None:
+        conn.execute("UPDATE alert_transports SET last_sent_at = ?, "
+                     "last_result = 'HTTP 200' WHERE name = ?", (sent, name))
+
+
+def _step(conn: sqlite3.Connection, items: list[dict], at: float) -> float | None:
+    """One engine cycle at `at`, then the delivery events the transport
+    would have recorded for what it decided to send. Returns `at` when
+    something was sent."""
+    notes = alerting.evaluate(conn, items, now=at)
+    default = transports.default_route(conn)
+    sent = False
+    for n in notes:
+        route = transports.resolve(n.route, default)
+        if route is None or not transports.meets(n.severity, route):
+            continue
+        row = conn.execute("SELECT id, category, href FROM alerts WHERE key = ? "
+                           "ORDER BY id DESC LIMIT 1", (n.key,)).fetchone()
+        conn.execute(
+            "INSERT INTO alert_events (alert_id, ts, event, key, rule, category, "
+            "severity, text, href, detail) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (row["id"], at, "notified", n.key, n.rule, row["category"], n.severity,
+             n.text, n.href, TRANSPORT[0]))
+        sent = True
+    return at if sent else None
+
+
+def _seed_canary_samples(conn: sqlite3.Connection, now: float,
+                         rnd: random.Random) -> None:
+    """A week of 5-minute samples for the canary's port. The newest day
+    already has rows (the load view's); they gain error rates, and the days
+    before them are added. The last three samples are a flood: the rate is
+    thousands of times the port's own baseline."""
+    dev, iface = CANARY_PORT
+    cap = 2_500_000_000
+
+    flood = [(912.4, 0.2), (640.8, 0.1), (388.2, 0.1)]   # newest sample first
+
+    def counters(s: int) -> tuple[float, float]:
+        return flood[s] if s < len(flood) else (
+            round(rnd.uniform(0.0, 0.4), 3), round(rnd.uniform(0.0, 0.1), 3))
+
+    for s in range(288):
+        in_err, out_err = counters(s)
+        conn.execute("UPDATE rate_history SET in_errors = ?, out_errors = ? "
+                     "WHERE device = ? AND interface = ? AND ts = ?",
+                     (in_err, out_err, dev, iface, now - s * 300))
+    for s in range(288, 288 * 6 + 144):
+        ts = now - s * 300
+        load = 0.04 + 0.3 * max(0.0, math.sin(ts % 86400 / 86400 * math.pi))
+        in_err, out_err = counters(s)
+        db.record_rates(conn, dev, iface, ts=ts,
+                        in_bps=int(cap * load * rnd.uniform(0.6, 1.0)),
+                        out_bps=int(cap * load * rnd.uniform(0.2, 0.5)),
+                        in_errors=in_err, out_errors=out_err)
