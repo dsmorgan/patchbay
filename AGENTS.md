@@ -163,7 +163,9 @@ site-specific leaked into code, tests, or docs.
   — a page that fits neither is the case for a third heading, not a longer
   list. Ops and sign-out are utilities and live in the rail's foot, under
   the device totals (`attention.device_totals`, delivered to every render
-  by the `_shell_context` context processor — never per handler). The lit
+  by the `_shell_context` context processor — never per handler; the Alerts
+  entry's count comes the same way, from `alerting.open_count`, one read of
+  the engine's `alerts` table, never an `attention_items` run). The lit
   entry comes from the path prefix, so drill-downs keep their section; a page
   that sets `bare = true` (login) gets no rail and no shell grid.
 
