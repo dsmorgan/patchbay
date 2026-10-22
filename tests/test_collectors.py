@@ -1310,6 +1310,51 @@ def test_prepare_config_matches_secret_tags_as_substrings(conn):
     assert "allow lan" in text and "fw1" in text
 
 
+def test_prepare_config_redacts_mixed_case_pw_cdata_and_attributes():
+    """#93: the IPsec PSK model stores its secret as <Key>, the LDAP server
+    its bind password as <ldap_bindpw>; tag matching ignored case and had no
+    `pw`. CDATA-wrapped values and secret elements with attributes leaked
+    too. Ordinary elements next to them stay intact."""
+    from patchbay.collectors.opnsense import prepare_config
+    raw = ("<opnsense><IPsec><preSharedKeys>"
+           '<preSharedKey uuid="0000-fake"><ident>peer.example</ident>'
+           "<Key>FAKE-psk-value</Key><keyType>PSK</keyType></preSharedKey>"
+           "</preSharedKeys></IPsec>"
+           "<authserver><name>dir</name><host>192.0.2.10</host>"
+           "<ldap_bindpw>FAKE-bind-pw</ldap_bindpw></authserver>"
+           "<user><password><![CDATA[FAKE-<cdata>-pw]]></password></user>"
+           '<cert><privkey type="rsa">FAKE-attr-key</privkey></cert>'
+           "<wg><PSK>FAKE-upper-psk</PSK></wg>"
+           "<openvpn><tls>FAKE-static-key</tls></openvpn>"
+           "<x><widget>-----BEGIN EC PRIVATE KEY-----\nFAKEPEM\n"
+           "-----END EC PRIVATE KEY-----</widget></x>"
+           "<descr>allow lan</descr><hostname>fw1</hostname>"
+           "<interface>lan</interface><Enabled>1</Enabled></opnsense>")
+    text, _, _ = prepare_config(raw)
+    for secret in ("FAKE-psk-value", "FAKE-bind-pw", "FAKE-<cdata>-pw",
+                   "FAKE-attr-key", "FAKE-upper-psk", "FAKE-static-key",
+                   "FAKEPEM"):
+        assert secret not in text, secret
+    assert '<privkey type="rsa">redacted:' in text   # attributes kept
+    assert "<Key>redacted:" in text                   # tag case kept
+    for keep in ("<ident>peer.example</ident>", "<host>192.0.2.10</host>",
+                 "<descr>allow lan</descr>", "<hostname>fw1</hostname>",
+                 "<interface>lan</interface>", "<Enabled>1</Enabled>",
+                 "<name>dir</name>"):
+        assert keep in text, keep
+
+
+def test_prepare_config_is_idempotent():
+    """Stored history is re-redacted under newer rules (#93): a second pass
+    must leave every existing hash where it is, or old revisions would diff
+    against new ones on hashes alone."""
+    from patchbay.collectors.opnsense import prepare_config
+    raw = _CFG_XML.replace("<filter>", "<Key>FAKE-psk</Key><filter>")
+    once, _, _ = prepare_config(raw)
+    twice, _, _ = prepare_config(once)
+    assert once == twice
+
+
 def test_pfsense_failed_calls_keep_last_good_rows(conn, clean_env, monkeypatch):
     """A 403/empty response is degraded visibility, not an empty network:
     gateways and port_vlans from the last good poll must survive it."""
