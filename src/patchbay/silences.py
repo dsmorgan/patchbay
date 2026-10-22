@@ -27,6 +27,8 @@ Like `attention.py`, this imports no web framework: the poller calls it.
 """
 from __future__ import annotations
 
+import ipaddress
+import re
 import sqlite3
 import time
 
@@ -47,6 +49,21 @@ ENV_SOURCE = "env"
 ENV_REASON = "declared expected (PATCHBAY_EXPECT)"
 
 
+_MAC = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}", re.I)
+
+
+def is_address_name(name: str) -> bool:
+    """True for a device named by a MAC (a UniFi device with no name) or an
+    IP address: names that hold colons without being `device:interface`."""
+    if _MAC.fullmatch(name):
+        return True
+    try:
+        ipaddress.ip_address(name.split("%", 1)[0])
+    except ValueError:
+        return False
+    return True
+
+
 def env_silences(settings) -> list[dict]:
     """PATCHBAY_EXPECT as silences. The id is a string, so no form can
     address one: an env-sourced row is read-only here, as env-won values
@@ -54,7 +71,8 @@ def env_silences(settings) -> list[dict]:
     out = []
     for spec in sorted(getattr(settings, "expected", None) or ()):
         out.append({
-            "id": f"env:{spec}", "kind": "port" if ":" in spec else "device",
+            "id": f"env:{spec}",
+            "kind": "port" if ":" in spec and not is_address_name(spec) else "device",
             "scope": spec, "until": None, "reason": ENV_REASON,
             "created_by": "PATCHBAY_EXPECT", "created_at": None,
             "source": ENV_SOURCE,
@@ -157,7 +175,7 @@ def parse(form: dict[str, str], *, now: float, created_by: str,
         # the same normalization PATCHBAY_EXPECT gets, so `sw1 : 1/0/2`
         # matches the port the items name
         scope = f"{dev.strip()}:{iface.strip()}"
-    elif kind == "device" and ":" in scope:
+    elif kind == "device" and ":" in scope and not is_address_name(scope):
         raise ValueError("scope: a device is a bare name; use the port kind "
                          "for device:interface")
     elif kind == "category" and scope not in categories:
