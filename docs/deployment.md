@@ -165,6 +165,13 @@ discover (cables to dumb devices, patch panels, WAN ports) in `data/.env` as
 you go; the [README](../README.md#operator-declarations) lists the
 declarations.
 
+If you leave sign-in off (`PATCHBAY_AUTH=none`), also set
+`PATCHBAY_ALLOWED_HOSTS` in `data/.env` to the names you open patchbay by,
+for example `PATCHBAY_ALLOWED_HOSTS=patchbay.example.net`, and restart the
+`patchbay` service. Otherwise a malicious web page can reach the UI through
+your browser, and `/ops` shows a warning saying so.
+[configuration.md](configuration.md#allowed-hosts) covers reverse proxies.
+
 ## 7. Verify snapshot delivery
 
 A snapshot earns its keep only when it sits somewhere the tool host's
