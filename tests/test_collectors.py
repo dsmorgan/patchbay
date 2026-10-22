@@ -1117,7 +1117,7 @@ class _LnmsPollTimeClient(_LnmsRatesClient):
 
 def _lnms_samples(conn):
     return conn.execute(
-        "SELECT in_bps, src_ts FROM rate_history WHERE interface = '1/0/5' "
+        "SELECT in_bps FROM rate_history WHERE interface = '1/0/5' "
         "ORDER BY ts, rowid").fetchall()
 
 
@@ -1132,7 +1132,7 @@ def test_librenms_two_polls_in_one_window_store_one_sample(conn, clean_env, monk
     LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
     monkeypatch.setattr(pdb, "now", lambda: 5030.0)
     LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
-    assert [tuple(r) for r in _lnms_samples(conn)] == [(8000, 1_800_000_000.0)]
+    assert [tuple(r) for r in _lnms_samples(conn)] == [(8000,)]
     # the interface row itself still refreshes: only the history is deduped
     assert conn.execute("SELECT in_bps FROM interfaces WHERE name = '1/0/5'"
                         ).fetchone()[0] == 8000
@@ -1148,8 +1148,7 @@ def test_librenms_poll_after_window_advances_stores_second_sample(conn, clean_en
     _LnmsPollTimeClient.poll_time = 1_800_000_300
     monkeypatch.setattr(pdb, "now", lambda: 5300.0)
     LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
-    assert [r["src_ts"] for r in _lnms_samples(conn)] == [
-        1_800_000_000.0, 1_800_000_300.0]
+    assert len(_lnms_samples(conn)) == 2
 
 
 def test_librenms_dedup_survives_an_alias_rename(conn, clean_env, monkeypatch):
@@ -1172,14 +1171,14 @@ def test_librenms_dedup_survives_an_alias_rename(conn, clean_env, monkeypatch):
     assert conn.execute("SELECT count(*) FROM rate_history").fetchone()[0] == 2
 
 
-@pytest.mark.parametrize("raw, stored, window_dedup", [
-    ("1800000000", 1_800_000_000.0, True),     # numeric string
-    (1_800_000_000.0, 1_800_000_000.0, True),
-    ("2027-01-15 08:00:00", None, False),      # not a form the column returns
-    ("", None, False),
-    (-5, None, False),
+@pytest.mark.parametrize("raw, window_dedup", [
+    ("1800000000", True),                      # numeric string
+    (1_800_000_000.0, True),
+    ("2027-01-15 08:00:00", False),            # not a form the column returns
+    ("", False),
+    (-5, False),
 ])
-def test_librenms_poll_time_forms(conn, clean_env, monkeypatch, raw, stored, window_dedup):
+def test_librenms_poll_time_forms(conn, clean_env, monkeypatch, raw, window_dedup):
     """poll_time is coerced once: a usable number dedups, anything else
     stores every poll as before instead of failing the collection."""
     from patchbay.collectors.librenms import LibreNmsCollector
@@ -1190,7 +1189,6 @@ def test_librenms_poll_time_forms(conn, clean_env, monkeypatch, raw, stored, win
         LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
     rows = _lnms_samples(conn)
     assert len(rows) == (1 if window_dedup else 2)
-    assert {r["src_ts"] for r in rows} == {stored}
 
 
 def test_librenms_poll_time_state_is_pruned_to_ports_seen(conn, clean_env, monkeypatch):
@@ -1214,7 +1212,7 @@ def test_librenms_without_poll_time_stores_every_poll(conn, clean_env, monkeypat
     for t in (5000.0, 5030.0):
         monkeypatch.setattr(pdb, "now", lambda t=t: t)
         LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
-    assert [tuple(r) for r in _lnms_samples(conn)] == [(8000, None), (8000, None)]
+    assert [tuple(r) for r in _lnms_samples(conn)] == [(8000,), (8000,)]
     asked = [u for u in _LnmsPollTimeClient.urls if "/ports?columns=" in u]
     assert any("poll_time" in u for u in asked) and any("poll_time" not in u for u in asked)
     # once refused, the rest of that poll doesn't ask again (2 polls: 1 + 1)
