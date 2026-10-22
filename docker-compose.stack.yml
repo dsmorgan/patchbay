@@ -89,10 +89,13 @@ services:
     environment:
       - TZ=${TZ:-UTC}
     ports:
-      # REST API for patchbay's /configs pages. oxidized-web has no auth, so
-      # keep this port LAN-only — it serves read-only config history, but
-      # config history is still your network's insides.
-      - "8888:8888"
+      # patchbay reaches Oxidized as http://oxidized:8888 over the compose
+      # network, so it needs no published port. This one is for debugging
+      # from the host only, and binds to localhost on purpose: oxidized-web
+      # has no auth, and config history is your network's insides. Delete
+      # the block, or put an authenticating reverse proxy in front, before
+      # exposing it further.
+      - "127.0.0.1:8888:8888"
     volumes:
       # holds config, router.db, and repo/ — the git history of every device
       # config. Backed by a bind mount so it's visible and easy to back up;
