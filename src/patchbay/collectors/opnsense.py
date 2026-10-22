@@ -151,6 +151,11 @@ class OpnsenseCollector:
 
     def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
         base, short_name = base_and_name(settings.opnsense_host)
+        # before #98 an address-configured firewall was named by its first
+        # octet; hand that name's tunnels, routes and history to the new one
+        from ..normalize import first_label_of_host, retire_source_names
+        retire_source_names(conn, NAME, {
+            first_label_of_host(settings.opnsense_host): {short_name}})
         auth = (settings.opnsense_api_key, settings.opnsense_api_secret)
         notes: list[str] = []
 

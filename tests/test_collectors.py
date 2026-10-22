@@ -458,6 +458,21 @@ def test_pfsense_names_the_firewall_like_every_source(conn, clean_env, monkeypat
     assert tuple(dev) == (name, mgmt)
 
 
+def test_pfsense_by_address_inherits_its_first_octet_name(conn, clean_env, monkeypatch):
+    from patchbay.collectors.pfsense import PfsenseCollector
+    from patchbay.config import load_settings
+    from patchbay.normalize import normalize
+    _first_octet_leftovers(conn, "192", source="pfsense")
+    clean_env.setenv("PFSENSE_HOST", "https://192.0.2.9")
+    clean_env.setenv("PFSENSE_API_KEY", "k")
+    monkeypatch.setattr(httpx, "Client", PfClient)
+    PfsenseCollector().collect(load_settings(), conn)
+    normalize(conn)
+    assert get_names(conn) >= {"192.0.2.9"} and "192" not in get_names(conn)
+    assert {r[0] for r in conn.execute("SELECT device FROM config_revisions")} == {"192.0.2.9"}
+    assert {r[0] for r in conn.execute("SELECT name FROM positions")} == {"192.0.2.9"}
+
+
 def test_pfsense_403_degrades_and_is_named(conn, clean_env, monkeypatch):
     from patchbay.collectors.pfsense import PfsenseCollector
 
@@ -546,6 +561,44 @@ def _ons_settings(clean_env):
     clean_env.setenv("OPNSENSE_API_KEY", "k")
     clean_env.setenv("OPNSENSE_API_SECRET", "s")
     return load_settings()
+
+
+def get_names(conn):
+    return {r[0] for r in conn.execute("SELECT name FROM devices")}
+
+
+def _first_octet_leftovers(conn, name, source="opnsense"):
+    """What a firewall named after its first octet left behind before #98."""
+    from patchbay import expected_tunnels
+    pdb.upsert_device(conn, name=name, source=source, role="firewall")
+    conn.execute("INSERT INTO tunnels (device, type, name, interface, source, "
+                 "last_seen) VALUES (?, 'ipsec', 'site-c', NULL, ?, 0)", (name, source))
+    conn.execute("INSERT INTO config_revisions (device, fetched_at, sha, text) "
+                 "VALUES (?, 1, 'abc', 'cfg')", (name,))
+    conn.execute("INSERT INTO positions (name, x, y) VALUES (?, 1, 2)", (name,))
+    expected_tunnels.add(conn, name, "ipsec", "site-c")
+
+
+def test_opnsense_by_address_inherits_its_first_octet_name(conn, clean_env, monkeypatch):
+    """Review of #98: an OPNSENSE_HOST of 192.0.2.1 named the firewall "192".
+    Upgraded, the history, pin and expected tunnels follow it to its new
+    name, and nothing stays drawn under the old one."""
+    from patchbay import expected_tunnels
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    from patchbay.config import load_settings
+    from patchbay.normalize import normalize
+    _first_octet_leftovers(conn, "192")
+    clean_env.setenv("OPNSENSE_HOST", "https://192.0.2.1")
+    clean_env.setenv("OPNSENSE_API_KEY", "k")
+    clean_env.setenv("OPNSENSE_API_SECRET", "s")
+    monkeypatch.setattr(httpx, "Client", _OnsClient)
+    OpnsenseCollector().collect(load_settings(), conn)
+    normalize(conn)
+    assert get_names(conn) == {"192.0.2.1"}
+    assert {r[0] for r in conn.execute("SELECT device FROM config_revisions")} == {"192.0.2.1"}
+    assert {r[0] for r in conn.execute("SELECT name FROM positions")} == {"192.0.2.1"}
+    assert {e["device"] for e in expected_tunnels.load(conn)} == {"192.0.2.1"}
+    assert {r[0] for r in conn.execute("SELECT device FROM tunnels")} <= {"192.0.2.1"}
 
 
 def test_opnsense_tunnel_interfaces_skipped(conn, clean_env, monkeypatch):
@@ -2029,6 +2082,32 @@ def test_oxidized_ip_named_nodes_stay_apart(conn, clean_env, monkeypatch):
     OxidizedCollector().collect(_ox_settings(clean_env), conn)
     devs = {r[0] for r in conn.execute("SELECT DISTINCT device FROM port_vlans")}
     assert devs == {"192.0.2.2", "192.0.2.3"}
+
+
+@pytest.mark.parametrize("nodes, heir", [
+    (["192.0.2.2"], "192.0.2.2"),
+    (["192.0.2.2", "192.0.2.3"], None)])
+def test_oxidized_first_octet_rows_follow_or_go(conn, clean_env, monkeypatch,
+                                                nodes, heir):
+    """Rows an IP-named node wrote under its first octet before #98 move to
+    its full name; with two nodes that both cut to it, nothing says whose
+    they were, so they go."""
+    from patchbay.collectors.oxidized import OxidizedCollector
+    from patchbay.normalize import normalize
+    conn.execute("INSERT INTO port_roles (device, interface, role, detail, source) "
+                 "VALUES ('192', 'ethernet1/1/9', 'monitor-dst', NULL, 'oxidized')")
+    conn.execute("INSERT INTO positions (name, x, y) VALUES ('192', 1, 2)")
+    monkeypatch.setattr(_OxClient, "nodes", [
+        {"name": ip, "full_name": ip, "model": "ironware",
+         "last": {"status": "success"}} for ip in nodes])
+    monkeypatch.setattr(httpx, "Client", _OxClient)
+    OxidizedCollector().collect(_ox_settings(clean_env), conn)
+    normalize(conn)
+    for table, col in (("port_roles", "device"), ("positions", "name"),
+                       ("port_vlans", "device")):
+        assert "192" not in {r[0] for r in conn.execute(f"SELECT {col} FROM {table}")}
+    pins = {r[0] for r in conn.execute("SELECT name FROM positions")}
+    assert pins == ({heir} if heir else set())
 
 
 def test_oxidized_vlan_prune_claim_aware(conn, clean_env, monkeypatch):
