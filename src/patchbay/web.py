@@ -327,8 +327,8 @@ def _conn() -> sqlite3.Connection:
 
 
 templates.env.globals["HELD_WHY"] = (
-    "The alert engine holds this while the device is down: the device's own "
-    "alert says so, and the Alerts count on the rail does not include it.")
+    "The alert engine holds this while the device is down: the device being "
+    "down explains it, and the Alerts count on the rail does not include it.")
 templates.env.globals["STALE_MIN"] = STALE_MIN   # the top bar uses the same threshold
 
 
