@@ -515,6 +515,8 @@ the env file, so removing the variable is the operator's step. Stage 2, the
 next release, ignores the variable with a parse warning naming the alerts
 page.
 
-Stage 2 shipped as written: entries no longer silence
+Both stages shipped together in 0.24.0 rather than a release apart, so
+upgrade notes tell operators to import right after upgrading. Stage 2 shipped
+as written: entries no longer silence
 anything, so the legacy row and its drop-out rule are gone, and the import
 stays available on /ops while the variable is set.

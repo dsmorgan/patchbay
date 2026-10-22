@@ -26,22 +26,20 @@ put.
   and a poll warns when the default route points at one.
 
 ### Changed
-- Ignore `PATCHBAY_EXPECT`: its entries no longer silence anything, and patchbay warns while the variable is set and names the alerts page (**Alerts > Silences**). Click **import as silences** on **Ops** to turn each entry into a permanent silence, then remove the variable. (#69)
+- `PATCHBAY_EXPECT` is ignored (#69): its entries no longer silence
+  anything. While it's set, polls and `/ops` warn and name the alerts page,
+  and `/ops` shows an **import as silences** button that turns each entry
+  into a permanent silence ("imported from PATCHBAY_EXPECT"): a bare name,
+  MAC, or IP address becomes a device silence, `dev:iface` a port silence.
+  Importing again creates no duplicates. Entries no silence can express
+  (such as `sw1:`) are listed with the reason.
 
-### Deprecated
-- `PATCHBAY_EXPECT` is deprecated (#69). While it's set, `/ops` shows a
-  notice with an **import as silences** button that turns each entry into a
-  permanent silence ("imported from PATCHBAY_EXPECT"): a bare name, MAC, or
-  IP address becomes a device silence, `dev:iface` a port silence. Importing
-  again creates no duplicates, and coverage is the same before the import,
-  after it, and after you remove the variable. Entries no silence can
-  express (such as `sw1:`) are listed with the reason.
-
-  **Upgrade notes:** the variable still works in this release; the next
-  release ignores it. Import on `/ops`, fix or drop anything it lists as not
-  importable, then remove the variable (delete the env-file line and
-  restart, or clear the field on `/ops` and save). See "Migrate
-  PATCHBAY_EXPECT to silences" in `docs/configuration.md`.
+  **Upgrade notes:** if you set `PATCHBAY_EXPECT`, its entries stop
+  silencing as soon as you upgrade. Right after upgrading, click **import as
+  silences** on `/ops`, fix or drop anything it lists as not importable,
+  then remove the variable (delete the env-file line and restart, or clear
+  the field on `/ops` and save). See "Migrate PATCHBAY_EXPECT to silences"
+  in `docs/configuration.md`.
 
 ### Fixed
 - A second poll inside one LibreNMS polling window, such as **Poll now**,
