@@ -6,6 +6,23 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Deprecated
+- `PATCHBAY_EXPECT` is deprecated (#69). While it's set, `/ops` shows a
+  notice with an **import as silences** button that turns each entry into a
+  permanent silence ("imported from PATCHBAY_EXPECT"): a bare name, MAC, or
+  IP address becomes a device silence, `dev:iface` a port silence. Importing
+  again creates no duplicates, and coverage is the same before the import,
+  after it, and after you remove the variable. Entries no silence can
+  express (such as `sw1:`) are listed with the reason.
+
+  **Upgrade notes:** the variable still works in this release; the next
+  release ignores it. Import on `/ops`, fix or drop anything it lists as not
+  importable, then remove the variable (delete the env-file line and
+  restart, or clear the field on `/ops` and save). See "Migrate
+  PATCHBAY_EXPECT to silences" in `docs/configuration.md`.
+
 ## [0.23.0] — 2026-10-22
 
 ### Added
