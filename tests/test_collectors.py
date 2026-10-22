@@ -1428,9 +1428,17 @@ def test_reredacted_history_matches_the_next_poll(conn):
     assert conn.execute("SELECT COUNT(*) FROM config_revisions").fetchone()[0] == 2
 
 
-def test_reredaction_is_one_transaction(conn, monkeypatch):
-    """A failure part-way leaves every row and the version mark as they
-    were, so the next init retries the whole rewrite."""
+def _expected_prv_stamp(conn):
+    """What the <prv> stamp must read after exactly one rekey."""
+    import hashlib
+    from patchbay import redact
+    legacy = hashlib.sha256(b"FAKEKEYB64").hexdigest()[:8]
+    return "<prv>redacted:" + redact.rekey(legacy, pdb.redaction_key(conn)) + "</prv>"
+
+
+def test_reredaction_skips_and_logs_a_row_it_cannot_redact(conn, monkeypatch, caplog):
+    """One bad row must not fail every init forever: it is logged and left
+    as stored, the rest are rewritten, and the version is recorded."""
     from patchbay import redact
     _pre93_revision(conn, "allow lan2", 1.0)
     _pre93_revision(conn, "allow lan", 2.0)
@@ -1439,16 +1447,93 @@ def test_reredaction_is_one_transaction(conn, monkeypatch):
 
     def flaky(text, key=None):
         calls.append(1)
-        if len(calls) == 2:
+        if len(calls) == 1:
             raise RuntimeError("boom")
         return real(text, key)
 
     monkeypatch.setattr(redact, "redact_xml", flaky)
+    pdb.init(conn)
+    texts = [r[0] for r in conn.execute("SELECT text FROM config_revisions ORDER BY id")]
+    assert "FAKE-psk" in texts[0] and "FAKE-psk" not in texts[1]
+    assert "could not be re-redacted" in caplog.text
+    assert pdb.get_state(conn, pdb.REDACTION_STATE) == str(redact.REDACTION_VERSION)
+
+
+def test_reredaction_is_one_transaction(conn, monkeypatch):
+    """A failure after the rows are rewritten (recording the version) leaves
+    every row as it was, so the next init retries the whole rewrite."""
+    _pre93_revision(conn, "allow lan", 1.0)
+    conn.commit()
+    real = pdb.set_state
+
+    def boom(c, key, value):
+        if key == pdb.REDACTION_STATE:
+            raise RuntimeError("boom")
+        return real(c, key, value)
+
+    monkeypatch.setattr(pdb, "set_state", boom)
     with pytest.raises(RuntimeError):
         pdb.init(conn)
-    assert all("FAKE-psk" in r[0] for r in conn.execute(
-        "SELECT text FROM config_revisions"))
+    assert "FAKE-psk" in conn.execute("SELECT text FROM config_revisions").fetchone()[0]
     assert pdb.get_state(conn, pdb.REDACTION_STATE) is None
+    monkeypatch.setattr(pdb, "set_state", real)
+    pdb.init(conn)                                   # retried, once
+    assert _expected_prv_stamp(conn) in conn.execute(
+        "SELECT text FROM config_revisions").fetchone()[0]
+
+
+def test_corrupt_redaction_version_redacts_but_never_rekeys(conn):
+    """An unreadable version can't be trusted to mean "old": rekeying an
+    already keyed stamp would make every secret look rotated next poll."""
+    from patchbay import redact
+    old = _pre93_revision(conn, "allow lan", 1.0)
+    pdb.set_state(conn, pdb.REDACTION_STATE, "garbage")
+    pdb.init(conn)
+    text = conn.execute("SELECT text FROM config_revisions").fetchone()[0]
+    assert "FAKE-psk" not in text                                 # redacted
+    assert redact.STAMP_RE.search(old).group(0) in text           # not rekeyed
+    assert pdb.get_state(conn, pdb.REDACTION_STATE) == str(redact.REDACTION_VERSION)
+
+
+def test_concurrent_inits_rekey_exactly_once(tmp_path, monkeypatch):
+    """Every request runs db.init, and so does the poller. Two that both
+    read the old version before either commits must not both rekey: the
+    second re-reads it under the write lock and stands down."""
+    import sqlite3
+    import threading
+    import time
+    from patchbay import redact
+    path = str(tmp_path / "race.db")
+    with pdb.connect(path) as c:
+        pdb.init(c)
+        _pre93_revision(c, "allow lan", 1.0)
+    real = redact.redact_xml
+
+    def slow(text, key=None):           # widen the window between the
+        time.sleep(0.2)                 # version check and the commit
+        return real(text, key)
+
+    monkeypatch.setattr(redact, "redact_xml", slow)
+    barrier, errors = threading.Barrier(2), []
+
+    def run():
+        try:
+            c = sqlite3.connect(path, timeout=10)
+            barrier.wait()
+            pdb.init(c)
+            c.close()
+        except Exception as e:  # surfaced below; a thread can't fail the test
+            errors.append(e)
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    with pdb.connect(path) as c:
+        assert _expected_prv_stamp(c) in c.execute(
+            "SELECT text FROM config_revisions").fetchone()[0]
 
 
 def test_pfsense_failed_calls_keep_last_good_rows(conn, clean_env, monkeypatch):
