@@ -1174,3 +1174,44 @@ def test_ap_owns_its_monitored_wireless_client(conn):
     _fdb(conn, "core", "p3", "02:00:00:00:0a:01", "02:00:00:00:00:21")
     normalize(conn)
     assert links(conn) == [("ap1", "eth0", "core", "p3", "fdb-uplink")]
+
+
+def _old_merge(conn, survivor_seen):
+    """A database from before #98: two hosts added by address merged into
+    one hypervisor "192", now reported again under their own names."""
+    dev(conn, "192", "vsphere", last_seen=survivor_seen, role="hypervisor",
+        mgmt_ip="192.0.2.22")
+    conn.executemany("INSERT INTO aliases (alias, canonical) VALUES (?, ?)",
+                     [("192.0.2.21", "192"), ("192.0.2.22", "192")])
+    conn.execute("INSERT INTO positions (name, x, y) VALUES ('192', 5, 6)")
+    for ip in ("192.0.2.21", "192.0.2.22"):
+        dev(conn, ip, "vsphere", last_seen=NOW, role="hypervisor", mgmt_ip=ip)
+
+
+def test_merge_survivor_from_the_old_rule_is_removed(conn):
+    _old_merge(conn, survivor_seen=NOW - 3600)
+    normalize(conn)
+    names = {r["name"] for r in conn.execute("SELECT name FROM devices")}
+    assert names == {"192.0.2.21", "192.0.2.22"}
+    # the pin goes to the host that carried the survivor's address
+    assert [tuple(r) for r in conn.execute("SELECT * FROM positions")] == \
+        [("192.0.2.22", 5, 6)]
+
+
+def test_merge_survivor_waits_out_the_grace(conn):
+    # just merged on the last poll: its source may not have run since
+    _old_merge(conn, survivor_seen=NOW - 120)
+    normalize(conn)
+    assert get_dev(conn, "192") is not None
+
+
+def test_a_real_device_sharing_the_first_label_stays(conn):
+    """A device a source reports under that very name is no survivor,
+    however stale another source's dotted name makes it look."""
+    dev(conn, "ubuntu-22", "vsphere", last_seen=NOW, role="vm")
+    dev(conn, "ubuntu-22.04", "vsphere", last_seen=NOW, role="vm")
+    dev(conn, "web", "librenms", last_seen=NOW - 3600, role="server")
+    dev(conn, "web.2", "vsphere", last_seen=NOW, role="vm")
+    normalize(conn)
+    names = {r["name"] for r in conn.execute("SELECT name FROM devices")}
+    assert names == {"ubuntu-22", "ubuntu-22.04", "web", "web.2"}
