@@ -79,6 +79,25 @@ def test_scrub_config_one_line_key_block_does_not_swallow_the_rest():
     assert "FAKE" not in out and "hostname sw1" in out
 
 
+def test_scrub_config_block_state_follows_the_last_marker():
+    """An END followed by a new BEGIN on one line stays inside a block."""
+    cfg = ("-----BEGIN PRIVATE KEY-----\nFAKE1\n"
+           "-----END PRIVATE KEY----- -----BEGIN RSA PRIVATE KEY-----\n"
+           "FAKE2\n-----END RSA PRIVATE KEY-----\nhostname sw1")
+    out, _ = scrub_config(cfg)
+    assert "FAKE1" not in out and "FAKE2" not in out
+    assert out.endswith("hostname sw1")
+
+
+def test_scrub_config_carries_no_stamps_off_host():
+    """A stamp of a weak secret is a guessing oracle; the snapshot leaves
+    the host, so stored stamps and fresh redactions both become the
+    constant placeholder."""
+    out, _ = scrub_config("<a><Key>redacted:0123abcd</Key><psk>FAKE</psk></a>")
+    assert "0123abcd" not in out and "FAKE" not in out
+    assert "redacted:" not in out
+
+
 def test_scrub_config_leaves_ordinary_lines_alone():
     cfg = ("hostname sw1\n"
            "interface GigabitEthernet0/1\n"
@@ -241,7 +260,8 @@ def test_snapshot_embeds_firewall_history_scrubbed(clean_env, tmp_path):
     pdb.init(conn)
     old = "<opnsense><hostname>fw1</hostname></opnsense>"
     new = ("<opnsense><hostname>fw1</hostname>"
-           "<community>leftover-snmp-secret</community></opnsense>")
+           "<community>leftover-snmp-secret</community>"
+           "<Key>redacted:0123abcd</Key></opnsense>")
     conn.execute("INSERT INTO config_revisions (device, fetched_at, sha, message, "
                  "author, text) VALUES ('fw1', 1000, 'a', 'older', NULL, ?)", (old,))
     conn.execute("INSERT INTO config_revisions (device, fetched_at, sha, message, "
@@ -257,6 +277,7 @@ def test_snapshot_embeds_firewall_history_scrubbed(clean_env, tmp_path):
     assert "<h2>Device configs (redacted)</h2>" in t
     assert "hostname&gt;fw1" in t                  # the latest revision is in
     assert "leftover-snmp-secret" not in t         # second scrub layer caught it
+    assert "0123abcd" not in t                     # no stamp leaves the host
 
 
 def _librenms_down(clean_env, monkeypatch, tmp_path, exc=None):

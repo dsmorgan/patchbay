@@ -22,7 +22,7 @@ import httpx
 from . import db
 from . import routed
 from .config import Settings
-from .redact import redact_xml
+from .redact import redact_xml, strip_stamps
 from .retention import alert_prunable, classify
 from .ports import port_kind
 
@@ -46,31 +46,37 @@ HASH_PAT = re.compile(r"\$\d+\w*\$\S+")  # $1$salt$hash and friends
 # any PEM key block, private or not: RSA/EC/ENCRYPTED PRIVATE KEY, an
 # OpenVPN static key, a PGP key block
 KEY_BEGIN = re.compile(
-    r"-----BEGIN [^-]*\bKEY\b[^-]*-----|BEGIN.*(?-i:PRIVATE KEY)", re.I)
+    r"-----BEGIN [^-]*\bKEY\b[^-]*-----|\bBEGIN\b.*?(?-i:PRIVATE KEY)", re.I)
 KEY_END = re.compile(
-    r"-----END [^-]*\bKEY\b[^-]*-----|END.*(?-i:PRIVATE KEY)", re.I)
+    r"-----END [^-]*\bKEY\b[^-]*-----|\bEND\b.*?(?-i:PRIVATE KEY)", re.I)
+
+
+def _last_marker(pat: re.Pattern, line: str) -> int:
+    return max((m.start() for m in pat.finditer(line)), default=-1)
 
 
 def scrub_config(text: str) -> tuple[str, int]:
     """Redact secrets from a device config; returns (scrubbed text, count).
     Secret-bearing XML elements (a config.xml Oxidized backed up from a
     firewall) go through the same element rules as patchbay's own firewall
-    history first; then each line is checked for secret keywords."""
-    text, redacted = redact_xml(text)
+    history first; then each line is checked for secret keywords. The
+    stamps patchbay's history carries become the constant placeholder: this
+    file leaves the host, and a short stamp of a weak secret can be tested
+    against guesses."""
+    text, redacted = redact_xml(strip_stamps(text))
     out: list[str] = []
     in_key_block = False
     for line in text.splitlines():
-        begin = KEY_BEGIN.search(line)
-        if begin:
-            # a block that also ends on this line (an escaped one-liner) is
-            # dropped whole, without swallowing the lines after it
-            in_key_block = not KEY_END.search(line, begin.end())
-            redacted += 1
-            out.append("<redacted: private key block>")
-            continue
-        if in_key_block:
-            if KEY_END.search(line):
-                in_key_block = False
+        begin, end = _last_marker(KEY_BEGIN, line), _last_marker(KEY_END, line)
+        if in_key_block or begin >= 0:
+            if not in_key_block:
+                redacted += 1
+                out.append("<redacted: private key block>")
+            # the line's LAST marker decides: a one-liner that ends its block
+            # doesn't swallow what follows, and an END followed by another
+            # BEGIN stays inside a block
+            if begin >= 0 or end >= 0:
+                in_key_block = begin > end
             continue
         if HASH_PAT.search(line):
             out.append(HASH_PAT.sub("<redacted>", line))
