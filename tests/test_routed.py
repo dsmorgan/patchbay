@@ -297,6 +297,16 @@ def test_type_fallback_stays_on_the_routes_own_router(conn):
     assert t["rails"] == []
 
 
+def test_tunnel_of_an_unknown_device_is_not_drawn(conn):
+    """Rows left under a name no device holds (a retired first-octet
+    firewall name, #98) draw nothing, as on the topology."""
+    seed_site(conn)
+    _wg_peer(conn, "192", "wg0 · site-b", None)
+    _wg_peer(conn, "fw1", "wg0 · site-b", None)
+    g = build_routed_graph(conn, _S())
+    assert [(t["device"], t["name"]) for t in g["tunnels"]] == [("fw1", "wg0 · site-b")]
+
+
 def test_tunnel_route_into_documented_rail_reuses_it(conn):
     """A remote subnet already documented (IPAM) keeps its rail — the
     tunnel attaches to it instead of inventing a net: twin."""

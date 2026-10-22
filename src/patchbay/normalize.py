@@ -85,6 +85,12 @@ def host_device_name(host: str) -> str:
     return canonical_name(hostname or host)
 
 
+def first_label_of_host(host: str) -> str:
+    """The name the firewall collectors derived from a host setting before
+    #98 (cut at the first dot, case kept). Kept only to retire it."""
+    return (host or "").split("://")[-1].split(":")[0].split(".")[0]
+
+
 def _first_label(name: str) -> str:
     """The rule canonical_name used before #98: everything up to the first
     dot. Kept only to recognize the aliases that rule wrote."""
@@ -102,6 +108,74 @@ def _identity_key(row: sqlite3.Row) -> str:
     return canonical_name(row["name"])
 
 
+# Name-keyed tables a retired name's rows are dropped from when it has no
+# heir. config_revisions is not among them: a config history is a record,
+# not a drawing, and it stays readable under the old name.
+_NAME_KEYED = (("endpoints", "device"), ("positions", "name"),
+               ("device_vlans", "device"), ("port_vlans", "device"),
+               ("fdb", "device"), ("rate_history", "device"),
+               ("routes", "device"), ("port_roles", "device"),
+               ("tunnels", "device"))
+
+
+def pick_heir(old_ip: str | None,
+              candidates: list[tuple[str, str | None]]) -> str | None:
+    """The one device a retired name most plausibly was, from (name,
+    mgmt_ip) candidates: the only candidate, else the only one carrying
+    the old name's address. None when that doesn't single one out."""
+    if len(candidates) == 1:
+        return candidates[0][0]
+    same_ip = [n for n, ip in candidates if old_ip and ip == old_ip]
+    return same_ip[0] if len(same_ip) == 1 else None
+
+
+def retire_name(conn: sqlite3.Connection, old: str, heir: str | None) -> None:
+    """A device name the identity rule no longer produces goes away.
+
+    With an heir, an alias old -> heir hands everything keyed by the old
+    name (links, pins, VLANs, tunnels, routes, config history, known
+    cables) to the heir through _rename_refs, which runs later in the same
+    normalize; expected-tunnel declarations, which don't follow aliases,
+    are moved here. Without one, the old name's rows are dropped, so
+    nothing keeps drawing beside the devices that replaced it."""
+    if heir == old:
+        return
+    if heir:
+        conn.execute("INSERT OR REPLACE INTO aliases (alias, canonical) VALUES (?, ?)",
+                     (old, heir))
+        from . import expected_tunnels
+        expected_tunnels.rename(conn, old, heir)
+        return
+    for table, col in _NAME_KEYED:
+        conn.execute(f"DELETE FROM {table} WHERE {col} = ?", (old,))
+    conn.execute("DELETE FROM links WHERE a_device = ? OR b_device = ?", (old, old))
+    conn.execute("DELETE FROM known_cables WHERE a_device = ? OR b_device = ?", (old, old))
+
+
+def retire_source_names(conn: sqlite3.Connection, source: str,
+                        renames: dict[str, set[str]]) -> None:
+    """A collector's own names that #98 changed ({old: {new, ...}}): an
+    OPNSENSE_HOST of 192.0.2.1 named the firewall "192", now "192.0.2.1".
+    The collector's old device row goes, and the old name is retired with
+    the one new name as heir. Two hosts that both cut to the old name had
+    their rows mixed under it, so they get none and those rows are dropped.
+    A name another source's device still holds, or one an alias already
+    hands elsewhere, is left alone."""
+    for old, news in renames.items():
+        news = news - {old}
+        if not old or not news:
+            continue
+        conn.execute("DELETE FROM devices WHERE name = ? AND source = ?", (old, source))
+        if conn.execute("SELECT 1 FROM devices WHERE name = ?", (old,)).fetchone():
+            continue
+        heir = next(iter(news)) if len(news) == 1 else None
+        prev = conn.execute("SELECT canonical FROM aliases WHERE alias = ?",
+                            (old,)).fetchone()
+        if prev and prev[0] != heir:
+            continue
+        retire_name(conn, old, heir)
+
+
 def _retire_stale_aliases(conn: sqlite3.Connection, keys: dict[str, str],
                           seeds: set[str]) -> None:
     """Drop the aliases the identity rule no longer makes.
@@ -112,22 +186,34 @@ def _retire_stale_aliases(conn: sqlite3.Connection, keys: dict[str, str],
     aliases outlive the rule: left in place, _rename_refs would keep
     rewriting the device's links, fdb, routes and pin onto the old merged
     name. An alias is retired when the old rule explains it and the current
-    one doesn't. Operator-declared (seed) aliases are never touched. A pin
-    the old alias moved onto a name no device holds any more comes back."""
+    one doesn't, or when its name is a live device that is its own
+    identity (an alias must never capture a device). Operator-declared
+    (seed) aliases are never touched.
+
+    A merged name left with no alias and no device is retired itself
+    (retire_name), its heir picked by pick_heir from the names that were
+    merged into it. A merged name a device still holds waits for
+    _retire_merge_survivors, which can tell a leftover from a real device."""
+    retired: dict[str, list[str]] = {}
     for r in conn.execute("SELECT alias, canonical FROM aliases").fetchall():
         alias, canon = r["alias"], r["canonical"]
-        if alias in seeds or _first_label(alias) != canon:
+        if alias in seeds or alias == canon:
             continue
-        if keys.get(alias, canonical_name(alias)) == canon:
+        stale_rule = (_first_label(alias) == canon
+                      and keys.get(alias, canonical_name(alias)) != canon)
+        captures = keys.get(alias) == alias
+        if not (stale_rule or captures):
             continue
         conn.execute("DELETE FROM aliases WHERE alias = ?", (alias,))
-        orphan = not conn.execute("SELECT 1 FROM devices WHERE name = ?",
-                                  (canon,)).fetchone()
-        others = conn.execute("SELECT 1 FROM aliases WHERE canonical = ?",
-                              (canon,)).fetchone()
-        if orphan and not others:
-            conn.execute("UPDATE OR IGNORE positions SET name = ? WHERE name = ?",
-                         (alias, canon))
+        if stale_rule:
+            retired.setdefault(canon, []).append(alias)
+    ips = dict(conn.execute("SELECT name, mgmt_ip FROM devices").fetchall())
+    for canon, olds in retired.items():
+        if canon in ips or conn.execute(
+                "SELECT 1 FROM aliases WHERE canonical = ?", (canon,)).fetchone():
+            continue
+        retire_name(conn, canon,
+                    pick_heir(None, [(a, ips.get(a)) for a in sorted(olds)]))
 
 
 # How long a merge survivor may go unreported by its own source while that
@@ -147,8 +233,9 @@ def _retire_merge_survivors(conn: sqlite3.Connection) -> None:
     whose canonical name is something else, and its own source has kept
     reporting those devices for SURVIVOR_GRACE without reporting it. A
     real device that happens to share the first label is reported by its
-    source every poll and never qualifies. Its pin moves to the device it
-    most plausibly was: the only member, or the one with its address."""
+    source every poll and never qualifies. What was keyed by its name goes
+    to the device it most plausibly was (pick_heir: the only member, or the
+    one with its address) or, with no such device, is dropped."""
     members: dict[str, list[sqlite3.Row]] = {}
     for r in conn.execute("SELECT * FROM devices").fetchall():
         first = _first_label(r["name"])
@@ -166,11 +253,8 @@ def _retire_merge_survivors(conn: sqlite3.Connection) -> None:
         if not same or (c["last_seen"] or 0) > \
                 min(m["last_seen"] or 0 for m in same) - SURVIVOR_GRACE:
             continue
-        heir = same if len(same) == 1 else \
-            [m for m in same if c["mgmt_ip"] and m["mgmt_ip"] == c["mgmt_ip"]]
-        if len(heir) == 1:
-            conn.execute("UPDATE OR IGNORE positions SET name = ? WHERE name = ?",
-                         (heir[0]["name"], c["name"]))
+        retire_name(conn, c["name"], pick_heir(
+            c["mgmt_ip"], [(m["name"], m["mgmt_ip"]) for m in same]))
         conn.execute("DELETE FROM devices WHERE id = ?", (c["id"],))
         conn.execute("DELETE FROM interfaces WHERE device_id = ?", (c["id"],))
 
