@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.templating import Jinja2Templates
 
@@ -233,9 +233,21 @@ app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")
 from . import auth
 
 
+def _gate(request: Request):
+    # env-only settings: nothing the gate reads is a stored declaration, so
+    # it never waits on SQLite (the session secret is cached after first use)
+    return auth.gate(request, load_settings(read_db=False))
+
+
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
-    intercept = auth.gate(request, load_settings())
+    # in a worker thread: the env file read and, on a process's first
+    # signed-in request, the session secret's database read must not stall
+    # the event loop (#109). Settings are re-read per request, so a changed
+    # allowlist or auth setting still takes effect without a restart.
+    from starlette.concurrency import run_in_threadpool
+
+    intercept = await run_in_threadpool(_gate, request)
     response = intercept if intercept else await call_next(request)
     auth.forbid_framing(response)  # every response, refusals included
     return response
@@ -463,19 +475,39 @@ def alerts(request: Request, category: str | None = None,
         conn.close()
 
 
+async def _form(request: Request) -> dict[str, str]:
+    from urllib.parse import parse_qs
+
+    # parsed by hand, like /configs/{node}/delete: python-multipart is not a
+    # dependency, and these forms are plain urlencoded fields
+    body = (await request.body()).decode("utf-8", "replace")
+    return {k: v[0].strip() for k, v in parse_qs(body, keep_blank_values=True).items()}
+
+
+async def _rule_form(request: Request) -> dict[str, str]:
+    from urllib.parse import parse_qs
+
+    return {k: v[-1] for k, v in parse_qs(
+        (await request.body()).decode(), keep_blank_values=True).items()}
+
+
+# Routes that touch SQLite are plain `def`, so FastAPI runs them in its
+# threadpool: a write that waits out the busy timeout while a poll commits
+# then stalls one worker thread, not the event loop and every other request
+# (#109). The body is read by an async dependency (_form and friends), the
+# one part that has to await.
+
 @app.post("/alerts/rules/{name}")
-async def alerts_rule_update(name: str, request: Request):
+def alerts_rule_update(name: str, form: dict[str, str] = Depends(_rule_form)):
     """Save one rule from the Rules tab (ADR-0003 Decision 2: the database is
     the authority, no env involvement). A plain form post, answered with a
     redirect back to the tab so a reload never resubmits."""
-    from urllib.parse import parse_qs, quote
+    from urllib.parse import quote
 
     from fastapi.responses import RedirectResponse
 
     if name not in alerting.RULES:
         raise HTTPException(404, f"unknown rule: {name}")
-    form = {k: v[-1] for k, v in parse_qs(
-        (await request.body()).decode(), keep_blank_values=True).items()}
     conn = _conn()
     try:
         db.init(conn)
@@ -492,10 +524,9 @@ async def alerts_rule_update(name: str, request: Request):
 # -- expected tunnels (#63): declarations only, never keys -----------------
 
 @app.post("/alerts/tunnels")
-async def expected_tunnel_add(request: Request):
+def expected_tunnel_add(f: dict[str, str] = Depends(_form)):
     from fastapi.responses import RedirectResponse
 
-    f = await _form(request)
     conn = _conn()
     try:
         db.init(conn)
@@ -511,10 +542,9 @@ async def expected_tunnel_add(request: Request):
 
 
 @app.post("/alerts/tunnels/remove")
-async def expected_tunnel_remove(request: Request):
+def expected_tunnel_remove(f: dict[str, str] = Depends(_form)):
     from fastapi.responses import RedirectResponse
 
-    f = await _form(request)
     conn = _conn()
     try:
         db.init(conn)
@@ -530,15 +560,6 @@ async def expected_tunnel_remove(request: Request):
 # Plain forms, like everything on /alerts (ADR-0003 Decision 8); the
 # cross-origin POST guard in auth.py covers them. A transport URL is
 # write-only from here: the page shows it masked and never echoes it back.
-
-async def _form(request: Request) -> dict[str, str]:
-    from urllib.parse import parse_qs
-
-    # parsed by hand, like /configs/{node}/delete: python-multipart is not a
-    # dependency, and these forms are plain urlencoded fields
-    body = (await request.body()).decode("utf-8", "replace")
-    return {k: v[0].strip() for k, v in parse_qs(body, keep_blank_values=True).items()}
-
 
 def _to_transports():
     from fastapi.responses import RedirectResponse
@@ -561,8 +582,8 @@ def _transport_fields(f: dict[str, str], *, url_required: bool) -> tuple[str, st
 
 
 @app.post("/alerts/transports")
-async def transport_add(request: Request):
-    name, kind, url = _transport_fields(await _form(request), url_required=True)
+def transport_add(f: dict[str, str] = Depends(_form)):
+    name, kind, url = _transport_fields(f, url_required=True)
     conn = _conn()
     try:
         db.init(conn)
@@ -578,9 +599,9 @@ async def transport_add(request: Request):
 
 
 @app.post("/alerts/transports/{tid}")
-async def transport_edit(request: Request, tid: int):
+def transport_edit(tid: int, f: dict[str, str] = Depends(_form)):
     # a blank URL keeps the stored one: the form never holds the secret
-    name, kind, url = _transport_fields(await _form(request), url_required=False)
+    name, kind, url = _transport_fields(f, url_required=False)
     conn = _conn()
     try:
         db.init(conn)
@@ -602,8 +623,8 @@ async def transport_edit(request: Request, tid: int):
 
 
 @app.post("/alerts/transports/{tid}/enabled")
-async def transport_enable(request: Request, tid: int):
-    on = (await _form(request)).get("enabled") == "1"
+def transport_enable(tid: int, f: dict[str, str] = Depends(_form)):
+    on = f.get("enabled") == "1"
     conn = _conn()
     try:
         db.init(conn)
@@ -657,9 +678,8 @@ def transport_delete(tid: int):
 
 
 @app.post("/alerts/routes")
-async def alert_routes(request: Request):
+def alert_routes(f: dict[str, str] = Depends(_form)):
     """The default route, each rule's route, and the link base, in one form."""
-    f = await _form(request)
 
     def valid(raw: str) -> bool:
         return raw == "none" or isinstance(transports.parse_route(raw), transports.Route)
@@ -714,11 +734,10 @@ def _silence_back(f: dict[str, str]):
 
 
 @app.post("/alerts/silences")
-async def silence_add(request: Request):
+def silence_add(request: Request, f: dict[str, str] = Depends(_form)):
     """Add a silence, from the Silences tab or an Active row's button.
     `created_by` is what the auth gate knows: the OIDC identity when the
     site signs in that way, else "operator"."""
-    f = await _form(request)
     settings = load_settings()
     who = getattr(request.state, "auth", None) if settings.auth_mode == "oidc" else None
     try:
@@ -737,11 +756,10 @@ async def silence_add(request: Request):
 
 
 @app.post("/alerts/silences/{sid}/delete")
-async def silence_delete(sid: int, request: Request):
+def silence_delete(sid: int, f: dict[str, str] = Depends(_form)):
     """Remove a silence. What it covered returns on the next poll, as a
     new raise if the condition still holds. PATCHBAY_EXPECT rows have no
     numeric id and cannot be addressed here; they are edited on /ops."""
-    f = await _form(request)
     conn = _conn()
     try:
         db.init(conn)
@@ -761,7 +779,7 @@ CABLE_FIELDS = ("a_device", "a_interface", "b_device", "b_interface")
 
 
 @app.post("/alerts/cables/retire")
-async def cable_retire(request: Request):
+def cable_retire(f: dict[str, str] = Depends(_form)):
     """Retire one cable from its link-down row: the known_cables record is
     tombstoned, so the rule stops evaluating it, and its open alert clears
     with History detail "cable retired": a clear is sent only if the raise
@@ -769,7 +787,6 @@ async def cable_retire(request: Request):
     refused: undeclaring it on /ops is how a declaration is retired."""
     from fastapi.responses import RedirectResponse
 
-    f = await _form(request)
     vals = [f.get(k, "") for k in CABLE_FIELDS]
     if not all(vals) or any(len(v) > silences.SCOPE_MAX or not v.isprintable()
                             for v in vals):
@@ -793,13 +810,9 @@ async def cable_retire(request: Request):
     if notes:
         # after commit, as /ops/poll does: a receiver that heard the raise
         # hears the clear; a failed send is queued for the next poll's retry
-        try:
-            # in a worker thread: the receivers' HTTP and SQLite's busy
-            # timeout must not stall the event loop and every other request
-            from starlette.concurrency import run_in_threadpool
-
-            await run_in_threadpool(alerting.dispatch, notes,
-                                    transports.WebhookDispatcher(load_settings().db_path))
+        try:   # a sync route: this already runs in a worker thread
+            alerting.dispatch(notes,
+                              transports.WebhookDispatcher(load_settings().db_path))
         except Exception as e:   # the retirement stands; only the send failed
             import logging
             logging.getLogger(__name__).warning(
@@ -1334,8 +1347,8 @@ async def save_position(request: Request):
     if not isinstance(name, str) or len(name) > 200:
         raise HTTPException(400, "bad name")
 
-    def write() -> None:  # sqlite work off the event loop — this is the one
-        conn = _conn()    # async route, and a busy DB would block the server
+    def write() -> None:  # sqlite work off the event loop: a busy DB
+        conn = _conn()    # must not block the server (#109)
         try:
             db.init(conn)
             if x is None or y is None:
@@ -1991,8 +2004,12 @@ def snapshot_delete(name: str):
     return RedirectResponse("/snapshots", status_code=303)
 
 
+async def _body_text(request: Request) -> str:
+    return (await request.body()).decode("utf-8", "replace")
+
+
 @app.post("/configs/{node}/delete")
-async def config_revision_delete(request: Request, node: str):
+def config_revision_delete(node: str, body: str = Depends(_body_text)):
     """Targeted removal of stored firewall config history: one revision
     (form field v=oid) or every revision for the device (v=all). Only
     patchbay-held history — Oxidized's lives in its own git."""
@@ -2001,7 +2018,6 @@ async def config_revision_delete(request: Request, node: str):
 
     # parsed by hand: starlette's form() wants python-multipart even for a
     # plain urlencoded body, and this one field isn't worth a dependency
-    body = (await request.body()).decode("utf-8", "replace")
     want = (parse_qs(body).get("v") or [""])[0]
     conn = _conn()
     try:
@@ -2026,8 +2042,12 @@ async def config_revision_delete(request: Request, node: str):
     return RedirectResponse(dest, status_code=303)
 
 
+async def _json_body(request: Request):
+    return await request.json()
+
+
 @app.post("/ops/config")
-async def ops_config(request: Request):
+def ops_config(body=Depends(_json_body)):
     """Store one declaration in the DB (the UI half of env-wins-else-DB).
     Same syntax as the .env file; an env-set variable is refused — the file
     owns it. Takes effect on the next poll (declarations act at normalize)."""
@@ -2035,7 +2055,6 @@ async def ops_config(request: Request):
 
     from .config import DECLARATION_VARS
 
-    body = await request.json()
     var, value = body.get("var"), body.get("value", "")
     if var not in DECLARATION_VARS:
         raise HTTPException(400, "not an editable declaration")

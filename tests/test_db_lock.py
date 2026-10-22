@@ -62,3 +62,73 @@ def test_alerts_tabs_never_write(clean_env, tmp_path, tab):
     finally:
         holder.rollback()
         holder.close()
+
+
+def test_a_save_waiting_on_the_lock_does_not_stall_other_requests(clean_env, tmp_path):
+    """The old async handlers waited out SQLite's busy timeout on the event
+    loop: every other request, static files included, froze behind one form
+    post. Now the save waits in a worker thread, and lands once the poll's
+    short write phase commits."""
+    import patchbay.web as web
+
+    path = _db(tmp_path)
+    holder = _hold(path)
+    saved: dict = {}
+    with TestClient(web.app) as client:   # one event loop for every request
+        def save():
+            saved["r"] = client.post("/alerts/silences", data={
+                "kind": "device", "scope": "sw1", "hours": "1", "reason": "x"},
+                follow_redirects=False)
+
+        writer = threading.Thread(target=save)
+        writer.start()
+        try:
+            time.sleep(0.3)                   # the save is now in its busy wait
+            t0 = time.monotonic()
+            assert client.get("/static/d3.v7.min.js").status_code == 200
+            assert client.get("/alerts").status_code == 200
+            assert time.monotonic() - t0 < 2
+            assert writer.is_alive()          # still waiting on the lock
+        finally:
+            holder.rollback()                 # the poll's write phase ends
+            holder.close()
+        writer.join(10)
+    assert saved["r"].status_code == 303, saved["r"].text
+    with pdb.connect(path) as c:
+        assert c.execute("SELECT scope FROM alert_silences").fetchone()[0] == "sw1"
+
+
+def test_auth_gate_reads_no_database(clean_env, tmp_path):
+    """The gate ran load_settings on the event loop for every request, and
+    that read the stored declarations with a 10 s busy timeout: a commit in
+    progress froze even static files. The gate reads env-only settings."""
+    import patchbay.web as web
+
+    path = _db(tmp_path)
+    holder = _hold(path, "EXCLUSIVE")         # readers wait on this one
+    try:
+        t0 = time.monotonic()
+        r = TestClient(web.app).get("/static/d3.v7.min.js")
+        assert r.status_code == 200
+        assert time.monotonic() - t0 < 2
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_auth_gate_still_rechecks_settings_per_request(clean_env, tmp_path):
+    """Off the loop, not cached: a password rotation still ends a session
+    on its next request (#94's fingerprint), without a restart."""
+    import patchbay.web as web
+
+    _db(tmp_path)
+    clean_env.setenv("PATCHBAY_AUTH", "password")
+    clean_env.setenv("PATCHBAY_PASSWORD", "first-secret")
+    client = TestClient(web.app)
+    r = client.post("/login", data={"password": "first-secret", "next": "/"},
+                    follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    assert client.get("/ops", follow_redirects=False).status_code == 200
+    clean_env.setenv("PATCHBAY_PASSWORD", "second-secret")
+    r = client.get("/ops", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/login")
