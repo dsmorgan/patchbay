@@ -209,11 +209,20 @@ def test_a_pending_alert_must_clear_the_raise_bar_again(conn, settings, clock):
     assert _state(conn) == "cleared"
 
 
-def test_canary_port_parses_colons_in_the_interface():
-    assert attention._canary_port("port:canary:sw1:1/0/5:out_errors") == ("sw1", "1/0/5")
-    assert attention._canary_port("port:canary:sw1:eth0:1:in_errors") == ("sw1", "eth0:1")
-    assert attention._canary_port("port:canary:sw1:eth0:bogus") is None
-    assert attention._canary_port("link:sw1:1:sw2:2") is None
+def test_canary_port_resolves_colons_from_the_data(conn):
+    # #110: either half may hold colons (a MAC-named UniFi device, an
+    # interface numbered eth0:1); the split that has samples wins
+    for dev, iface in (("sw1", "1/0/5"), ("sw1", "eth0:1"),
+                       ("02:00:00:00:00:01", "Port 3")):
+        conn.execute("INSERT INTO rate_history (device, interface, ts, in_errors) "
+                     "VALUES (?, ?, ?, 0)", (dev, iface, T0))
+    assert attention._canary_ports(conn, "port:canary:sw1:1/0/5:out_errors") == [("sw1", "1/0/5")]
+    assert attention._canary_ports(conn, "port:canary:sw1:eth0:1:in_errors") == [("sw1", "eth0:1")]
+    assert attention._canary_ports(
+        conn, "port:canary:02:00:00:00:00:01:Port 3:in_errors") == [("02:00:00:00:00:01", "Port 3")]
+    assert attention._canary_ports(conn, "port:canary:sw1:eth0:bogus") == []
+    assert attention._canary_ports(conn, "port:canary:sw9:1:in_errors") == []
+    assert attention._canary_ports(conn, "link:sw1:1:sw2:2") == []
 
 
 def test_down_device_holds_the_canary(conn, settings, clock):
@@ -230,6 +239,65 @@ def test_down_device_holds_the_canary(conn, settings, clock):
                               now=T0 + 3 * H)
     assert [n.kind for n in notes if n.rule == "port-canary"] == []
     assert _state(conn) == "active"
+
+
+def _evaluate(conn, settings, clock, at):
+    """A poll that wrote no new sample: a failed or single-source poll."""
+    clock["now"] = at
+    return alerting.evaluate(conn, attention.attention_items(conn, settings)[0], now=at)
+
+
+def test_one_sample_read_on_two_polls_is_one_look(conn, settings, clock):
+    # #110: `for` 2 needs two bad samples, not one sample seen twice
+    _history(conn, 2.0)
+    assert _poll(conn, settings, clock, 3000.0, at=T0) == []
+    assert _evaluate(conn, settings, clock, T0 + 300) == []
+    assert conn.execute("SELECT state, polls FROM alerts").fetchone()[:] == ("pending", 1)
+    [note] = _poll(conn, settings, clock, 3100.0, at=T0 + 600)
+    assert note.kind == "raise"
+
+
+def test_a_silenced_announced_canary_keeps_its_hysteresis(conn, settings, clock):
+    # #110: a silence must not turn a flood between the clear and raise
+    # bars into a clear sent mid-flood
+    _history(conn, 2.0)
+    _poll(conn, settings, clock, 3000.0, at=T0)
+    [note] = _poll(conn, settings, clock, 3000.0, at=T0 + 300)
+    assert note.kind == "raise"
+    conn.execute("INSERT INTO alert_silences (kind, scope, until, created_at) "
+                 "VALUES ('port', 'sw1:1/0/5', NULL, ?)", (T0,))
+    for i in range(2, 5):          # 100/s: under 100 x 2, over 10 x 2
+        assert _poll(conn, settings, clock, 100.0, at=T0 + i * 300) == []
+    assert _state(conn) == "silenced"
+    conn.execute("DELETE FROM alert_silences")
+    _poll(conn, settings, clock, 100.0, at=T0 + 1500)    # re-raised, pending
+    assert _state(conn) == "pending"
+    [note] = _poll(conn, settings, clock, 100.0, at=T0 + 1800)
+    assert note.kind == "raise"           # held: still flooding, never cleared
+
+
+def test_down_mac_named_device_holds_the_canary(conn, settings, clock):
+    # #110: a UniFi device with no name is stored as its MAC; the key's
+    # colons must not lose its port, or the canary clears when it dies
+    mac = "02:00:00:00:00:01"
+    pdb.upsert_device(conn, name=mac, source="unifi", role="switch", status="up")
+    _history(conn, 2.0, dev=mac, iface="Port 3")
+    for at in (T0, T0 + 300):
+        clock["now"] = at
+        _sample(conn, at - 10, dev=mac, iface="Port 3", out_discards=3000.0)
+        alerting.evaluate(conn, attention.attention_items(conn, settings)[0], now=at)
+    assert _state(conn) == "active"
+    conn.execute("UPDATE devices SET status = 'down'")
+    notes = _evaluate(conn, settings, clock, T0 + 3 * H)
+    assert [n.kind for n in notes if n.rule == "port-canary"] == []
+    assert _state(conn) == "active"
+
+
+def test_latest_sample_reads_the_ts_index(conn):
+    plan = " ".join(str(tuple(r)) for r in conn.execute(
+        "EXPLAIN QUERY PLAN SELECT device, interface, ts, in_errors "
+        "FROM rate_history WHERE ts >= ?", (T0,)))
+    assert "idx_rate_hist_ts" in plan
 
 
 # --- schema, catalog, Rules tab ----------------------------------------------

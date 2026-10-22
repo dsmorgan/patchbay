@@ -290,6 +290,37 @@ def test_snapshot_failure_record_fires_one_event_each(conn, settings):
     assert alerting.evaluate(conn, _items(conn, settings, "snapshot-failed")) == []
 
 
+def test_reenabling_an_event_rule_replays_nothing_from_while_it_was_off(
+        conn, settings, monkeypatch):
+    # #110: a failure while snapshot-failed was disabled is not news 20 h
+    # later; one after the rule is back on is, raised at its own time
+    t = {"now": 1_800_000_000.0}
+    monkeypatch.setattr(pdb, "now", lambda: t["now"])
+    alerting.update_rule(conn, "snapshot-failed", {})            # off
+    pdb.record_snapshot_failure(conn, "disk full")
+    assert alerting.evaluate(conn, _items(conn, settings, "snapshot-failed"),
+                             now=t["now"]) == []
+    t["now"] += 20 * 3600
+    alerting.update_rule(conn, "snapshot-failed", {"enabled": "1"})
+    assert _items(conn, settings, "snapshot-failed") == []        # hidden too
+    assert alerting.evaluate(conn, attention.attention_items(conn, settings, now=t["now"])[0],
+                             now=t["now"]) == []
+    t["now"] += 60
+    pdb.record_snapshot_failure(conn, "share offline")
+    t["now"] += 240
+    [n] = [n for n in alerting.evaluate(
+        conn, attention.attention_items(conn, settings, now=t["now"])[0], now=t["now"])
+        if n.rule == "snapshot-failed"]
+    assert (n.kind, n.raised_at) == ("event", t["now"] - 240)
+    # saving the form again while on keeps the stamp
+    stamp = conn.execute("SELECT enabled_at FROM alert_rules WHERE name = 'snapshot-failed'"
+                         ).fetchone()[0]
+    t["now"] += 600
+    alerting.update_rule(conn, "snapshot-failed", {"enabled": "1"})
+    assert conn.execute("SELECT enabled_at FROM alert_rules WHERE name = 'snapshot-failed'"
+                        ).fetchone()[0] == stamp
+
+
 def test_snapshot_failure_record_is_capped(conn):
     for i in range(pdb.SNAPSHOT_FAILURES_KEEP + 5):
         pdb.record_snapshot_failure(conn, f"e{i}")
@@ -447,15 +478,29 @@ def test_disabled_rule_hides_everywhere_and_override_applies_everywhere(
                          ).fetchone()[0] == "cleared"   # disabling clears it
 
 
-def test_disabling_a_rule_clears_its_alerts_without_notifying(conn, settings):
+def test_disabling_a_rule_clears_its_alerts_and_says_why(conn, settings):
+    # #110: a receiver that heard the raise hears a clear that names the
+    # cause, or a generic receiver would stay firing for a hidden rule
     _dev(conn, "ap1", "ap", "down")
     [n] = alerting.evaluate(conn, attention.attention_items(conn, settings)[0])
     assert (n.kind, n.key) == ("raise", "device:ap1")
 
     conn.execute("UPDATE alert_rules SET enabled = 0 WHERE name = 'device-down'")
-    assert alerting.evaluate(conn, attention.attention_items(conn, settings)[0]) == []
+    [n] = alerting.evaluate(conn, attention.attention_items(conn, settings)[0])
+    assert (n.kind, n.key, n.detail) == ("clear", "device:ap1", "rule disabled")
     [a] = conn.execute("SELECT state FROM alerts").fetchall()
     assert a["state"] == "cleared"
+    assert conn.execute("SELECT detail FROM alert_events WHERE event = 'cleared'"
+                        ).fetchone()[0] == "rule disabled"
+
+
+def test_disabling_a_rule_clears_an_unannounced_alert_silently(conn, settings):
+    conn.execute("INSERT INTO alert_rules (name, params) VALUES ('device-down', ?)",
+                 (json.dumps({"for": 3}),))
+    _dev(conn, "ap1", "ap", "down")
+    assert alerting.evaluate(conn, attention.attention_items(conn, settings)[0]) == []
+    conn.execute("UPDATE alert_rules SET enabled = 0 WHERE name = 'device-down'")
+    assert alerting.evaluate(conn, attention.attention_items(conn, settings)[0]) == []
     assert conn.execute("SELECT detail FROM alert_events WHERE event = 'cleared'"
                         ).fetchone()[0] == "rule disabled"
 

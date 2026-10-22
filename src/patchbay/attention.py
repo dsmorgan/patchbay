@@ -410,13 +410,19 @@ def attention_items(conn: sqlite3.Connection, settings, *,
 def _apply_rule_settings(conn, items: list[dict]) -> list[dict]:
     """The site's Rules-tab edits, applied here so every surface agrees: a
     disabled rule shows nowhere, and a severity override is the severity
-    the attention list, /alerts, and the alert channel all see."""
+    the attention list, /alerts, and the alert channel all see. An event
+    (an item with an `at`) that happened before its rule was last switched
+    on happened while it was off, so it shows nowhere either: re-enabling
+    a rule must not replay a day of past occurrences as news."""
     rules = {r["name"]: r for r in conn.execute(
-        "SELECT name, enabled, severity FROM alert_rules")}
+        "SELECT name, enabled, severity, enabled_at FROM alert_rules")}
     out = []
     for it in items:
         r = rules.get(it.get("rule"))
         if r is not None and not r["enabled"]:
+            continue
+        if (r is not None and r["enabled_at"] is not None
+                and it.get("at") is not None and it["at"] < r["enabled_at"]):
             continue
         if r is not None and r["severity"]:
             it["severity"] = r["severity"]
@@ -688,15 +694,29 @@ def canary_baseline(conn, device: str, iface: str, counter: str, now: float,
     return _p95(vals) if vals else None
 
 
-def _canary_port(key: str) -> tuple[str, str] | None:
+def _canary_ports(conn, key: str) -> list[tuple[str, str]]:
     """(device, interface) from `port:canary:{device}:{iface}:{counter}`.
-    An interface name may hold colons (some platforms number ports that
-    way), so peel the counter off the right; a device name does not."""
+    Both halves may hold colons: a UniFi device with no name is stored as
+    its MAC, an IPv6-named one as its address, and some platforms number
+    ports with colons. The split is resolved against the data: each
+    candidate is checked in rate_history, newest sample first, so a key
+    whose port has samples maps to exactly that port."""
     head, _, counter = key.rpartition(":")
-    parts = head.split(":", 3)
-    if counter not in CANARY_COUNTERS or len(parts) != 4 or parts[:2] != ["port", "canary"]:
-        return None
-    return parts[2], parts[3]
+    prefix = "port:canary:"
+    if counter not in CANARY_COUNTERS or not head.startswith(prefix):
+        return []
+    rest = head[len(prefix):]
+    found = []
+    for i, ch in enumerate(rest):
+        if ch != ":" or i == 0:
+            continue
+        dev, iface = rest[:i], rest[i + 1:]
+        row = conn.execute(
+            "SELECT MAX(ts) FROM rate_history WHERE device = ? AND interface = ?",
+            (dev, iface)).fetchone()
+        if row[0] is not None:
+            found.append((row[0], dev, iface))
+    return [(dev, iface) for _, dev, iface in sorted(found, reverse=True)[:1]]
 
 
 def _rate(x: float) -> str:
@@ -729,28 +749,35 @@ def _port_canary(conn, settings, now: float, checked: list[str]) -> list[dict]:
         warmup_s = CANARY_WARMUP_H * 3600
     cols = ", ".join(CANARY_COUNTERS)
     # the newest sample per port, if it is current: a port the poller
-    # stopped sampling says nothing about now
-    latest = conn.execute(
-        f"SELECT r.device, r.interface, {cols} FROM rate_history r JOIN ("
-        "  SELECT device, interface, MAX(ts) AS ts FROM rate_history "
-        "  WHERE ts >= ? GROUP BY device, interface) m "
-        "ON r.device = m.device AND r.interface = m.interface AND r.ts = m.ts "
-        "ORDER BY r.device, r.interface", (now - STALE_MIN * 60,)).fetchall()
-    # open = pending or active; only an active alert earns the hold. A
-    # pending one has not met `for` yet, so it must clear the raise bar
-    # (multiplier and floor) again each poll, or one spike would ride the
-    # clear threshold into a notification.
-    open_ = {r["key"]: r["state"] for r in conn.execute(
-        "SELECT key, state FROM alerts WHERE rule = 'port-canary' "
-        "AND state != 'cleared'")}
-    active = {k for k, st in open_.items() if st == "active"}
+    # stopped sampling says nothing about now. A range scan of the ts index
+    # reads only the last few minutes; the newest per port is picked here.
+    newest: dict[tuple[str, str], sqlite3.Row] = {}
+    for r in conn.execute(
+            f"SELECT device, interface, ts, {cols} FROM rate_history "
+            "WHERE ts >= ?", (now - STALE_MIN * 60,)):
+        k = (r["device"], r["interface"])
+        if k not in newest or r["ts"] > newest[k]["ts"]:
+            newest[k] = r
+    latest = [newest[k] for k in sorted(newest)]
+    # open = pending, active, or silenced. The hold (the clear bar) is for
+    # an alert a receiver heard about: active, or announced before a
+    # silence or a pending re-raise, so a silence never turns a flood that
+    # is still running into a clear. A pending alert nobody heard of has
+    # not met `for` yet, so it must clear the raise bar (multiplier and
+    # floor) again each poll, or one spike would ride the clear threshold
+    # into a notification.
+    open_ = {r["key"]: r for r in conn.execute(
+        "SELECT key, state, last_notified_at FROM alerts "
+        "WHERE rule = 'port-canary' AND state != 'cleared'")}
+    active = {k for k, r in open_.items()
+              if r["state"] == "active" or r["last_notified_at"] is not None}
     # an open canary whose port stopped sampling: its device went down (the
     # engine's inhibition holds the item, keyed by `ports`) or its source
     # paused. Re-read the last sample for those, so the alert is held rather
     # than announced as cleared; a port with no sample for longer than a
     # device takes to go stale, on a device that is up, has really gone.
     have = {(r["device"], r["interface"]) for r in latest}
-    gone = sorted({p for p in map(_canary_port, open_) if p} - have)
+    gone = sorted({p for k in open_ for p in _canary_ports(conn, k)} - have)
     for dev, iface in gone:
         row = conn.execute(
             f"SELECT device, interface, ts, {cols} FROM rate_history "
@@ -787,6 +814,9 @@ def _port_canary(conn, settings, now: float, checked: list[str]) -> list[dict]:
                 "text": f"{dev} {iface} {label} at {_rate(rate)}/s ({said})",
                 "href": f"/device/{dev}#port-{quote(iface, safe='/')}",
                 "ports": [(dev, iface)],
+                # `for` counts distinct samples: a poll that read no new
+                # one (a failed or single-source poll) is not a second look
+                "sample_ts": r["ts"],
             })
     return out
 

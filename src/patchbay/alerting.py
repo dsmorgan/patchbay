@@ -23,6 +23,16 @@ still stored, as `silenced`, and nothing is sent about it while it is:
              only if a raise was sent before the silence, so a receiver
              is never left firing and never hears of an unannounced alert
 
+Disabling a rule closes its open alerts on the next poll, by the same
+rule: one a receiver heard about gets a clear whose detail says "rule
+disabled" (the condition may still hold), and Kuma, which follows state,
+is released on the same push. Re-enabling it replays no event that
+happened while it was off.
+
+An item may carry `sample_ts`, the time of the sample it judged (the port
+canary). Then a poll counts toward `for` only when the sample is newer than
+the last one counted: one bad sample read on two polls is one look.
+
 Every transition lands in `alert_events`, which is the History tab. What
 the engine decides to send comes back as `Notification`s; the caller hands
 them to `dispatch()` after the poll transaction commits, so an unreachable
@@ -158,6 +168,8 @@ class Notification:
     href: str
     raised_at: float
     route: str | None
+    detail: str = ""           # why, when the kind alone does not say
+    noted_at: float = 0.0      # the poll that decided it: delivery order
 
 
 class Dispatcher(Protocol):
@@ -302,9 +314,13 @@ def update_rule(conn: sqlite3.Connection, name: str, form: dict[str, str],
     if not isinstance(params, dict):
         params = {}
     params.update(parsed)
-    conn.execute("UPDATE alert_rules SET enabled = ?, severity = ?, params = ? "
+    # switching a rule on stamps the moment: an event that happened while it
+    # was off is not replayed as news (attention._apply_rule_settings)
+    enabled = 1 if form.get("enabled") else 0
+    conn.execute("UPDATE alert_rules SET enabled_at = CASE WHEN ? = 1 AND enabled = 0 "
+                 "THEN ? ELSE enabled_at END, enabled = ?, severity = ?, params = ? "
                  "WHERE name = ?",
-                 (1 if form.get("enabled") else 0, severity, json.dumps(params), name))
+                 (enabled, db.now(), enabled, severity, json.dumps(params), name))
 
 
 def _config(conn: sqlite3.Connection, catalog: dict[str, Rule]) -> dict[str, dict]:
@@ -366,10 +382,12 @@ def _event(conn, alert_id, ts, event, a, detail=None):
          a["text"], a["href"], detail))
 
 
-def _note(kind: str, a, raised_at: float, route) -> Notification:
+def _note(kind: str, a, raised_at: float, route, now: float,
+          detail: str = "") -> Notification:
     return Notification(kind=kind, key=a["key"], rule=a["rule"], severity=a["severity"],
                         text=a["text"] or "", href=a["href"] or "",
-                        raised_at=raised_at, route=route)
+                        raised_at=raised_at, route=route, detail=detail,
+                        noted_at=now)
 
 
 def evaluate(conn: sqlite3.Connection, items: list[dict], *,
@@ -424,15 +442,17 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             # a key reused across occurrences would fire again after that.
             if conn.execute("SELECT 1 FROM alerts WHERE key = ?", (key,)).fetchone():
                 continue
+            # it happened when it happened, not when this poll read it
+            at = it.get("at") or now
             cur = conn.execute(
                 "INSERT INTO alerts (key, rule, category, severity, state, polls, "
                 "raised_at, active_at, cleared_at, last_notified_at, text, href) "
                 "VALUES (?,?,?,?, 'cleared', 1, ?,?,?,?,?,?)",
-                (key, name, a["category"], a["severity"], now, now, now, now,
+                (key, name, a["category"], a["severity"], at, now, now, now,
                  a["text"], a["href"]))
             for ev in ("raised", "active", "cleared"):
                 _event(conn, cur.lastrowid, now, ev, a)
-            notes.append(_note("event", a, now, rule["route"]))
+            notes.append(_note("event", a, at, rule["route"], now))
             continue
 
         row = open_.get(key)
@@ -445,39 +465,46 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             state = "active" if rule["for"] <= 1 else "pending"
             conn.execute(
                 "UPDATE alerts SET severity=?, text=?, href=?, polls=1, state=?, "
-                "raised_at=?, active_at=?, last_notified_at=? WHERE id=?",
+                "raised_at=?, active_at=?, last_notified_at=?, sample_ts=? WHERE id=?",
                 (a["severity"], a["text"], a["href"], state, now,
                  now if state == "active" else None,
-                 now if state == "active" else row["last_notified_at"], row["id"]))
+                 now if state == "active" else row["last_notified_at"],
+                 it.get("sample_ts"), row["id"]))
             _event(conn, row["id"], now, "raised", a, "silence ended")
             if state == "active":
                 _event(conn, row["id"], now, "active", a)
-                notes.append(_note("raise", a, now, rule["route"]))
+                notes.append(_note("raise", a, now, rule["route"], now))
             continue
         if row is None:
             raised = legacy.get(key, now)
             state = "active" if rule["for"] <= 1 else "pending"
             cur = conn.execute(
                 "INSERT INTO alerts (key, rule, category, severity, state, polls, "
-                "raised_at, active_at, last_notified_at, text, href) "
-                "VALUES (?,?,?,?,?, 1, ?,?,?,?,?)",
+                "raised_at, active_at, last_notified_at, text, href, sample_ts) "
+                "VALUES (?,?,?,?,?, 1, ?,?,?,?,?,?)",
                 (key, name, a["category"], a["severity"], state, raised,
                  now if state == "active" else None,
-                 now if state == "active" else None, a["text"], a["href"]))
+                 now if state == "active" else None, a["text"], a["href"],
+                 it.get("sample_ts")))
             _event(conn, cur.lastrowid, now, "raised", a)
             if state == "active":
                 _event(conn, cur.lastrowid, now, "active", a)
-                notes.append(_note("raise", a, raised, rule["route"]))
+                notes.append(_note("raise", a, raised, rule["route"], now))
             continue
 
         # still firing: refresh what the item says now (a stale source's
-        # age, a slow link's tier) and count the poll toward `for`
-        polls = row["polls"] + 1
+        # age, a slow link's tier) and count the poll toward `for`. An item
+        # that names its sample counts only a sample newer than the last
+        # one counted: the same sample read again is not a second poll.
+        sample = it.get("sample_ts")
+        fresh = sample is None or row["sample_ts"] is None or sample > row["sample_ts"]
+        sample = sample if fresh else row["sample_ts"]
+        polls = row["polls"] + (1 if fresh else 0)
         state, active_at, notified = row["state"], row["active_at"], row["last_notified_at"]
         if state == "pending" and polls >= rule["for"]:
             state, active_at, notified = "active", now, now
             _event(conn, row["id"], now, "active", a)
-            notes.append(_note("raise", a, row["raised_at"], rule["route"]))
+            notes.append(_note("raise", a, row["raised_at"], rule["route"], now))
         elif (state == "active"
               and _RANK.get(a["severity"], 0) > _RANK.get(row["severity"], 0)):
             # a rise (a lossy gateway going down) is news the receiver has
@@ -485,16 +512,16 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             notified = now
             _event(conn, row["id"], now, "escalated", a,
                    f"{row['severity']} -> {a['severity']}")
-            notes.append(_note("escalate", a, row["raised_at"], rule["route"]))
+            notes.append(_note("escalate", a, row["raised_at"], rule["route"], now))
         elif (state == "active" and rule["remind"]
               and now - (notified or active_at or now) >= rule["remind"] * 60):
             notified = now
-            notes.append(_note("remind", a, row["raised_at"], rule["route"]))
+            notes.append(_note("remind", a, row["raised_at"], rule["route"], now))
         conn.execute(
             "UPDATE alerts SET severity=?, text=?, href=?, polls=?, state=?, "
-            "active_at=?, last_notified_at=? WHERE id=?",
+            "active_at=?, last_notified_at=?, sample_ts=? WHERE id=?",
             (a["severity"], a["text"], a["href"], polls, state, active_at,
-             notified, row["id"]))
+             notified, sample, row["id"]))
 
     for key, row in open_.items():
         if key in seen or key in held:
@@ -502,24 +529,21 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
         conn.execute("UPDATE alerts SET state='cleared', cleared_at=? WHERE id=?",
                      (now, row["id"]))
         rule = _rule_for(row["rule"], catalog, config)
-        # a disabled rule says nothing about the condition, which may still
-        # hold; a "clear" would tell the receiver it is fixed. An alert no
-        # receiver heard about (silenced or pending from the start) clears
-        # as history, not news. One that was announced before a silence, or
-        # before a pending re-raise, gets its clear: otherwise a receiver
-        # that heard the raise would be left firing forever.
+        # An alert no receiver heard about (silenced or pending from the
+        # start) clears as history, not news. One that was announced before
+        # a silence, or before a pending re-raise, gets its clear: otherwise
+        # a receiver that heard the raise would be left firing forever. A
+        # disabled rule says nothing about the condition, which may still
+        # hold, so its clear says why: "rule disabled", not fixed.
         announced = row["last_notified_at"] is not None
-        if not rule["enabled"]:
-            detail = "rule disabled"
-        elif row["state"] == "silenced" and not announced:
-            detail = "silenced"
-        elif row["state"] != "active" and not announced:
-            detail = "never active"
-        else:
-            detail = None
-        _event(conn, row["id"], now, "cleared", row, detail)
-        if detail is None:
-            notes.append(_note("clear", row, row["raised_at"], rule["route"]))
+        if not announced:
+            detail = ("rule disabled" if not rule["enabled"]
+                      else "silenced" if row["state"] == "silenced" else "never active")
+            _event(conn, row["id"], now, "cleared", row, detail)
+            continue
+        detail = "" if rule["enabled"] else "rule disabled"
+        _event(conn, row["id"], now, "cleared", row, detail or None)
+        notes.append(_note("clear", row, row["raised_at"], rule["route"], now, detail))
 
     if legacy:
         conn.execute("DELETE FROM app_state WHERE key = ?", (_LEGACY_FIRST_SEEN,))
@@ -579,7 +603,7 @@ def clear_settled(conn: sqlite3.Connection, key: str, detail: str,
     if row["last_notified_at"] is None:
         return []
     rule = _rule_for(row["rule"], catalog, _config(conn, catalog))
-    return [_note("clear", row, row["raised_at"], rule["route"])]
+    return [_note("clear", row, row["raised_at"], rule["route"], now, detail)]
 
 
 def _legacy_first_seen(conn: sqlite3.Connection) -> dict[str, float]:
