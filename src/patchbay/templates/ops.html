@@ -160,13 +160,23 @@ poll.</p>
     <div style="margin-top: 0.3rem">
       {% if expect.pending %}{{ expect.pending }} of {{ expect.count }}
         {{ "entry is" if expect.count == 1 else "entries are" }} not yet a silence.
+      {% elif expect.invalid %}{{ expect.count - expect.invalid | length }} of
+        {{ expect.count }} {{ "entry is" if expect.count == 1 else "entries are" }} now permanent silences.
       {% else %}All {{ expect.count }} {{ "entry is" if expect.count == 1 else "entries are" }}
         now permanent silences, so you can remove the variable.{% endif %}
       <button class="act" data-expect-import
               style="margin-left: 0.4rem; padding: 0.2rem 0.7rem; font-size: 0.75rem">import as silences</button>
     </div>
+    {% if expect.invalid %}
+    <div style="margin-top: 0.3rem">Cannot import, and still silencing while
+      the variable is set:
+      {% for e, why in expect.invalid %}<div class="mono">{{ e }} — {{ why }}</div>{% endfor %}
+      Fix or drop {{ "it" if expect.invalid | length == 1 else "them" }} before you
+      remove the variable.</div>
+    {% endif %}
     <div class="muted" style="margin-top: 0.3rem">Importing twice creates no
-      duplicates. {{ expect.removal }}</div>
+      duplicates.{% if not expect.pending and not expect.invalid %}
+      {{ expect.removal }}{% endif %}</div>
   </div>
   {% endif %}
   </div>

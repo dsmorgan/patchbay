@@ -1846,6 +1846,7 @@ def ops(request: Request):
     ages: dict = {}
     conflicts: list = []
     expect_pending = len(settings.expected)   # unknown: assume none imported
+    # (an over-count only while the database is unreadable)
     conn = None
     try:
         conn = _conn()
@@ -1879,6 +1880,7 @@ def ops(request: Request):
         "decls": decls,
         # the PATCHBAY_EXPECT deprecation notice (#69): only while it is set
         "expect": ({"count": len(settings.expected), "pending": expect_pending,
+                    "invalid": silences.expect_invalid(settings),
                     "removal": _expect_removal_text(
                         settings.declaration_sources.get("PATCHBAY_EXPECT"))}
                    if settings.expected else None),
