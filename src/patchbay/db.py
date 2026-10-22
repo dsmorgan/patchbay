@@ -317,9 +317,12 @@ def connect(path: str) -> Iterator[sqlite3.Connection]:
 def backup(src_path: str, dest_path: str, *, force: bool = False) -> int:
     """Copy the live database to dest_path with SQLite's backup API (#112).
 
-    Consistent while the poller writes: the copy holds a read lock page by
-    page and restarts when a writer commits mid-copy, so it never contains
-    half a transaction. The file holds webhook tokens, the redaction key,
+    Consistent while the poller writes: `Connection.backup()` with the
+    default `pages=-1` copies everything in one step under one read lock, so
+    the copy is a single point-in-time snapshot and can't livelock against
+    a writer that commits constantly (the writer waits briefly instead).
+    Don't switch to a stepped copy (`pages=N`): SQLite restarts a stepped
+    backup whenever another connection commits mid-copy. The file holds webhook tokens, the redaction key,
     and config history, so it is created mode 0600 before SQLite writes a
     byte, and it lands under its final name only once it passes an
     integrity check. Returns the size in bytes; raises FileExistsError

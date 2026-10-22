@@ -295,7 +295,7 @@ def _inside(path: str, directory: str) -> bool:
 def cmd_backup(args: argparse.Namespace) -> int:
     settings = load_settings()
     dest = args.path
-    if os.path.isdir(dest):
+    if os.path.isdir(dest) or dest.endswith(("/", os.sep)):  # a separator means a directory
         dest = os.path.join(dest, time.strftime("patchbay-%Y%m%d-%H%M%S.db"))
     # the copy holds webhook tokens and the redaction key; the delivery
     # share is off-host and meant to be readable by a sync client

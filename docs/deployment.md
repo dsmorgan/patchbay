@@ -439,7 +439,8 @@ size, and exits non-zero on failure. Pass a directory instead of a file to get
 a timestamped name, and `--force` to overwrite an existing file.
 
 On the host, the file appears at `data/backups/` owned by 10001 with mode 600,
-so copy it with `sudo`, then restrict the copy:
+so copy it with `sudo`. The `cp` keeps mode 600, which keeps the copy private,
+and the `chown` makes it yours to read:
 
 ```sh
 sudo cp data/backups/patchbay-2026-01-01.db /safe/place/
@@ -450,8 +451,21 @@ A backup of `patchbay.db` doesn't cover everything. Also back up
 `data/.env` (collector credentials) and `oxidized/repo/` (device config
 history), per [Where the state lives](#where-the-state-lives).
 
-To schedule backups, run the same `exec` command from the host's cron or a
-systemd timer, and prune old files yourself.
+To schedule backups, run `exec` from the host's cron or a systemd timer and
+prune old files yourself. Give it the directory form, which supplies the
+timestamped name. A `%` has a special meaning in a crontab, so the dated
+filename above doesn't work there:
+
+```sh
+0 4 * * * docker compose -f /srv/patchbay/docker-compose.stack.yml exec -T patchbay patchbay backup /data/backups/
+```
+
+A trailing slash makes `backup` treat the path as a directory and create it
+if needed. Use `-T` because cron has no terminal.
+
+If you use `docker-compose.example.yml` (patchbay alone), drop the `-f ...`
+flag from the commands in this section; run them from the directory that holds
+the compose file.
 
 ### Restore
 
@@ -478,7 +492,16 @@ rebuild.
 
 ## Upgrade
 
-1. Back up, as in [Back up](#back-up).
+1. Back up, as in [Back up](#back-up). If the running image predates
+   `patchbay backup` (0.22.0 and earlier), stop both services and copy the
+   file instead, keeping its mode:
+
+   ```sh
+   docker compose -f docker-compose.stack.yml stop patchbay patchbay-poller
+   sudo cp -p data/patchbay.db /safe/place/patchbay-before-upgrade.db
+   ```
+
+   Restart them with `up -d` in step 3.
 1. Read the **Upgrade notes** in the [CHANGELOG](../CHANGELOG.md) for every
    release between your version and the new one. Some releases change the
    container user or migrate stored data on first start.
