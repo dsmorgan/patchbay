@@ -118,7 +118,7 @@ RULES: dict[str, Rule] = {
         params={"for": CANARY_FOR, "remind": 0, "floor": CANARY_FLOOR,
                 "multiplier": CANARY_MULTIPLIER, "clear": CANARY_CLEAR,
                 "warmup_h": CANARY_WARMUP_H},
-        summary="A port's error or discard rate is at least multiplier × its "
+        summary="A port's error rate (discards: see #86) is at least multiplier × its "
                 "own baseline (p95 of the past week, less the last hour) and "
                 "at least floor per second; it clears below clear × baseline. "
                 "A port with under warmup_h hours of samples is judged against "
