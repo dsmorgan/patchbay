@@ -2065,7 +2065,7 @@ async def ops_config(request: Request):
         conn.close()
     fresh = load_settings()  # re-parse so typos surface immediately
     return {"ok": True,
-            "warnings": [w for w in fresh.parse_warnings if w.startswith(var)]}
+            "warnings": [w for w in fresh.parse_warnings if w.startswith(f"{var}:")]}
 
 
 # one operator action at a time: repeated clicks (or a scripted hammering)
@@ -2127,7 +2127,19 @@ def ops_poll(source: str | None = None):
     from .snapshot import take_alert_snapshot
 
     lines += take_alert_snapshot(settings, notes)
+    _save_last_poll(lines)   # now with the dispatch and snapshot lines
     return {"lines": lines}
+
+
+def _save_last_poll(lines: list[str]) -> None:
+    conn = _conn()
+    try:
+        db.save_last_poll(conn, lines)
+        conn.commit()
+    except sqlite3.Error:
+        pass   # the response still carries every line
+    finally:
+        conn.close()
 
 
 @app.post("/ops/rediscover")

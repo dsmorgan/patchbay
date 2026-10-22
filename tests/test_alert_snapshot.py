@@ -346,6 +346,71 @@ def test_poll_survives_an_alert_snapshot_failure(env, monkeypatch):
         assert pdb.snapshot_failures(c)[0]["trigger"] == "alert"
 
 
+def _last_poll(env):
+    import json
+    with pdb.connect(str(env / "test.db")) as c:
+        return json.loads(pdb.get_state(c, "last_poll"))["lines"]
+
+
+def _dispatch_says(monkeypatch, line):
+    from patchbay import transports
+
+    def send(self, notes):
+        self.lines.append(line)
+    monkeypatch.setattr(transports.WebhookDispatcher, "send", send)
+
+
+def test_cli_last_poll_keeps_dispatch_and_alert_snapshot_lines(env, monkeypatch):
+    # #110: the record /ops shows was saved before dispatch and the alert
+    # snapshot ran, so their failures never reached it
+    import argparse
+
+    from patchbay import alerting, cli
+
+    class Quiet:
+        def collect(self, settings, conn):
+            return "nothing"
+
+    monkeypatch.setattr(cli, "available", lambda s: {"quiet": Quiet()})
+    monkeypatch.setattr(alerting, "run", lambda conn, s: [_note()])
+    monkeypatch.setattr(snapshot, "due_today", lambda conn, s: False)
+    monkeypatch.setattr(snapshot, "generate",
+                        lambda s: (_ for _ in ()).throw(RuntimeError("renderer crashed")))
+    _dispatch_says(monkeypatch, "[warn] notify hook: HTTP 503; retrying next cycle")
+    assert cli.cmd_poll(argparse.Namespace(source=None)) == 0
+    lines = _last_poll(env)
+    assert "[ok]   quiet: nothing" in lines
+    assert "[warn] notify hook: HTTP 503; retrying next cycle" in lines
+    assert "[warn] alert snapshot failed: renderer crashed" in lines
+
+
+def test_ops_poll_last_poll_keeps_dispatch_lines(env, monkeypatch):
+    import patchbay.web as web
+    from patchbay import collectors
+
+    monkeypatch.setattr(collectors, "available", lambda s: {})
+    _dispatch_says(monkeypatch, "[warn] notify hook: HTTP 503; retrying next cycle")
+    client = TestClient(web.app)
+    assert "[warn] notify hook: HTTP 503; retrying next cycle" in client.post(
+        "/ops/poll").json()["lines"]
+    assert "[warn] notify hook: HTTP 503; retrying next cycle" in _last_poll(env)
+
+
+def test_saving_the_flag_shows_only_its_own_warnings(env, clean_env):
+    # #110: PATCHBAY_ALERT_SNAPSHOT is a prefix of its two parameters, so a
+    # bare prefix match put _COOLDOWN's warning under the flag's field
+    import patchbay.web as web
+
+    clean_env.delenv("PATCHBAY_ALERT_SNAPSHOT")
+    client = TestClient(web.app)
+    r = client.post("/ops/config", json={"var": "PATCHBAY_ALERT_SNAPSHOT_COOLDOWN",
+                                         "value": "soon"})
+    assert [w.split(":")[0] for w in r.json()["warnings"]] == [
+        "PATCHBAY_ALERT_SNAPSHOT_COOLDOWN"]
+    r = client.post("/ops/config", json={"var": "PATCHBAY_ALERT_SNAPSHOT", "value": "on"})
+    assert r.json()["warnings"] == []
+
+
 # -- the UI ------------------------------------------------------------------
 
 def test_pages_state_the_flag(env, clean_env):
