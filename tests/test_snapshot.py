@@ -65,6 +65,22 @@ def test_scrub_config_covers_oxidized_secret_forms():
         "-----END OpenVPN Static key V1-----": "feedface",
         "set [ find default=yes ] wpa2-pre-shared-key=FakeWifiKey":
             "FakeWifiKey",
+        # IOS-XE `tacacs server` / `radius server` blocks: a bare key line
+        " key 7 0000FAKETAC0000": "0000FAKETAC0000",
+        " key 0 FakeRadiusKey": "FakeRadiusKey",
+        " server-private 192.0.2.7 timeout 5 key 7 FAKESPKEY": "FAKESPKEY",
+        # MikroTik
+        "/ip ipsec identity add peer=p1 preshared-key=FakeIkeKey":
+            "FakeIkeKey",
+        "/interface wifi security set sec1 passphrase=FakeWifiPass": "FakeWifiPass",
+        "/routing bgp connection set peer1 tcp-md5-key=FakeBgpMd5": "FakeBgpMd5",
+        # HSRP / VRRP
+        "standby 1 authentication FakeHsrpBare": "FakeHsrpBare",
+        "standby 1 authentication text FakeHsrpText": "FakeHsrpText",
+        "vrrp 7 authentication text FakeVrrpText": "FakeVrrpText",
+        " authentication text FakeNxosVrrp": "FakeNxosVrrp",
+        # pfSense notification tokens in a config.xml Oxidized backed up
+        "<telegram><api>FAKE-tg-token</api></telegram>": "FAKE-tg-token",
     }
     for line, secret in cases.items():
         out, n = scrub_config(line)
@@ -89,6 +105,22 @@ def test_scrub_config_block_state_follows_the_last_marker():
     assert out.endswith("hostname sw1")
 
 
+@pytest.mark.parametrize("line", [
+    "interface x end " * 21500,          # the word END, ~344 KB on one line
+    "BEGIN end " * 34000,
+    "PRIVATE KEY " + "end " * 80000,
+    "-----BEGIN " * 30000,
+    "-" * 300000,
+])
+def test_scrub_config_stays_linear_on_long_lines(line):
+    """An unbounded `.*?` after each BEGIN/END word rescanned the rest of
+    the line per word: a 344 KB one-line config took seconds."""
+    import time
+    t = time.perf_counter()
+    scrub_config(line)
+    assert time.perf_counter() - t < 1.0
+
+
 def test_scrub_config_carries_no_stamps_off_host():
     """A stamp of a weak secret is a guessing oracle; the snapshot leaves
     the host, so stored stamps and fresh redactions both become the
@@ -107,6 +139,10 @@ def test_scrub_config_leaves_ordinary_lines_alone():
            " network 192.0.2.0 0.0.0.255 area 0\n"
            "ntp server 192.0.2.123\n"
            "snmp-server location rack 2\n"
+           "key chain OSPF-KEYS\n"
+           "standby 1 ip 192.0.2.254\n"
+           "standby 1 priority 110\n"
+           "vrrp 7 ip 192.0.2.253\n"
            "<interfaces><lan><if>em0</if><descr>LAN</descr></lan></interfaces>\n"
            "<system><hostname>fw1</hostname><domain>example.net</domain></system>\n"
            "-----BEGIN CERTIFICATE-----")

@@ -32,11 +32,17 @@ from .ports import port_kind
 SECRET_PAT = re.compile(
     # keyword suffixes stop at '=': in a `wpa2-pre-shared-key=...` pair the
     # value is the secret, and \S* swallowed it as part of the keyword
-    r"(password|passwd|secret|community|pre-shared-key|psk\b|wpa[\w-]*|"
-    r"auth(?:entication)?(?:-| )?(?:key|password|md5|sha)|"
+    r"(password|passwd|secret|community|pre-?shared-key|psk\b|wpa[\w-]*|"
+    r"passphrase|tcp-md5-key|"
+    r"auth(?:entication)?(?:-| )?(?:key|password|md5|sha|text)|"
+    # HSRP/VRRP: `standby 1 authentication SECRET`, no keyword before it
+    r"(?:standby|vrrp)(?: \d+)? authentication|"
     r"priv(?:acy)?(?:-| )?(?:key|password|protocol)|"
     r"encrypted|private-key|otp[\w-]*|totp[\w-]*|\bseed\b|"
     r"key-string|message-digest-key|(?:isakmp|tunnel) key\b|"
+    # a bare `key 7 ...` inside an IOS-XE `tacacs server`/`radius server`
+    # block, and the per-group `server-private ADDR ... key ...`
+    r"^\s+key(?=\s)|server-private \S+|"
     # the community string of `snmp-server host` follows the address and
     # an optional notification type and version, with no keyword before it
     r"snmp-server host \S+(?: (?:traps|informs))?(?: version (?:1|2c|3 \S+))?|"
@@ -44,15 +50,26 @@ SECRET_PAT = re.compile(
     re.I)
 HASH_PAT = re.compile(r"\$\d+\w*\$\S+")  # $1$salt$hash and friends
 # any PEM key block, private or not: RSA/EC/ENCRYPTED PRIVATE KEY, an
-# OpenVPN static key, a PGP key block
-KEY_BEGIN = re.compile(
-    r"-----BEGIN [^-]*\bKEY\b[^-]*-----|\bBEGIN\b.*?(?-i:PRIVATE KEY)", re.I)
-KEY_END = re.compile(
-    r"-----END [^-]*\bKEY\b[^-]*-----|\bEND\b.*?(?-i:PRIVATE KEY)", re.I)
+# OpenVPN static key, a PGP key block. Every gap is bounded, so a marker
+# search is linear in the line: an unbounded `.*?` after each BEGIN/END word
+# rescanned the rest of the line per word, and a long one-line config full
+# of "end" took seconds. The bare form (no dashes) is only tried on a line
+# that says PRIVATE KEY at all.
+_PEM_MARK = re.compile(r"-----(BEGIN|END) [^-\n]{0,80}?\bKEY\b[^-\n]{0,40}-----", re.I)
+_BARE_MARK = re.compile(r"\b(BEGIN|END)\b[^\n]{0,64}?(?-i:PRIVATE KEY)", re.I)
 
 
-def _last_marker(pat: re.Pattern, line: str) -> int:
-    return max((m.start() for m in pat.finditer(line)), default=-1)
+def _key_markers(line: str) -> tuple[bool, str | None]:
+    """(whether the line opens a key block anywhere, the kind of its last
+    marker: 'BEGIN', 'END', or None)."""
+    found = list(_PEM_MARK.finditer(line))
+    if "PRIVATE KEY" in line:
+        found += _BARE_MARK.finditer(line)
+    if not found:
+        return False, None
+    kinds = [m.group(1).upper() for m in found]
+    last = max(found, key=lambda m: m.start()).group(1).upper()
+    return "BEGIN" in kinds, last
 
 
 def scrub_config(text: str) -> tuple[str, int]:
@@ -67,16 +84,16 @@ def scrub_config(text: str) -> tuple[str, int]:
     out: list[str] = []
     in_key_block = False
     for line in text.splitlines():
-        begin, end = _last_marker(KEY_BEGIN, line), _last_marker(KEY_END, line)
-        if in_key_block or begin >= 0:
+        opens, last = _key_markers(line)
+        if in_key_block or opens:
             if not in_key_block:
                 redacted += 1
                 out.append("<redacted: private key block>")
             # the line's LAST marker decides: a one-liner that ends its block
             # doesn't swallow what follows, and an END followed by another
             # BEGIN stays inside a block
-            if begin >= 0 or end >= 0:
-                in_key_block = begin > end
+            if last:
+                in_key_block = last == "BEGIN"
             continue
         if HASH_PAT.search(line):
             out.append(HASH_PAT.sub("<redacted>", line))
