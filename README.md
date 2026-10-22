@@ -55,6 +55,12 @@ polling; without one you still get snapshots on demand, from the CLI or the
 ops page. Use a checkout to evaluate patchbay or write a collector, and the
 container for anything you intend to keep running.
 
+One poll runs at a time, across processes. A `patchbay poll` that starts
+while another poll runs waits for it to finish, and the ops page's Poll
+button answers "a poll is already running" instead of starting a second
+one. The lease lives in the database, so a poller that dies holding it
+releases it after 15 minutes.
+
 ### Try it without a network
 
 `patchbay demo` writes a fictional network — two switches, a firewall,

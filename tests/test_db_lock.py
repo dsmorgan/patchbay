@@ -132,3 +132,140 @@ def test_auth_gate_still_rechecks_settings_per_request(clean_env, tmp_path):
     clean_env.setenv("PATCHBAY_PASSWORD", "second-secret")
     r = client.get("/ops", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"].startswith("/login")
+
+
+# --- the poll lease: one poll at a time across processes ---------------------
+
+def test_poll_lease_claim_renew_release(tmp_path):
+    path = _db(tmp_path)
+    a = sqlite3.connect(path)
+    b = sqlite3.connect(path)
+    try:
+        assert pdb.claim_poll_lease(a, "a")
+        assert not pdb.claim_poll_lease(b, "b")        # held
+        assert pdb.claim_poll_lease(a, "a")             # renewal
+        pdb.release_poll_lease(b, "b")                  # not b's to release
+        assert not pdb.claim_poll_lease(b, "b")
+        pdb.release_poll_lease(a, "a")
+        assert pdb.claim_poll_lease(b, "b")
+    finally:
+        a.close()
+        b.close()
+
+
+def test_a_dead_pollers_lease_lapses(tmp_path):
+    path = _db(tmp_path)
+    with pdb.connect(path) as c:
+        assert pdb.claim_poll_lease(c, "dead", ttl=-1)   # already lapsed
+        assert pdb.claim_poll_lease(c, "next")
+        pdb.set_state(c, pdb.POLL_LEASE, "not json")      # damaged: holds nothing
+        c.commit()
+        assert pdb.claim_poll_lease(c, "after")
+
+
+def test_lease_claim_does_not_wait_forever_on_a_locked_database(tmp_path):
+    path = _db(tmp_path)
+    holder = _hold(path)
+    c = sqlite3.connect(path, timeout=0.2)
+    try:
+        assert not pdb.claim_poll_lease(c, "x")
+    finally:
+        holder.rollback()
+        holder.close()
+        c.close()
+
+
+class _SlowCollector:
+    """Shaped like a third-party collector that writes, then keeps talking
+    to its API inside the transaction: the worst case for the write lock."""
+    name = "slow"
+
+    def __init__(self, started: threading.Event | None = None, seconds: float = 1.5):
+        self.started, self.seconds = started, seconds
+
+    def configured(self, settings):
+        return True
+
+    def collect(self, settings, conn):
+        pdb.save_raw(conn, source="slow", endpoint="devices", payload=[])
+        if self.started:
+            self.started.set()
+        time.sleep(self.seconds)
+        pdb.upsert_device(conn, name="sw1", source="slow", status="up")
+        return "1 device"
+
+
+def _poll(monkeypatch, collector):
+    import argparse
+
+    from patchbay import cli
+
+    monkeypatch.setattr(cli, "available", lambda s: {"slow": collector})
+    return cli.cmd_poll(argparse.Namespace(source=None))
+
+
+def test_overlapping_scheduled_polls_both_complete(clean_env, tmp_path, monkeypatch):
+    """Two polls used to collide on the write lock: the second's collector
+    failed with 'database is locked' after the busy timeout. The second
+    now waits for the lease and then runs."""
+    from patchbay import cli
+
+    monkeypatch.setattr(cli, "POLL_LEASE_RETRY", 0.05)
+    _db(tmp_path)
+    started = threading.Event()
+    rcs: dict = {}
+    first = threading.Thread(target=lambda: rcs.__setitem__(
+        "first", _poll(monkeypatch, _SlowCollector(started, seconds=6))))
+    first.start()
+    assert started.wait(5)
+    rcs["second"] = _poll(monkeypatch, _SlowCollector(seconds=0))
+    first.join(20)
+    assert rcs == {"first": 0, "second": 0}
+
+
+def test_ops_poll_answers_409_while_the_poller_runs(clean_env, tmp_path, monkeypatch):
+    import patchbay.web as web
+    from patchbay import collectors
+
+    _db(tmp_path)
+    started = threading.Event()
+    rcs: dict = {}
+    poller = threading.Thread(target=lambda: rcs.__setitem__(
+        "rc", _poll(monkeypatch, _SlowCollector(started))))
+    poller.start()
+    assert started.wait(5)
+    monkeypatch.setattr(collectors, "available", lambda s: {"slow": _SlowCollector()})
+    t0 = time.monotonic()
+    r = TestClient(web.app).post("/ops/poll")
+    assert r.status_code == 409 and "already running" in r.text
+    assert time.monotonic() - t0 < 2
+    poller.join(20)
+    assert rcs["rc"] == 0
+    # and once it is done, the button polls
+    r = TestClient(web.app).post("/ops/poll")
+    assert r.status_code == 200
+    assert r.json()["lines"][0].startswith("[ok]   slow")
+
+
+def test_poll_gives_up_on_a_lease_that_never_frees(clean_env, tmp_path, monkeypatch,
+                                                   capsys):
+    from patchbay import cli
+
+    path = _db(tmp_path)
+    with pdb.connect(path) as c:
+        assert pdb.claim_poll_lease(c, "web:1:busy")
+    monkeypatch.setattr(cli, "POLL_LEASE_WAIT", 0.2)
+    monkeypatch.setattr(cli, "POLL_LEASE_RETRY", 0.05)
+    assert _poll(monkeypatch, _SlowCollector(seconds=0)) == 1
+    assert "another poll held the lease" in capsys.readouterr().err
+    with pdb.connect(path) as c:
+        assert pdb.get_state(c, "last_poll") is None      # nothing ran
+        assert c.execute("SELECT COUNT(*) FROM devices").fetchone()[0] == 0
+
+
+def test_poll_releases_the_lease(clean_env, tmp_path, monkeypatch):
+    path = _db(tmp_path)
+    assert _poll(monkeypatch, _SlowCollector(seconds=0)) == 0
+    with pdb.connect(path) as c:
+        assert pdb.get_state(c, pdb.POLL_LEASE) is None
+        assert c.execute("SELECT name FROM devices").fetchone()[0] == "sw1"
