@@ -713,6 +713,7 @@ function ticked() {
   updateZones();
 }
 
+let fitOnSettle = false;
 const sim = d3.forceSimulation(graph.nodes)
     .force("link", d3.forceLink(graph.links).id(d => d.name).distance(200).strength(0.3))
     .force("charge", d3.forceManyBody().strength(-900))
@@ -721,7 +722,12 @@ const sim = d3.forceSimulation(graph.nodes)
     .force("y", TIERS ? null : d3.forceY(d => bandCenter(d.rank)).strength(0.08))
     .force("zones", zoneForce)
     .on("tick", ticked)
-    .on("end", () => afterSettle(true));
+    .on("end", () => {
+      // a settle re-fits only when a filter change asked for it; after a drag,
+      // an unpin, or an undo it must keep the user's zoom and pan (#97)
+      if (fitOnSettle) { fitOnSettle = false; afterSettle(true); }
+      else updateBands();
+    });
 // the simulation's first tick is async (next animation frame); paint the
 // synchronous initial positions (assignSlots + bandCenter) right now, or the
 // very first fit() — called synchronously below, from the initial render() —
@@ -895,6 +901,7 @@ function applyFilters() {
     });
   } else {
     sim.alpha(0.5).restart();
+    fitOnSettle = true;
   }
   afterSettle(false);   // ADR-0001 Decision 2: fit runs at the end of applyFilters() too
 }
@@ -1248,7 +1255,8 @@ node.call(d3.drag()
       // nothing moves, pins, or reheats the simulation until the pointer has
       // really travelled: a click is a click, not a one-pixel drag (#97)
       dragPrev = { name: d.name, prevFx, prevFy, prevPx, prevPy, groupOffsets,
-                   x0: e.x, y0: e.y, moved: false };
+                   x0: e.x, y0: e.y, moved: false,
+                   active0: e.active };   // d3 reports active >= 1 during "drag"
     })
     .on("drag", (e, d) => {
       if (!dragPrev) return;
@@ -1256,7 +1264,7 @@ node.call(d3.drag()
         const k = d3.zoomTransform(svg.node()).k;   // e.x/e.y are graph units
         if (Math.hypot(e.x - dragPrev.x0, e.y - dragPrev.y0) * k <= CLICK_SLOP) return;
         dragPrev.moved = true;
-        if (!e.active) sim.alphaTarget(0.25).restart();
+        if (!dragPrev.active0) sim.alphaTarget(0.25).restart();
         d.fx = d.x; if (!TIERS) d.fy = d.y;
         dragPrev.groupOffsets.forEach(g => {
           if (g.node.fx == null) g.node.fx = g.node.x;

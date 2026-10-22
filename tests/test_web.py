@@ -141,6 +141,9 @@ def test_topology_click_is_not_a_drag_and_selection_keeps_the_view(client):
     t = client.get("/topology").text
     assert "dragPrev.moved" in t and "CLICK_SLOP" in t
     assert 'REPAINT_ONLY = new Set(["sel", "ports", "chips"])' in t
+    # d3 reports active >= 1 during "drag", so the reheat must key off the
+    # value captured at start, and a settle re-fits only when asked
+    assert "dragPrev.active0" in t and "fitOnSettle" in t
 
 
 def test_ops_renders_last_poll(clean_env, tmp_path, client):
