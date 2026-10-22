@@ -329,7 +329,8 @@ goes down on its own.
 The image runs as an unprivileged user, uid/gid `10001`, and never changes
 file ownership. A fresh named volume works as is. A bind-mounted `./data`
 must be writable by the container's uid: the quickstart's
-`sudo chown 10001:10001 data` does that for a new install, and a `./data`
+`sudo chown -R 10001:10001 data && sudo chmod 600 data/.env` does that
+for a new install, and a `./data`
 from an earlier release (which ran as root, so `patchbay.db` and
 `snapshots/` are root-owned) needs the same treatment. Without it the
 container refuses to start and prints the fix.

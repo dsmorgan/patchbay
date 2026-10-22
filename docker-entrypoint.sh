@@ -30,11 +30,13 @@ writable by the uid it runs as. Fix it with the stack stopped, either by
 giving the data to the image's user:
 
     sudo chown -R 10001:10001 ./data
+    sudo chmod 600 ./data/.env
 
 or by running the patchbay services as your own user: re-own the data, then
 set user: on both patchbay services in compose:
 
     sudo chown -R "\$(id -u):\$(id -g)" ./data
+    chmod 600 ./data/.env
     user: "UID:GID"          # the output of: id -u; id -g
 
 See "Container user and upgrading" in docs/deployment.md.
