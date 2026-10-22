@@ -2118,7 +2118,10 @@ def ops_poll(source: str | None = None):
     if not _ops_lock.acquire(blocking=False):
         raise HTTPException(409, "an ops action is already running — wait for it")
     lines = [f"[warn] {w}" for w in settings.parse_warnings]
+    from contextlib import ExitStack
+
     owner = db.lease_owner("web")
+    heartbeat = ExitStack()
     conn = _conn()
     try:
         db.init(conn)
@@ -2127,11 +2130,11 @@ def ops_poll(source: str | None = None):
         # hold the request open for a poll that is already running.
         if not db.claim_poll_lease(conn, owner):
             raise HTTPException(409, "a poll is already running — wait for it")
+        heartbeat.enter_context(db.lease_heartbeat(settings.db_path, owner))
         for name, collector in sorted(collectors.items()):
             try:
                 lines.append(f"[ok]   {name}: {collector.collect(settings, conn)}")
                 conn.commit()
-                db.claim_poll_lease(conn, owner)   # renew: still polling
             except Exception as e:  # one failing source must not block the others
                 conn.rollback()
                 lines.append(f"[fail] {name}: {hide_userinfo(str(e))}")
@@ -2151,6 +2154,7 @@ def ops_poll(source: str | None = None):
         conn.commit()
     finally:
         try:
+            heartbeat.close()
             db.release_poll_lease(conn, owner)
         finally:
             conn.close()

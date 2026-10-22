@@ -20,14 +20,15 @@ from .config import load_settings, read_poll_interval
 from .redact import hide_userinfo
 
 
-# How long a poll waits for another one to finish (#109). Past the lease's
-# TTL a dead holder's lease has lapsed, so a wait this long always ends.
-POLL_LEASE_WAIT = db.POLL_LEASE_TTL + 60
+# How long a poll waits for another one to finish (#109). A dead holder's
+# lease lapses within db.POLL_LEASE_TTL; a live one renews it, so this caps
+# the wait behind a poll that is genuinely running long.
+POLL_LEASE_WAIT = 900.0
 POLL_LEASE_RETRY = 2.0
 
 
 @contextmanager
-def _poll_lease(conn: sqlite3.Connection, owner: str) -> Iterator[bool]:
+def _poll_lease(conn: sqlite3.Connection, path: str, owner: str) -> Iterator[bool]:
     """Ready the database, then hold the cross-process poll lease for the
     with body: yields False when another poll kept it past POLL_LEASE_WAIT.
     The web app's Poll button and this poller are separate processes, and
@@ -56,7 +57,8 @@ def _poll_lease(conn: sqlite3.Connection, owner: str) -> Iterator[bool]:
             waiting = True
         time.sleep(POLL_LEASE_RETRY)
     try:
-        yield True
+        with db.lease_heartbeat(path, owner):
+            yield True
     except BaseException:
         conn.rollback()
         raise
@@ -91,7 +93,7 @@ def cmd_poll(args: argparse.Namespace) -> int:
     for w in settings.parse_warnings:
         say(f"[warn] {w}", err=True)
     owner = db.lease_owner("cli")
-    with db.connect(settings.db_path) as conn, _poll_lease(conn, owner) as leased:
+    with db.connect(settings.db_path) as conn, _poll_lease(conn, settings.db_path, owner) as leased:
         if not leased:
             print(f"[fail] poll: another poll held the lease for over "
                   f"{POLL_LEASE_WAIT:.0f}s; skipped this cycle", file=sys.stderr)
@@ -128,7 +130,6 @@ def cmd_poll(args: argparse.Namespace) -> int:
                 conn.execute("RELEASE pre_normalize")
                 say(f"[warn] normalize after {name}: {e}", err=True)
             conn.commit()  # each source lands atomically
-            db.claim_poll_lease(conn, owner)   # renew: still polling
             say(f"[ok]   {name}: {summary}")
 
         try:  # the closing pass is the one whose summary the cycle reports

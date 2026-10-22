@@ -292,3 +292,18 @@ def test_a_save_that_outwaits_the_busy_timeout_is_a_503(clean_env, tmp_path, mon
     finally:
         holder.rollback()
         holder.close()
+
+
+def test_the_heartbeat_keeps_a_long_poll_leased(tmp_path):
+    """A collector's fetch can outlast the TTL; the heartbeat renews the
+    lease meanwhile, and stops when the poll does."""
+    path = _db(tmp_path)
+    with pdb.connect(path) as c:
+        assert pdb.claim_poll_lease(c, "long", ttl=0.3)
+    with pdb.lease_heartbeat(path, "long", every=0.05):
+        time.sleep(0.6)                         # twice the TTL
+        with pdb.connect(path) as c:
+            assert not pdb.claim_poll_lease(c, "other")
+    with pdb.connect(path) as c:
+        until = pdb._lease_holder(c)["until"]
+    assert until - time.time() > pdb.POLL_LEASE_TTL - 5   # renewed at full TTL
