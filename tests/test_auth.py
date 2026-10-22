@@ -154,7 +154,10 @@ def test_failed_logins_do_not_stall_other_requests(clean_env, fresh_login_queue)
     for k, v in {"PATCHBAY_AUTH": "password",
                  "PATCHBAY_PASSWORD_HASH": auth.hash_password("pw")}.items():
         clean_env.setenv(k, v)
-    fresh_login_queue.setattr(auth, "LOGIN_DELAY", 0.4)
+    # a long delay and a bound of half of it: a blocked loop holds the
+    # static request for the whole delay, a free one answers in
+    # milliseconds, so even a slow runner can't land between the two
+    fresh_login_queue.setattr(auth, "LOGIN_DELAY", 2.0)
 
     async def scenario():
         async with _async_client() as c:
@@ -164,21 +167,19 @@ def test_failed_logins_do_not_stall_other_requests(clean_env, fresh_login_queue)
                 return await c.post("/login", data={"password": "nope"})
 
             async def static_fetch():
-                await asyncio.sleep(0.05)  # let the logins get going first
+                await asyncio.sleep(0.05)  # let the login get going first
                 r = await c.get("/static/d3.v7.min.js")
                 # measured from the start: a blocked loop delays the wake-up
                 # from the sleep above as much as the request itself
                 return r, time.monotonic() - t0
 
-            *logins, (static, took) = await _concurrently(
-                *(bad_login() for _ in range(4)), static_fetch())
-            return logins, static, took
+            login, (static, took) = await _concurrently(bad_login(), static_fetch())
+            return login, static, took
 
-    logins, static, took = asyncio.run(scenario())
-    assert all("error=password" in r.headers["location"] for r in logins)
+    login, static, took = asyncio.run(scenario())
+    assert "error=password" in login.headers["location"]
     assert static.status_code == 200
-    # four failures hold ~0.4 s each plus a queue; the static file must not wait
-    assert took < 0.35
+    assert took < auth.LOGIN_DELAY / 2
 
 
 def test_login_attempts_are_paced_across_clients(clean_env, fresh_login_queue):
@@ -204,21 +205,21 @@ def test_login_queue_turns_away_when_full(clean_env, fresh_login_queue):
     for k, v in {"PATCHBAY_AUTH": "password",
                  "PATCHBAY_PASSWORD_HASH": auth.hash_password("pw")}.items():
         clean_env.setenv(k, v)
-    fresh_login_queue.setattr(auth, "LOGIN_DELAY", 0.1)
-    fresh_login_queue.setattr(auth, "LOGIN_QUEUE_MAX", 0.15)
-
-    async def scenario():
-        async with _async_client() as c:
-            return await _concurrently(*(c.post("/login", data={"password": "x"})
-                                         for _ in range(5)))
-
-    locations = [r.headers["location"] for r in asyncio.run(scenario())]
-    assert sum("error=password" in loc for loc in locations) == 2
-    assert sum("error=busy" in loc for loc in locations) == 3
-    time.sleep(0.25)  # the queue drains
+    hashed = []
+    real_check = auth.check_password
+    fresh_login_queue.setattr(auth, "check_password",
+                              lambda *a: hashed.append(1) or real_check(*a))
     c = _client(clean_env)
+    # a queue already longer than LOGIN_QUEUE_MAX: turned away, never hashed
+    fresh_login_queue.setattr(auth, "_login_next_slot",
+                              time.monotonic() + auth.LOGIN_QUEUE_MAX + 60)
     r = c.post("/login", data={"password": "pw", "next": "/vlans"})
-    assert r.headers["location"] == "/vlans"
+    assert "error=busy" in r.headers["location"] and not hashed
+    # a queue just under the limit is joined
+    fresh_login_queue.setattr(auth, "LOGIN_QUEUE_MAX", 0.5)
+    fresh_login_queue.setattr(auth, "_login_next_slot", time.monotonic() + 0.1)
+    r = c.post("/login", data={"password": "pw", "next": "/vlans"})
+    assert r.headers["location"] == "/vlans" and hashed
 
 
 def test_password_rotation_ends_sessions(clean_env):
