@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
 import sqlite3
@@ -311,6 +312,48 @@ def connect(path: str) -> Iterator[sqlite3.Connection]:
         conn.commit()
     finally:
         conn.close()
+
+
+def backup(src_path: str, dest_path: str, *, force: bool = False) -> int:
+    """Copy the live database to dest_path with SQLite's backup API (#112).
+
+    Consistent while the poller writes: the copy holds a read lock page by
+    page and restarts when a writer commits mid-copy, so it never contains
+    half a transaction. The file holds webhook tokens, the redaction key,
+    and config history, so it is created mode 0600 before SQLite writes a
+    byte, and it lands under its final name only once it passes an
+    integrity check. Returns the size in bytes; raises FileExistsError
+    (no force), FileNotFoundError (no source), or sqlite3.Error.
+    """
+    if not os.path.isfile(src_path):  # connect() would quietly create one
+        raise FileNotFoundError(f"no database at {src_path}")
+    if os.path.exists(dest_path) and not force:
+        raise FileExistsError(dest_path)
+    tmp = f"{dest_path}.partial"
+    # O_EXCL: never write through a stale or planted file at the temp name
+    try:
+        os.close(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    except FileExistsError:
+        os.remove(tmp)  # a crashed earlier run; our own leftover
+        os.close(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+    try:
+        src = sqlite3.connect(src_path, timeout=30)
+        dst = sqlite3.connect(tmp)
+        try:
+            src.backup(dst)
+            verdict = dst.execute("PRAGMA quick_check").fetchone()[0]
+            if verdict != "ok":
+                raise sqlite3.DatabaseError(f"backup failed its integrity check: {verdict}")
+        finally:
+            dst.close()
+            src.close()
+        os.replace(tmp, dest_path)
+    except BaseException:
+        for leftover in (tmp, f"{tmp}-journal"):
+            if os.path.exists(leftover):
+                os.remove(leftover)
+        raise
+    return os.path.getsize(dest_path)
 
 
 # rate_history's per-second error and discard counters (#64), in the order

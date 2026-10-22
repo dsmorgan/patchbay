@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import sys
 import time
@@ -285,6 +286,37 @@ def cmd_hash_password(args: argparse.Namespace) -> int:
     return 0
 
 
+def _inside(path: str, directory: str) -> bool:
+    """Whether path, with symlinks resolved, sits at or under directory."""
+    path, directory = os.path.realpath(path), os.path.realpath(directory)
+    return os.path.commonpath([path, directory]) == directory
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    dest = args.path
+    if os.path.isdir(dest):
+        dest = os.path.join(dest, time.strftime("patchbay-%Y%m%d-%H%M%S.db"))
+    # the copy holds webhook tokens and the redaction key; the delivery
+    # share is off-host and meant to be readable by a sync client
+    deliver = settings.snapshot_deliver_dir
+    if deliver and _inside(dest, deliver):
+        print(f"refusing to write {dest}: it is inside PATCHBAY_SNAPSHOT_DELIVER_DIR, "
+              f"and the database holds secrets. Choose a private directory.",
+              file=sys.stderr)
+        return 2
+    try:
+        size = db.backup(settings.db_path, dest, force=args.force)
+    except FileExistsError:
+        print(f"{dest} exists — use --force to overwrite it", file=sys.stderr)
+        return 2
+    except (OSError, sqlite3.Error) as e:
+        print(f"backup failed: {e}", file=sys.stderr)
+        return 1
+    print(f"backup written: {dest} ({size:,} bytes, mode 600; contains secrets)")
+    return 0
+
+
 def cmd_show(args: argparse.Namespace) -> int:
     settings = load_settings()
     queries = {
@@ -327,6 +359,14 @@ def main(argv: list[str] | None = None) -> int:
     p_snap.add_argument("--out", help="explicit output path "
                         "(default: timestamped file in PATCHBAY_SNAPSHOT_DIR)")
     p_snap.set_defaults(func=cmd_snapshot)
+
+    p_backup = sub.add_parser("backup", help="copy the live database to PATH, "
+                              "safe while the poller runs (mode 600)")
+    p_backup.add_argument("path", help="file to write, or a directory to get a "
+                          "timestamped file in")
+    p_backup.add_argument("--force", action="store_true",
+                          help="overwrite PATH if it exists")
+    p_backup.set_defaults(func=cmd_backup)
 
     p_demo = sub.add_parser("demo", help="write a fictional demo network "
                             "(no credentials or real site needed)")
