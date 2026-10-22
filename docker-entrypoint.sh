@@ -1,8 +1,9 @@
 #!/bin/sh
 # Preflight, then run the command. The image runs as uid 10001 and never
 # changes ownership or privileges; this script only turns the opaque
-# failure of an old root-owned data directory ("unable to open database
-# file", a silent empty config) into one actionable message.
+# failure of a data directory the container's uid cannot use (a new
+# `mkdir data`, or root-owned data from an earlier release: "unable to open
+# database file", a silent empty config) into one actionable message.
 set -eu
 
 env_file=${PATCHBAY_ENV:-/data/.env}
@@ -24,14 +25,17 @@ if [ -n "$bad" ]; then
     cat >&2 <<MSG
 patchbay: running as uid $(id -u), which cannot use:$bad
 
-The image runs as uid 10001, not root. Data written by an earlier release
-is root-owned. Fix it once, with the stack stopped:
+The image runs as uid 10001, not root, so the data directory must be
+writable by the uid it runs as. Fix it with the stack stopped, either by
+giving the data to the image's user:
 
     sudo chown -R 10001:10001 ./data
 
-or run the services as the data owner instead, in compose:
+or by running the patchbay services as your own user: re-own the data, then
+set user: on both patchbay services in compose:
 
-    user: "UID:GID"          # for example the output of: stat -c %u:%g ./data
+    sudo chown -R "\$(id -u):\$(id -g)" ./data
+    user: "UID:GID"          # the output of: id -u; id -g
 
 See "Container user and upgrading" in docs/deployment.md.
 MSG

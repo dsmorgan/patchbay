@@ -22,6 +22,7 @@ curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/docker-compose.
 curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/.env.example
 mkdir -p data oxidized
 cp .env.example data/.env
+sudo chown 10001:10001 data      # patchbay runs as uid 10001, not root
 printf 'TZ=UTC\nMYSQL_PASSWORD=%s\n' "$(openssl rand -hex 16)" > .env
 ```
 
@@ -327,8 +328,11 @@ goes down on its own.
 
 The image runs as an unprivileged user, uid/gid `10001`, and never changes
 file ownership. A fresh named volume works as is. A bind-mounted `./data`
-must be writable by that uid, and one created by an earlier release is
-root-owned: the container then refuses to start and prints the fix.
+must be writable by the container's uid: the quickstart's
+`sudo chown 10001:10001 data` does that for a new install, and a `./data`
+from an earlier release (which ran as root, so `patchbay.db` and
+`snapshots/` are root-owned) needs the same treatment. Without it the
+container refuses to start and prints the fix.
 
 **One-time step when upgrading** from a release that ran as root:
 
@@ -339,16 +343,23 @@ docker compose pull && docker compose up -d
 ```
 
 Use your compose file's `-f` flag where you need it. Afterward, editing
-`data/.env` on the host needs `sudo` (or `sudo chown -R "$USER" data` with
-the stack stopped, followed by the `user:` setting below).
+`data/.env` on the host needs `sudo`.
 
-**Alternative: keep the existing owner.** Set `user:` on both patchbay
-services (web and poller) to the uid:gid that already owns `./data`, and
-skip the `chown`:
+**Alternative: run as your own user.** To keep `./data` owned by you, set
+`user:` on both patchbay services (web and poller) to your uid:gid, and
+re-own the files the old image created as root:
+
+```sh
+docker compose down
+sudo chown -R "$(id -u):$(id -g)" data
+```
 
 ```yaml
-    user: "1000:1000"      # stat -c %u:%g ./data
+    user: "1000:1000"      # the output of: id -u; id -g
 ```
+
+For a new install the `chown` is unnecessary when `user:` matches the
+owner of the `data` you just created.
 
 `user: "0:0"` keeps the old behavior of running as root, so nothing needs
 re-owning. It also drops the hardening: a code-execution bug in the web UI

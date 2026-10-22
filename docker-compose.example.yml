@@ -1,6 +1,7 @@
 # Example patchbay deployment: web UI + background poller from one image.
 #
 #   mkdir -p data && cp .env.example data/.env   # then fill in what you run
+#   sudo chown 10001:10001 data                  # the container runs as uid 10001
 #   docker compose -f docker-compose.example.yml up -d
 #
 # The UI is then on http://localhost:8013. With an empty data/.env everything
