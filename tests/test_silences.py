@@ -351,6 +351,31 @@ def test_expect_entries_are_permanent_read_only_silences(clean_env, conn):
     assert all(isinstance(r["id"], str) for r in rows)   # no form can address one
 
 
+def test_an_address_named_device_can_be_silenced_as_a_device(conn):
+    # #110: a UniFi device with no name is stored as its MAC, and the
+    # Active row offers it as a device scope; that scope must parse
+    mac = "02:00:00:00:00:01"
+    item = {"key": f"device:{mac}", "category": "device", "devices": [mac]}
+    assert ("device", mac) in silences.scopes_for(item)
+    for name in (mac, "2001:db8::1"):
+        row = silences.parse({"target": f"device:{name}"}, now=T0,
+                             created_by="operator", categories={"device"})
+        assert (row["kind"], row["scope"]) == ("device", name)
+        _silence(conn, "device", name)
+    [it] = _mark(conn, [dict(item)])
+    assert it["silenced"]["scope"] == mac
+    # dev:iface in the device kind is still refused
+    with pytest.raises(ValueError, match="bare name"):
+        silences.parse({"kind": "device", "scope": "sw1:1/0/2"}, now=T0,
+                       created_by="operator", categories=set())
+
+
+def test_expect_reads_an_address_named_device_as_a_device(clean_env, conn):
+    clean_env.setenv("PATCHBAY_EXPECT", "02:00:00:00:00:01")
+    [row] = silences.all_silences(conn, load_settings())
+    assert (row["kind"], row["scope"]) == ("device", "02:00:00:00:00:01")
+
+
 def _web(clean_env, tmp_path, *, speed=10_000_000, **env):
     from tests.test_web import seed
 
