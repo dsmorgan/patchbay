@@ -5,7 +5,8 @@
 #
 #   mkdir -p data oxidized
 #   cp .env.example data/.env        # patchbay's config — fill in as you go
-#   sudo chown 10001:10001 data      # patchbay runs as uid 10001
+#   sudo chown -R 10001:10001 data && sudo chmod 600 data/.env   # uid 10001; .env private
+#   (edit it afterward with: sudoedit data/.env)
 #   printf 'TZ=UTC\nMYSQL_PASSWORD=%s\n' "$(openssl rand -hex 16)" > .env
 #   docker compose -f docker-compose.stack.yml up -d
 #

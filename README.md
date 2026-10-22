@@ -20,9 +20,12 @@ layer included, follow [docs/deployment.md](docs/deployment.md) instead.
 curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/docker-compose.example.yml
 curl -O https://raw.githubusercontent.com/dsmorgan/patchbay/main/.env.example
 mkdir -p data && cp .env.example data/.env    # fill in the tools you already run
-sudo chown 10001:10001 data                   # the container runs as uid 10001
+sudo chown -R 10001:10001 data && sudo chmod 600 data/.env   # container runs as uid 10001; keep .env private
 docker compose -f docker-compose.example.yml up -d
 ```
+
+The file is private to the container's user, so edit it with
+`sudoedit data/.env`.
 
 The UI is on http://localhost:8013 — the compose file maps host port 8013
 onto the app's own 8080, so it won't collide with whatever else already
