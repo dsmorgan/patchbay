@@ -2095,6 +2095,8 @@ def test_opnsense_collects_vpn_tunnels(conn, clean_env, monkeypatch):
     wg = rows[("wireguard", "wg-home · site-b")]
     assert wg["peer"] == "192.0.2.200:51820" and wg["interface"] == "wg1"
     assert wg["status"] == "up" and wg["detail"] == "allowed 172.16.44.0/24"
+    # structured too: the routed view picks a shared wg0's peer by it (#98)
+    assert wg["allowed_ips"] == "172.16.44.0/24"
     ov = rows[("openvpn", "roadwarrior")]
     assert ov["status"] == "up" and ov["detail"] == "2 sessions"
     sa = rows[("ipsec", "site-c")]
@@ -2104,6 +2106,30 @@ def test_opnsense_collects_vpn_tunnels(conn, clean_env, monkeypatch):
     for table in ("tunnels", "raw_payloads"):
         for r in conn.execute(f"SELECT * FROM {table}"):
             assert "FAKEPUBKEY" not in str(tuple(r))
+
+
+def test_wireguard_allowed_ips_normalize_to_cidr_list():
+    from patchbay.collectors.opnsense import _cidr_list
+    assert _cidr_list("172.16.44.0/24, 172.16.45.0/24") == "172.16.44.0/24,172.16.45.0/24"
+    assert _cidr_list(["172.16.44.0/24", "2001:db8:44::/64"]) == \
+        "172.16.44.0/24,2001:db8:44::/64"
+    assert _cidr_list("") is None and _cidr_list(None) is None
+
+
+def test_tunnels_table_gains_allowed_ips_on_upgrade(tmp_path):
+    import sqlite3 as s3
+    from patchbay import db as pdb
+    c = s3.connect(str(tmp_path / "old.db"))
+    c.execute("CREATE TABLE tunnels (id INTEGER PRIMARY KEY, device TEXT NOT NULL, "
+              "type TEXT NOT NULL, name TEXT NOT NULL, peer TEXT, interface TEXT, "
+              "status TEXT, last_handshake REAL, detail TEXT, source TEXT NOT NULL, "
+              "last_seen REAL, UNIQUE (device, type, name))")
+    c.execute("INSERT INTO tunnels (device, type, name, source) "
+              "VALUES ('fw1', 'wireguard', 'site-b', 'opnsense')")
+    pdb.init(c)
+    assert c.execute("SELECT name, allowed_ips FROM tunnels").fetchall() == \
+        [("site-b", None)]
+    pdb.init(c)  # idempotent
 
 
 def test_opnsense_absent_tunnel_endpoints_keep_rows(conn, clean_env, monkeypatch):

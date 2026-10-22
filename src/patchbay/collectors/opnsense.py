@@ -99,6 +99,14 @@ def _parse_line_rate(stats: dict) -> int | None:
         return None
 
 
+def _cidr_list(value) -> str | None:
+    """A peer's allowed-ips, as the API gives them (a comma- or space-
+    separated string, or a list), stored as comma-separated CIDRs."""
+    items = value if isinstance(value, list) else str(value or "").replace(",", " ").split()
+    cidrs = [str(i).strip() for i in items if str(i).strip()]
+    return ",".join(cidrs) or None
+
+
 def base_and_name(host: str) -> tuple[str, str]:
     """API base and short device name from OPNSENSE_HOST, which is either a
     bare hostname (https assumed) or a scheme-prefixed URL for installations
@@ -279,6 +287,7 @@ class OpnsenseCollector:
                         "last_handshake": hs,
                         "detail": (f"allowed {r['allowed-ips']}"
                                    if r.get("allowed-ips") else None),
+                        "allowed_ips": _cidr_list(r.get("allowed-ips")),
                     })
                 db.save_tunnels(conn, device=short_name, source=NAME,
                              type_="wireguard", rows=peers)
