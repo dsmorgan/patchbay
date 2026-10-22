@@ -55,6 +55,18 @@ put.
   for the next poll. If the database stays locked, delivery records wait in
   `<db>-dispatch-*.json` files beside it, so keep that folder writable by
   the patchbay user.
+- The UI no longer freezes during a poll (#109). Pages answer while a poll
+  writes, and a save that collides with one answers 503 (retry it) instead
+  of hanging and failing. Collectors make all their network calls before
+  they write, so the write lock lasts only seconds. Only one poll runs at a
+  time across the web and poller containers: **Poll** answers 409 while
+  another poll runs, and a scheduled poll waits for it.
+
+  **Upgrade notes:** upgrade the web and poller containers together. A poll
+  killed outright leaves its lease for up to 3 minutes, and the next poll
+  waits for it. Third-party collectors should make every network call
+  before their first write (see `docs/collectors.md`); `collect()` is
+  unchanged.
 
 ## [0.22.0] — 2026-10-22
 
