@@ -166,3 +166,35 @@ def test_rules_tab_bool_param(client, clean_env):
     assert client.post(url, content="enabled=1&param_idle_is_down=true").status_code == 303
     assert stored()["idle_is_down"] is True
     assert "param_idle_is_down" in client.get("/alerts?tab=rules").text
+
+
+@pytest.mark.parametrize("typed", ["FW1", "fw1.example.net", " Fw1.Example.Net. "])
+def test_declared_device_is_canonical(clean_env, tmp_path, typed):
+    # #110: every stored device name is canonical, so a declaration typed
+    # in another case or as an FQDN must match the tunnel on "fw1"
+    c = _demo(tmp_path)
+    s = load_settings()
+    expected_tunnels.add(c, typed, "wireguard", WG[2])
+    assert expected_tunnels.load(c) == [
+        {"device": "fw1", "type": "wireguard", "name": WG[2]}]
+    items, _ = attention.attention_items(c, s)
+    assert [i for i in items if i["category"] == "tunnel"] == []
+    expected_tunnels.remove(c, typed, "wireguard", WG[2])
+    assert expected_tunnels.load(c) == []
+    c.close()
+
+
+def test_declared_alias_is_stored_as_its_device(conn):
+    conn.execute("INSERT INTO aliases (alias, canonical) VALUES ('edge', 'fw1')")
+    expected_tunnels.add(conn, "Edge", "ipsec", "site-c")
+    assert expected_tunnels.load(conn) == [
+        {"device": "fw1", "type": "ipsec", "name": "site-c"}]
+
+
+def test_a_declaration_stored_before_110_reads_canonical(conn):
+    import json
+    pdb.set_state(conn, expected_tunnels.STATE_KEY, json.dumps([
+        {"device": "FW1", "type": "wireguard", "name": "a"},
+        {"device": "fw1", "type": "wireguard", "name": "a"}]))
+    assert expected_tunnels.load(conn) == [
+        {"device": "fw1", "type": "wireguard", "name": "a"}]
