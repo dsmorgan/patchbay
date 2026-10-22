@@ -46,8 +46,17 @@ def test_canonical_name_keeps_addresses_and_dotted_names_whole():
     assert canonical_name("Ubuntu-22.10") == "ubuntu-22.10"
     assert canonical_name("unmanaged@ex1:ge-0/0/1.0") == "unmanaged@ex1:ge-0/0/1.0"
     assert canonical_name("unmanaged@192.0.2.5:p1") == "unmanaged@192.0.2.5:p1"
+    assert canonical_name("centos-7.9") == "centos-7.9"
     # a hostname inside a dotted domain still loses the whole domain
     assert canonical_name("esx1.lab.example.com") == "esx1"
+
+
+@pytest.mark.parametrize("name", ["sw1.lab1", "sw1.k8s", "sw1.site2",
+                                  "SW1.dc01", "sw1.lab1.example.com"])
+def test_internal_domains_with_digits_are_still_domains(name):
+    # review of #98: an internal domain with a digit is a domain — LLDP's
+    # "sw1.lab1" and UniFi's "sw1" must stay one device
+    assert canonical_name(name) == "sw1"
 
 
 def test_ip_and_version_named_devices_stay_apart(conn):

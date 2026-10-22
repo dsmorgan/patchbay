@@ -40,17 +40,17 @@ NETWORK_ROLES = {"switch", "router", "firewall", "ap", "hypervisor"}
 
 
 _DNS_LABEL = re.compile(r"[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?")
-_TLD = re.compile(r"[a-z]{2,63}|xn--[a-z0-9-]+")
 
 
 def _looks_like_domain(suffix: str) -> bool:
-    """True when `suffix` reads as a DNS domain ("lan", "example.com"):
-    hostname-shaped labels and an alphabetic last label. A version number
-    ("04" in "ubuntu-22.04") or a port suffix ("0" in "ge-0/0/1.0") is not
-    a domain, so the name containing it stays whole."""
+    """True when `suffix` reads as a DNS domain ("lan", "example.com",
+    "lab1", "k8s.local"): hostname-shaped labels, the last with at least
+    one letter. A version number ("04" in "ubuntu-22.04", "9" in
+    "centos-7.9") or a logical-port unit ("0" in "ge-0/0/1.0") has none,
+    so the name containing it stays whole."""
     labels = suffix.split(".")
     return (all(_DNS_LABEL.fullmatch(lb) for lb in labels)
-            and _TLD.fullmatch(labels[-1]) is not None)
+            and any(c.isalpha() for c in labels[-1]))
 
 
 def canonical_name(name: str) -> str:
