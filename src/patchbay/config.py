@@ -143,12 +143,13 @@ DECLARATION_HELP = {
         "example": "core1:1/0/16",
     },
     "PATCHBAY_EXPECT": {
-        "what": "Legacy: expected conditions, read as permanent silences. "
-                "A port whose link is legitimately slow, or a whole device "
-                "(bare name) to quiet every item naming it. New silences, "
-                "with an expiry and a reason, belong on the Silences tab of "
-                "the Alerts page (/alerts?tab=silences), which also lists "
-                "these.",
+        "what": "Deprecated (#69): expected conditions, read as permanent "
+                "silences. A port whose link is legitimately slow, or a "
+                "whole device (bare name) to quiet every item naming it. "
+                "Click import as silences to turn each entry into a "
+                "permanent silence, then remove this variable. Silences "
+                "have an expiry and a reason and live on the Silences tab "
+                "of the Alerts page (/alerts?tab=silences).",
         "syntax": "device:interface or device, comma-separated",
         "example": "core1:1/0/16,hyp1",
     },

@@ -399,7 +399,7 @@ def test_expect_overview_unchanged_and_item_on_silenced_tab(clean_env, tmp_path)
     page = client.get("/alerts?tab=silenced").text
     assert "runs at 10M" in page and "port sw1:1/0/1" in page
     page = client.get("/alerts?tab=silences").text
-    assert "port sw1:1/0/1" in page and "edit on Ops" in page
+    assert "port sw1:1/0/1" in page and "import on Ops" in page
     assert "/delete" not in page                      # read-only here
 
     # a poll stores it silenced and sends nothing
@@ -522,3 +522,224 @@ def test_created_by_is_the_oidc_identity_when_there_is_one(clean_env, tmp_path):
     c = sqlite3.connect(dbp)
     assert c.execute("SELECT created_by FROM alert_silences").fetchone()[0] == "alice@example.com"
     c.close()
+
+
+# -- importing PATCHBAY_EXPECT as silences (#69, stage 1) -----------------
+
+MAC = "02:00:00:00:00:01"
+
+
+class _Expect:
+    """What import_expect reads of Settings."""
+
+    def __init__(self, *entries):
+        self.expected = set(entries)
+
+
+def _import(conn, *entries, now=T0):
+    conn.commit()     # import_expect starts its own transaction
+    out = silences.import_expect(conn, _Expect(*entries), now=now, created_by="operator")
+    conn.commit()
+    return out
+
+
+def _rows(conn):
+    return [(r["kind"], r["scope"], r["until"], r["reason"], r["created_by"])
+            for r in conn.execute("SELECT * FROM alert_silences ORDER BY scope")]
+
+
+def test_import_makes_one_permanent_silence_per_entry_kind(conn):
+    entries = ("sw1:1/0/2", "hyp1", MAC, "192.0.2.9", "2001:db8::1")
+    out = _import(conn, *entries)
+    assert sorted(out["created"]) == sorted(entries)
+    assert out["covered"] == out["invalid"] == []
+    reason = "imported from PATCHBAY_EXPECT"
+    assert sorted(_rows(conn)) == sorted([
+        ("port", "sw1:1/0/2", None, reason, "operator"),
+        ("device", "hyp1", None, reason, "operator"),
+        ("device", MAC, None, reason, "operator"),
+        ("device", "192.0.2.9", None, reason, "operator"),
+        ("device", "2001:db8::1", None, reason, "operator")])
+    # the kind is the one the legacy row had
+    legacy = {r["scope"]: r["kind"] for r in silences.env_silences(_Expect(*entries))}
+    assert legacy == {r[1]: r[0] for r in _rows(conn)}
+
+
+def test_import_twice_creates_nothing_and_reports_the_covered(conn):
+    _import(conn, "sw1:1/0/2", "hyp1")
+    before = _rows(conn)
+    out = _import(conn, "sw1:1/0/2", "hyp1")
+    assert out["created"] == [] and sorted(out["covered"]) == ["hyp1", "sw1:1/0/2"]
+    assert _rows(conn) == before
+    # a new entry imports alone
+    out = _import(conn, "sw1:1/0/2", "hyp1", "sw2")
+    assert (out["created"], len(_rows(conn))) == (["sw2"], 3)
+
+
+def test_import_skips_what_a_permanent_silence_covers_not_a_timed_one(conn):
+    _silence(conn, "device", "hyp1", until=None, reason="by hand")
+    _silence(conn, "device", "hyp2", until=T0 + DAY)     # ends: not equivalent
+    _silence(conn, "device", "sw1")                       # a device is not its port
+    _silence(conn, "port", "sw3", until=None)             # kind differs from `sw3`
+    out = _import(conn, "hyp1", "hyp2", "sw1:1/0/2", "sw3")
+    assert out["covered"] == ["hyp1"]
+    assert sorted(out["created"]) == ["hyp2", "sw1:1/0/2", "sw3"]
+
+
+def test_import_reports_an_entry_that_is_not_a_silence(conn):
+    out = _import(conn, "sw1:", "hyp1", "x" * (silences.SCOPE_MAX + 1))
+    assert out["created"] == ["hyp1"]
+    assert sorted(e for e, _ in out["invalid"]) == ["sw1:", "x" * (silences.SCOPE_MAX + 1)]
+    assert len(_rows(conn)) == 1
+
+
+def test_an_imported_silence_replaces_its_legacy_row(clean_env, conn):
+    clean_env.setenv("PATCHBAY_EXPECT", "sw1:1/0/2, hyp1")
+    settings = load_settings()
+    assert silences.expect_pending(conn, settings) == 2
+    silences.import_expect(conn, settings, now=T0, created_by="operator")
+    conn.commit()
+    assert silences.expect_pending(conn, settings) == 0
+    rows = silences.all_silences(conn, settings)
+    assert sorted((r["source"], r["kind"], r["scope"]) for r in rows) == [
+        ("db", "device", "hyp1"), ("db", "port", "sw1:1/0/2")]
+    # ending the import brings the legacy row back: the variable still silences
+    sid = conn.execute("SELECT id FROM alert_silences WHERE scope = 'hyp1'").fetchone()[0]
+    conn.execute("UPDATE alert_silences SET until = ? WHERE id = ?", (T0 - 1, sid))
+    assert ("env", "hyp1") in {(r["source"], r["scope"])
+                               for r in silences.all_silences(conn, settings)}
+    assert silences.expect_pending(conn, settings) == 1
+
+
+def _import_post(client, **kw):
+    r = client.post("/ops/expect/import", **kw)
+    return r, (r.json() if r.status_code != 403 else None)
+
+
+def test_import_route_covers_the_same_alert_before_after_and_without_the_variable(
+        clean_env, tmp_path):
+    dbp, client = _web(clean_env, tmp_path, PATCHBAY_EXPECT="sw1:1/0/1")
+
+    def covered():
+        page = client.get("/alerts?tab=silenced").text
+        return ("runs at 10M" not in client.get("/").text
+                and "runs at 10M" not in client.get("/alerts").text
+                and "runs at 10M" in page)
+
+    assert covered()
+    r, body = _import_post(client)
+    assert r.status_code == 200
+    assert "[ok]   port sw1:1/0/1: imported as a permanent silence" in body["lines"]
+    assert "1 imported, 0 already covered, 0 not imported." in body["lines"]
+    assert any("env file" in line and "restart" in line for line in body["lines"])
+    assert covered()
+
+    # one row on the Silences tab, not the legacy one and its import
+    page = client.get("/alerts?tab=silences").text
+    assert page.count("port sw1:1/0/1") == 1
+    assert "imported from PATCHBAY_EXPECT" in page and "end now" in page
+
+    # the operator removes the variable: nothing changes
+    clean_env.delenv("PATCHBAY_EXPECT")
+    assert covered()
+    page = client.get("/alerts?tab=silences").text
+    assert page.count("port sw1:1/0/1") == 1 and "deprecated" not in page
+    assert client.post("/ops/poll").status_code == 200
+    c = sqlite3.connect(dbp)
+    assert c.execute("SELECT state FROM alerts").fetchall() == [("silenced",)]
+    c.close()
+
+
+def test_import_route_is_idempotent(clean_env, tmp_path):
+    dbp, client = _web(clean_env, tmp_path, PATCHBAY_EXPECT="sw1:1/0/1,hyp1")
+    _import_post(client)
+    r, body = _import_post(client)
+    assert r.status_code == 200
+    assert "[skip] hyp1: a permanent silence already covers it" in body["lines"]
+    assert "0 imported, 2 already covered, 0 not imported." in body["lines"]
+    c = sqlite3.connect(dbp)
+    assert c.execute("SELECT COUNT(*) FROM alert_silences").fetchone()[0] == 2
+    c.close()
+
+
+def test_import_without_the_variable_writes_nothing(clean_env, tmp_path):
+    dbp, client = _web(clean_env, tmp_path)
+    r, body = _import_post(client)
+    assert r.status_code == 200 and "not set" in body["lines"][0]
+    c = sqlite3.connect(dbp)
+    assert c.execute("SELECT COUNT(*) FROM alert_silences").fetchone()[0] == 0
+    c.close()
+
+
+def test_cross_origin_import_is_rejected(clean_env, tmp_path):
+    dbp, client = _web(clean_env, tmp_path, PATCHBAY_EXPECT="hyp1")
+    r, _ = _import_post(client, headers={"origin": "https://evil.example"})
+    assert r.status_code == 403
+    c = sqlite3.connect(dbp)
+    assert c.execute("SELECT COUNT(*) FROM alert_silences").fetchone()[0] == 0
+    c.close()
+
+
+def test_import_is_created_by_the_oidc_identity_when_there_is_one(clean_env, tmp_path):
+    dbp, client = _web(clean_env, tmp_path, PATCHBAY_AUTH="oidc",
+                       PATCHBAY_OIDC_CLIENT_ID="cid", PATCHBAY_OIDC_CLIENT_SECRET="cs",
+                       PATCHBAY_OIDC_AUTH_URL="https://idp.example/authorize",
+                       PATCHBAY_OIDC_TOKEN_URL="https://idp.example/token",
+                       PATCHBAY_EXPECT="hyp1")
+    assert client.post("/ops/expect/import").status_code == 401
+    client.cookies.set(auth.SESSION_COOKIE,
+                       auth.session_token(load_settings(), "alice@example.com"))
+    assert client.post("/ops/expect/import").status_code == 200
+    c = sqlite3.connect(dbp)
+    assert c.execute("SELECT created_by FROM alert_silences").fetchall() == [
+        ("alice@example.com",)]
+    c.close()
+
+
+def test_ops_notice_shows_only_while_the_variable_is_set(clean_env, tmp_path):
+    dbp, client = _web(clean_env, tmp_path)
+    page = client.get("/ops").text
+    assert "PATCHBAY_EXPECT is deprecated" not in page
+    assert "data-expect-import" not in page.split("<script>")[0]   # no button
+    assert 'id="expectnotice"' in page                             # swap target stays
+
+    clean_env.setenv("PATCHBAY_EXPECT", "sw1:1/0/1,hyp1")
+    page = " ".join(client.get("/ops").text.split())
+    assert "PATCHBAY_EXPECT is deprecated" in page
+    assert "import as silences" in page and "2 of 2 entries are not yet a silence" in page
+    assert "delete the PATCHBAY_EXPECT line from your env file and restart" in page
+
+    _import_post(client)
+    page = " ".join(client.get("/ops").text.split())
+    assert "All 2 entries are now permanent silences" in page
+
+    clean_env.delenv("PATCHBAY_EXPECT")
+    assert "PATCHBAY_EXPECT is deprecated" not in client.get("/ops").text
+
+
+def test_ops_notice_tells_a_stored_declaration_to_clear_the_field(clean_env, tmp_path):
+    dbp, client = _web(clean_env, tmp_path)
+    assert client.post("/ops/config", json={"var": "PATCHBAY_EXPECT",
+                                            "value": "hyp1"}).status_code == 200
+    page = client.get("/ops").text
+    assert "PATCHBAY_EXPECT is deprecated" in page
+    assert "clear the PATCHBAY_EXPECT field" in page
+    _, body = _import_post(client)
+    assert any("clear the PATCHBAY_EXPECT field" in line for line in body["lines"])
+    # the stored declaration still silences until the operator clears it
+    c = sqlite3.connect(dbp)
+    c.row_factory = sqlite3.Row
+    assert [(r["source"], r["scope"]) for r in silences.all_silences(
+        c, load_settings())] == [("db", "hyp1")]
+    c.close()
+    assert client.post("/ops/config", json={"var": "PATCHBAY_EXPECT",
+                                            "value": ""}).status_code == 200
+    assert "PATCHBAY_EXPECT is deprecated" not in client.get("/ops").text
+
+
+def test_silences_tab_points_a_legacy_row_at_the_import(clean_env, tmp_path):
+    _, client = _web(clean_env, tmp_path)
+    assert "PATCHBAY_EXPECT is deprecated" not in client.get("/alerts?tab=silences").text
+    clean_env.setenv("PATCHBAY_EXPECT", "hyp1")
+    assert "PATCHBAY_EXPECT is deprecated" in client.get("/alerts?tab=silences").text
+

@@ -330,6 +330,31 @@ def test_a_busy_503_to_a_script_is_json(clean_env, tmp_path, monkeypatch):
         holder.close()
 
 
+def test_a_busy_expect_import_is_a_json_503_and_imports_nothing(clean_env, tmp_path,
+                                                                monkeypatch):
+    import patchbay.web as web
+
+    path = _db(tmp_path)
+    clean_env.setenv("PATCHBAY_EXPECT", "sw1:1/0/2")
+    _quick(monkeypatch)
+    holder = _hold(path)
+    try:
+        r = TestClient(web.app, raise_server_exceptions=False).post("/ops/expect/import")
+        assert r.status_code == 503
+        assert r.json() == {"detail": web.BUSY_TEXT}
+        assert r.headers["retry-after"] == "5"
+    finally:
+        holder.rollback()
+        holder.close()
+    with pdb.connect(path) as c:
+        assert c.execute("SELECT COUNT(*) FROM alert_silences").fetchone()[0] == 0
+    # once the writer is done, the same click imports
+    r = TestClient(web.app).post("/ops/expect/import")
+    assert r.status_code == 200
+    with pdb.connect(path) as c:
+        assert c.execute("SELECT COUNT(*) FROM alert_silences").fetchone()[0] == 1
+
+
 def test_auth_gate_cold_secret_under_a_lock_is_a_503(clean_env, tmp_path, monkeypatch):
     """The gate's one database read, the session secret on a process's
     first signed-in request, answers 503 rather than 500 when a commit
