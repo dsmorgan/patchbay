@@ -8,6 +8,13 @@ put.
 
 ## [Unreleased]
 
+### Added
+- `patchbay backup PATH` (#112) writes a consistent copy of the database
+  while the poller runs, with mode 600, and refuses to write into the
+  off-host delivery share. A directory path gets a timestamped name.
+  `docs/deployment.md` has new "Back up and restore" and "Upgrade" sections.
+  The backup holds every secret patchbay stores; keep it private.
+
 ### Fixed
 - On a host where an ACL blocks the data folder even though its owner is
   right (Synology shares), the startup error says so and gives the command
