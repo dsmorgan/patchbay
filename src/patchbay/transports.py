@@ -577,20 +577,17 @@ class WebhookDispatcher:
             if not conn.execute("SELECT 1 FROM alert_transports LIMIT 1").fetchone():
                 return
             got = self._lease(conn, owner)
-            if got == "held":
-                self._defer(conn, notes)
+            if got != "ok":
+                # fail closed: whether another dispatch holds the lease or
+                # the database never answered, sending now could race a
+                # holder and reorder a receiver's notes. This cycle's notes
+                # queue behind it (in a file, if the database stays locked).
+                self._defer(conn, notes, got)
                 return
-            if got == "locked":
-                # the database, not another dispatch, kept us out (a long
-                # write elsewhere): deliver now rather than delay every
-                # receiver; the outcome waits in a file if it must
-                self.lines.append("[warn] notify: the database is busy; "
-                                  "dispatching without the lease")
             try:
-                self._cycle(conn, notes, leased=got == "ok")
+                self._cycle(conn, notes)
             finally:
-                if got == "ok":
-                    _release(conn, owner)
+                _release(conn, owner)
         finally:
             conn.close()
 
@@ -621,24 +618,27 @@ class WebhookDispatcher:
                 out.append((route.transport_id, n))
         return out
 
-    def _defer(self, conn: sqlite3.Connection, notes: list[alerting.Notification]) -> None:
-        """Another dispatch held the lease for LEASE_WAIT_S: queue this
-        cycle's generic notes behind it, in order, rather than race it.
+    def _defer(self, conn: sqlite3.Connection, notes: list[alerting.Notification],
+               why: str) -> None:
+        """No lease within LEASE_WAIT_S: queue this cycle's generic notes for
+        the next lease holder, in order, rather than race one. Nothing is
+        sent, and the shared outbox and outcome files are only added to.
         Kuma needs nothing queued; its state is pushed every cycle."""
         transports = {r["id"]: dict(r) for r in conn.execute(
             "SELECT * FROM alert_transports ORDER BY id")}
         mine = [_entry(tid, n) for tid, n in
                 self._routed(notes, transports, default_route(conn))
                 if transports[tid]["kind"] == "generic" and transports[tid]["enabled"]]
-        self.lines.append("[warn] notify: another dispatch is still running; "
+        cause = ("another dispatch is still running" if why == "held"
+                 else "the database is busy")
+        self.lines.append(f"[warn] notify: {cause}; "
                           f"{len(mine)} notification{'' if len(mine) == 1 else 's'} "
                           "queued for the next cycle")
         if mine:
             self._write({"updates": [], "events": [], "outbox": mine, "consumed": []},
                         pending=[])
 
-    def _cycle(self, conn: sqlite3.Connection, notes: list[alerting.Notification], *,
-               leased: bool = True) -> None:
+    def _cycle(self, conn: sqlite3.Connection, notes: list[alerting.Notification]) -> None:
         now = db.now() if self.now is None else self.now
         transports = {r["id"]: dict(r) for r in conn.execute(
             "SELECT * FROM alert_transports ORDER BY id")}
@@ -647,8 +647,8 @@ class WebhookDispatcher:
         # an earlier cycle's outcome the database would not take: its
         # history and results are written with ours, the outbox entries it
         # had already handled are not handled twice, and its queue is ours.
-        # Only the lease holder folds these in, so no two dispatches do.
-        pending = [(p, d) for p in (_pending_paths(self.db_path) if leased else ())
+        # Only the lease holder runs a cycle, so no two dispatches do this.
+        pending = [(p, d) for p in _pending_paths(self.db_path)
                    if (d := _read_pending(p)) is not None]
         handled = [e for _, d in pending for e in d.get("consumed") or []]
         outbox = _load_outbox(conn)
