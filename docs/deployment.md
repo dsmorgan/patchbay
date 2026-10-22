@@ -378,6 +378,23 @@ owned by you and the process has no real privilege on the host. The
 default 10001 maps to a subordinate uid you cannot edit without
 `podman unshare`.
 
+**Synology and other hosts with ACLs.** On a Synology share, `ls -ld`
+shows a `+` after the mode: an ACL decides access, and it grants only DSM
+users, so uid 10001 can't write even after the `chown`. The startup error
+says so when the owner already matches. Remove the ACL, then set plain
+modes (run from the folder that holds your data directory, stack stopped):
+
+```sh
+sudo find data -exec synoacltool -del {} \;    # other hosts: sudo setfacl -bR data
+sudo chown -R 10001:10001 data
+sudo find data -type d -exec chmod 700 {} \;
+sudo find data -type f -exec chmod 600 {} \;
+```
+
+Files the container creates afterward inherit no ACL. A host-side job that
+reads the snapshots, such as an off-host push, must then run as root or as
+uid 10001.
+
 **Other mounts.** Anything else you mount into the patchbay services must be
 writable by the same uid: a custom `PATCHBAY_SNAPSHOT_DIR`, and the off-host
 snapshot share of [step 7](#7-verify-snapshot-delivery). If delivery fails

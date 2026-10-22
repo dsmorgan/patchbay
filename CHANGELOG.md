@@ -6,6 +6,14 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Fixed
+- On a host where an ACL blocks the data folder even though its owner is
+  right (Synology shares), the startup error says so and gives the command
+  that removes it; `docs/deployment.md` has a Synology section. The error
+  no longer assumes the folder is `./data`.
+
 ## [0.22.0] — 2026-10-22
 
 ### Added
