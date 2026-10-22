@@ -269,6 +269,8 @@ CREATE TABLE IF NOT EXISTS alerts (
 -- returning raises a new row
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_open ON alerts (key)
     WHERE state != 'cleared';
+-- the rail badge's read of recent one-shot events (alerting.open_count)
+CREATE INDEX IF NOT EXISTS idx_alerts_raised ON alerts (raised_at);
 CREATE TABLE IF NOT EXISTS alert_events (
     id INTEGER PRIMARY KEY,    -- history: raised | active | cleared, and
     alert_id INTEGER,          -- later notified | silenced | delivery_failed.

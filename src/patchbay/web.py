@@ -326,6 +326,9 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
+templates.env.globals["HELD_WHY"] = (
+    "The alert engine holds this while the device is down: the device's own "
+    "alert says so, and the Alerts count on the rail does not include it.")
 templates.env.globals["STALE_MIN"] = STALE_MIN   # the top bar uses the same threshold
 
 
@@ -342,6 +345,15 @@ def _since(ts: float | None) -> str:
     if mins < 60 * 48:
         return f"{mins / 60:.0f}h"
     return f"{mins / 1440:.0f}d"
+
+
+def _mark_held(conn, items: list[dict]) -> None:
+    """Tag each item the alert engine holds while its device is down (#118),
+    "held: sw1 is down": the rail badge counts what the engine pages about,
+    so the two numbers differ by exactly these, and the tag says why."""
+    down = alerting.down_devices(conn, db.now())
+    for it in items:
+        it["held"] = alerting.held_text(it, down) if down else ""
 
 
 def _attention_summary(items: list[dict]) -> list[dict]:
@@ -369,6 +381,7 @@ def dashboard(request: Request):
         # silenced item is known and fine; /alerts lists it on its own tab.
         exceptions = [i for i in exceptions if not i["silenced"]]
         stamp_first_seen(conn, exceptions)
+        _mark_held(conn, exceptions)
         for it in exceptions:
             it["since"] = _since(it["first_seen"])
         attn_summary = _attention_summary(exceptions)
@@ -482,6 +495,7 @@ def alerts(request: Request, category: str | None = None,
         settings = load_settings()
         every, checked = attention_items(conn, settings)
         stamp_first_seen(conn, every)
+        _mark_held(conn, every)
         for it in every:
             it["since"] = _since(it["first_seen"])
             it["scopes"] = silences.scopes_for(it)

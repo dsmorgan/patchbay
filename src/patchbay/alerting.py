@@ -368,12 +368,29 @@ def down_devices(conn: sqlite3.Connection, now: float) -> set[str]:
             or (r["status"] or "").lower() in DOWN_STATES}
 
 
+def held_by(item: dict, down: set[str]) -> list[str]:
+    """The down devices that hold `item` back, sorted: empty unless the
+    rule is one an unreachable device would multiply. Items name their
+    ports as `ports: [(device, interface), ...]`."""
+    if item.get("rule") not in _INHIBITED_BY_DOWN_DEVICE:
+        return []
+    return sorted({dev for dev, _ in item.get("ports") or () if dev in down})
+
+
 def inhibited(item: dict, down: set[str]) -> bool:
     """Fixed rule: a link-down item at a port of a down device says nothing
-    the device's own alert does not. Items name their ports as
-    `ports: [(device, interface), ...]`."""
-    return (item.get("rule") in _INHIBITED_BY_DOWN_DEVICE
-            and any(dev in down for dev, _ in item.get("ports") or ()))
+    the device's own alert does not."""
+    return bool(held_by(item, down))
+
+
+def held_text(item: dict, down: set[str]) -> str:
+    """"held: sw1 is down" for an item the engine holds, else "": the tag the
+    Active tab and Overview show, so the gap between their count and the
+    rail badge (the engine's count) reads as a rule, not a mismatch."""
+    devs = held_by(item, down)
+    if not devs:
+        return ""
+    return f"held: {devs[0]} is down" if len(devs) == 1 else f"held: {', '.join(devs)} are down"
 
 
 def _event(conn, alert_id, ts, event, a, detail=None):
@@ -442,7 +459,15 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             # uniquely, and a repeat of a fired key is the same occurrence.
             # Dedupe reads `alerts`, whose cleared rows prune at 90 days, so
             # a key reused across occurrences would fire again after that.
-            if conn.execute("SELECT 1 FROM alerts WHERE key = ?", (key,)).fetchone():
+            fired = conn.execute("SELECT id, active_at FROM alerts WHERE key = ?",
+                                 (key,)).fetchone()
+            if fired:
+                if fired["active_at"] is None:
+                    # silenced when it fired, since unsilenced: visible again,
+                    # and never replayed as news. `active_at` is what marks it
+                    # visible, so the rail badge follows the silence both ways.
+                    conn.execute("UPDATE alerts SET active_at = ? WHERE id = ?",
+                                 (now, fired["id"]))
                 continue
             # it happened when it happened, not when this poll read it
             at = it.get("at") or now
@@ -562,7 +587,12 @@ def _silenced(conn, it: dict, name: str, rule: dict, row, silence: dict,
     if rule["event"]:
         # a one-shot fires once whether or not anyone hears it, so a later
         # unsilence does not replay an occurrence that is already past
-        if conn.execute("SELECT 1 FROM alerts WHERE key = ?", (it["key"],)).fetchone():
+        fired = conn.execute("SELECT id, active_at FROM alerts WHERE key = ?",
+                             (it["key"],)).fetchone()
+        if fired:
+            if fired["active_at"] is not None:   # silenced after it fired
+                conn.execute("UPDATE alerts SET active_at = NULL WHERE id = ?",
+                             (fired["id"],))
             return
         cur = conn.execute(
             "INSERT INTO alerts (key, rule, category, severity, state, polls, "
@@ -645,32 +675,45 @@ def open_count(conn: sqlite3.Connection, now: float | None = None) -> dict[str, 
     """The rail badge's number (#118): the engine's own rows, one cheap read
     of the `alerts` table — never an `attention_items` run, since the rail
     renders on every page. Returns {severity: n}, empty when nothing counts.
-    It counts what the Active tab lists:
+    It counts what the engine would page about, and lists what the Active
+    tab does:
 
-    - open alerts, pending and active (the tab marks pending ones);
+    - open alerts, pending and active;
     - one-shot events (config-changed, snapshot-failed) inside the tab's
-      window, which the engine stores as already cleared; one that was
-      silenced when it fired has no `active_at`, and one older than its
-      rule's last switch-on is hidden, as `_apply_rule_settings` hides it.
+      window, which the engine stores as already cleared. `evaluate` keeps
+      `active_at` current with the silence state (NULL while silenced), and
+      an event older than its rule's last switch-on is hidden, as
+      `_apply_rule_settings` hides it.
 
     Silenced rows and rows of a rule switched off since the last poll are
-    left out at once, the severity override applies, as it does on the tab.
+    left out at once, and the severity override applies, as on the tab.
 
-    What it cannot match is the live part: the table is as of the last poll,
-    so a silence or a new item shows on the tab first; and the tab still
-    lists link and canary items the engine holds back (`inhibited`) while
-    their device is down, which never reach the table."""
+    What remains different, by design or by timing: items the engine holds
+    back while their device is down (`held_by`) are on the tab, tagged
+    "held", and never in the table; the table is as of the last poll, so a
+    new item, a clear, or a silence shows on the tab first (and an event's
+    silence state follows on the next poll); and an event whose source row
+    was deleted stays counted until its 24-hour window ends.
+
+    Two selects joined by UNION ALL: open rows come through the partial
+    index on `state != 'cleared'`, events through the index on `raised_at`,
+    so cleared history never costs a scan."""
     now = db.now() if now is None else now
     events = tuple(n for n, r in RULES.items() if r.event)
     marks = ",".join("?" * len(events))
+    sev = "COALESCE(NULLIF(r.severity, ''), a.severity)"
+    join = "FROM alerts a LEFT JOIN alert_rules r ON r.name = a.rule "
     return {r["sev"]: r["n"] for r in conn.execute(
-        "SELECT COALESCE(NULLIF(r.severity, ''), a.severity) AS sev, COUNT(*) AS n "
-        "FROM alerts a LEFT JOIN alert_rules r ON r.name = a.rule "
-        "WHERE COALESCE(r.enabled, 1) = 1 AND ("
-        "  a.state IN ('pending', 'active')"
-        f"  OR (a.state = 'cleared' AND a.rule IN ({marks}) AND a.active_at IS NOT NULL"
-        "      AND a.raised_at >= ? AND a.raised_at >= COALESCE(r.enabled_at, 0))) "
-        "GROUP BY sev", (*events, now - EVENT_WINDOW_S))}
+        "SELECT sev, SUM(n) AS n FROM ("
+        f" SELECT {sev} AS sev, COUNT(*) AS n {join}"
+        "  WHERE a.state != 'cleared' AND a.state IN ('pending', 'active')"
+        "  AND COALESCE(r.enabled, 1) = 1 GROUP BY sev"
+        " UNION ALL"
+        f" SELECT {sev} AS sev, COUNT(*) AS n {join}"
+        f"  WHERE a.state = 'cleared' AND a.raised_at >= ? AND a.rule IN ({marks})"
+        "  AND a.active_at IS NOT NULL AND a.raised_at >= COALESCE(r.enabled_at, 0)"
+        "  AND COALESCE(r.enabled, 1) = 1 GROUP BY sev"
+        ") GROUP BY sev", (now - EVENT_WINDOW_S, *events))}
 
 
 def prune_history(conn: sqlite3.Connection, now: float | None = None) -> None:
