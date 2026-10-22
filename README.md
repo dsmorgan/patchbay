@@ -58,7 +58,7 @@ container for anything you intend to keep running.
 One poll runs at a time, across processes. A `patchbay poll` that starts
 while another poll runs waits for it to finish, and the ops page's Poll
 button answers "a poll is already running" instead of starting a second
-one. The lease lives in the database and a running poll renews it every
+one. A lease in the database enforces this. A running poll renews it every
 minute, so a poller that dies holding it, even killed outright, frees it
 within three minutes.
 
