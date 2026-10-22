@@ -46,8 +46,27 @@ services:
       # Not cosmetic: PATCHBAY_SNAPSHOT_AT is compared against the container's
       # local time, so without this a nightly "03:30" fires at 03:30 UTC.
       - TZ=${TZ:-UTC}
+      # how stale /healthz tolerates the poller being: three of these
+      - PATCHBAY_POLL_INTERVAL=${PATCHBAY_POLL_INTERVAL:-}
     volumes:
       - ./data:/data  # .env + patchbay.db live here
+    # Reports, never restarts: compose leaves an unhealthy container running.
+    # /healthz answers 503 when the poller has not finished a poll in three
+    # poll intervals, so `docker ps` shows (unhealthy) when polling stops.
+    # urlopen raises on a 503, which is what fails the check. The probe
+    # connects to 127.0.0.1, which PATCHBAY_ALLOWED_HOSTS always allows. Change
+    # the port to match --port under host networking, and the scheme to
+    # https if PATCHBAY_TLS=direct (the probe must then skip verification).
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=5)"
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   patchbay-poller:
@@ -56,12 +75,17 @@ services:
     #   context: .
     #   args:
     #     GIT_SHA: "${GIT_SHA:-dev}"
-    command: sh -c 'while true; do patchbay poll; sleep "${PATCHBAY_POLL_INTERVAL:-300}"; done'
+    # `patchbay poller` polls, sleeps PATCHBAY_POLL_INTERVAL, and repeats, and
+    # exits within a second of SIGTERM between polls. A stop during a poll lets
+    # it finish, so stop_grace_period covers a long one; a second signal aborts.
+    command: ["patchbay", "poller"]
+    stop_grace_period: 1m
 
     # network_mode: host   # uncomment alongside the web service if using host networking
 
     environment:
       - TZ=${TZ:-UTC}
+      - PATCHBAY_POLL_INTERVAL=${PATCHBAY_POLL_INTERVAL:-}   # empty = 300
     volumes:
       - ./data:/data
     restart: unless-stopped

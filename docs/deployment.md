@@ -324,6 +324,47 @@ any other rule. When the failing transport is the default, the attention
 list still shows the item, and a Kuma monitor that stops receiving pushes
 goes down on its own.
 
+### Detect a stopped poller
+
+Alerts are raised by the poller, so a stopped poller raises none, and a
+Kuma push monitor only notices after its heartbeat interval lapses.
+patchbay's web service answers `/healthz` for this case:
+
+| Response | Meaning |
+|---|---|
+| `200 ok` | The last poll finished within three poll intervals (15 minutes by default). |
+| `503 stale` | No poll has finished for longer than that. The poller is stopped, stuck, or can't reach the database. |
+
+The body is only `ok` or `stale`, so the endpoint reveals nothing about your
+network and needs no sign-in, whatever `PATCHBAY_AUTH` says. It still obeys
+`PATCHBAY_ALLOWED_HOSTS`: a monitor must send a Host header on the
+allowlist. The check reads the database and takes no write lock.
+
+A poll counts when it finishes, whether or not its sources answered, so
+`/healthz` reports the poller's liveness and not your network's health. The
+alerts cover the network. Before the first poll, the endpoint answers `200`
+for three poll intervals after the web service starts, then `503`. An
+instance with no sources configured never polls, so it turns `stale` after
+that grace period.
+
+To monitor it from Uptime Kuma:
+
+1. Click **Add New Monitor** and set **Monitor Type** to **HTTP(s)**. To
+   match the body instead of the status code, choose **HTTP(s) - Keyword**
+   and set **Keyword** to `ok`.
+2. Set **URL** to `http://<patchbay host>:8013/healthz`, or the address you
+   give your browser, behind a reverse proxy.
+3. Set **Heartbeat Interval** to 60 seconds, attach your notification
+   providers, and save. Kuma treats a `503` as down.
+
+The compose files also give the web service a healthcheck that requests
+`/healthz` from inside the container every 60 seconds. `docker ps` then
+shows `(unhealthy)` when polling stops. Compose only reports this and never
+restarts the container for it, so a stale poller can't cause a restart loop.
+If you set `PATCHBAY_POLL_INTERVAL`, set it for both services, as the
+compose files do, so that the web service knows how long a poll may take to
+arrive.
+
 ## Container user and upgrading
 
 The image runs as an unprivileged user, uid/gid `10001`, and never changes
@@ -526,6 +567,12 @@ rebuild.
 | LibreNMS API token | inside `dbdata` | destroyed by `down -v` — regenerate and update `data/.env` after |
 
 ## Tearing down
+
+Stopping is quick: the poller (`patchbay poller`) handles `SIGTERM`, so a
+stop between polls takes about a second. A stop during a poll lets that poll
+finish, which keeps its data and notifications together, for up to the
+poller's `stop_grace_period` (1 minute in the compose files). Press the
+interrupt again, or send a second `SIGTERM`, to abort the poll instead.
 
 `docker compose -f docker-compose.stack.yml down` stops everything and keeps
 all data — `up -d` resumes with history intact. Adding `-v` destroys the
