@@ -229,8 +229,9 @@ def rule_settings(conn: sqlite3.Connection,
                   catalog: dict[str, Rule] = RULES) -> list[dict]:
     """What the Rules tab shows: each catalog rule with its stored enable,
     severity override, and route, and the parameters a site can edit (the
-    catalog's own keys) at their effective values."""
-    seed_rules(conn, catalog)
+    catalog's own keys) at their effective values. Read-only: a rule with
+    no stored row shows its catalog defaults (the poll and every save seed
+    the rows), so a GET never needs SQLite's write lock (#109)."""
     config = _config(conn, catalog)
     out = []
     for name, rule in catalog.items():

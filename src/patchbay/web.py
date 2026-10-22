@@ -443,8 +443,6 @@ def alerts(request: Request, category: str | None = None,
         alert_snap = _alert_snapshot_view(settings) if tab == "rules" else None
         for r in rules:   # "default (kuma, warn+)" rather than the stored "1:warn"
             r["route_label"] = transports.route_label(conn, r["route"])
-        if rules:
-            conn.commit()   # seeding a fresh install's rows is not a poll's job
         return templates.TemplateResponse(request, "alerts.html", {
             "rules": rules, "severities": alerting.SEVERITIES,
             "alert_snapshot": alert_snap,
