@@ -173,7 +173,7 @@ CREATE TABLE IF NOT EXISTS vnic_vlans (
     source TEXT NOT NULL       -- (device, interface) by the normalizer.
 );
 CREATE TABLE IF NOT EXISTS rate_history (
-    device TEXT NOT NULL,      -- one sample per port per measurement; feeds the
+    device TEXT NOT NULL,      -- one sample per port per poll; feeds the
     interface TEXT NOT NULL,   -- topology load view's peak metric
     ts REAL NOT NULL,
     in_bps INTEGER,
@@ -181,10 +181,7 @@ CREATE TABLE IF NOT EXISTS rate_history (
     in_errors REAL,            -- error and discard counters, per second, for
     out_errors REAL,           -- the port-canary rule (ADR-0003 Decision 5);
     in_discards REAL,          -- NULL when the source does not report them
-    out_discards REAL,
-    src_ts REAL                -- when the source measured this rate (LibreNMS's
-                               -- poll_time), NULL when it doesn't say: a
-                               -- repoll of the same measurement isn't a sample
+    out_discards REAL
 );
 CREATE INDEX IF NOT EXISTS idx_rate_hist ON rate_history (device, interface, ts);
 -- the newest samples across every port (the port canary's last 15 minutes,
@@ -405,8 +402,6 @@ def init(conn: sqlite3.Connection) -> None:
     for col in RATE_COUNTERS:  # #64: port-counter canaries
         if col not in hcols:
             conn.execute(f"ALTER TABLE rate_history ADD COLUMN {col} REAL")
-    if "src_ts" not in hcols:  # #117: a repoll inside one source window
-        conn.execute("ALTER TABLE rate_history ADD COLUMN src_ts REAL")
     alcols = {r[1] for r in conn.execute("PRAGMA table_info(alerts)")}
     if "sample_ts" not in alcols:  # #110: `for` counts distinct samples
         conn.execute("ALTER TABLE alerts ADD COLUMN sample_ts REAL")
