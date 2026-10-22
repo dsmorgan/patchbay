@@ -130,6 +130,51 @@ def _retire_stale_aliases(conn: sqlite3.Connection, keys: dict[str, str],
                          (alias, canon))
 
 
+# How long a merge survivor may go unreported by its own source while that
+# source keeps reporting the names it was merged from (three 5-minute polls)
+SURVIVOR_GRACE = 15 * 60
+
+
+def _retire_merge_survivors(conn: sqlite3.Connection) -> None:
+    """Remove device rows that exist only because the first-dot rule merged
+    other names into them.
+
+    Two vSphere hosts added by address were one hypervisor "192" before
+    #98. After the upgrade the source reports them under their own names
+    again, but nothing deletes "192" (vSphere never retires hosts), so it
+    stays on the map beside them. A row is such a survivor when no alias
+    points at it any more, its name is the first label of live devices
+    whose canonical name is something else, and its own source has kept
+    reporting those devices for SURVIVOR_GRACE without reporting it. A
+    real device that happens to share the first label is reported by its
+    source every poll and never qualifies. Its pin moves to the device it
+    most plausibly was: the only member, or the one with its address."""
+    members: dict[str, list[sqlite3.Row]] = {}
+    for r in conn.execute("SELECT * FROM devices").fetchall():
+        first = _first_label(r["name"])
+        if first != canonical_name(r["name"]):
+            members.setdefault(first, []).append(r)
+    if not members:
+        return
+    for c in conn.execute(
+            f"SELECT * FROM devices WHERE name IN ({','.join('?' * len(members))})",
+            sorted(members)).fetchall():
+        if c["source"] in ("inference", "declared") or conn.execute(
+                "SELECT 1 FROM aliases WHERE canonical = ?", (c["name"],)).fetchone():
+            continue
+        same = [m for m in members[c["name"]] if m["source"] == c["source"]]
+        if not same or (c["last_seen"] or 0) > \
+                min(m["last_seen"] or 0 for m in same) - SURVIVOR_GRACE:
+            continue
+        heir = same if len(same) == 1 else \
+            [m for m in same if c["mgmt_ip"] and m["mgmt_ip"] == c["mgmt_ip"]]
+        if len(heir) == 1:
+            conn.execute("UPDATE OR IGNORE positions SET name = ? WHERE name = ?",
+                         (heir[0]["name"], c["name"]))
+        conn.execute("DELETE FROM devices WHERE id = ?", (c["id"],))
+        conn.execute("DELETE FROM interfaces WHERE device_id = ?", (c["id"],))
+
+
 def _merge_group(conn: sqlite3.Connection, rows: list[sqlite3.Row],
                  canon: str) -> None:
     # freshest row within a source wins ties — a stable sort on priority alone
@@ -1090,12 +1135,13 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
         conn.execute("INSERT OR REPLACE INTO aliases (alias, canonical) VALUES (?, ?)",
                      (alias, canonical))
     before = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
-    groups: dict[str, list[sqlite3.Row]] = {}
-    keys: dict[str, str] = {}
-    for r in conn.execute("SELECT * FROM devices").fetchall():
-        keys[r["name"]] = _identity_key(r)
-        groups.setdefault(keys[r["name"]], []).append(r)
+    keys = {r["name"]: _identity_key(r)
+            for r in conn.execute("SELECT * FROM devices").fetchall()}
     _retire_stale_aliases(conn, keys, set(seed_aliases or {}))
+    _retire_merge_survivors(conn)
+    groups: dict[str, list[sqlite3.Row]] = {}
+    for r in conn.execute("SELECT * FROM devices").fetchall():
+        groups.setdefault(_identity_key(r), []).append(r)
     for key, rows in groups.items():
         _merge_group(conn, rows, key)
     _rename_refs(conn)
