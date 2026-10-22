@@ -453,3 +453,24 @@ A record also goes when another stated cable claims one of its ports: a
 port has one cable, so a moved cable supersedes its old record. Device
 renames rewrite the records like every other name-keyed table. Items keep
 `ports`, so device-down inhibition and silences apply as before.
+
+## Amendment (2026-10-22): phase 6 close-out, issues #70 and #99
+
+**UniFi error rates, #70.** Decision 5 deferred UniFi to a delta
+follow-up, and Decision 9 listed "no UniFi error counters". The UniFi
+collector now stores error rates for switch ports from the change in
+`rx_errors` and `tx_errors` between polls. A counter reset (a negative
+delta) or a gap of more than 30 minutes since the previous poll stores no
+rate, so a canary never reads a delta across missed polls. Errors only:
+discards stay uncollected, tracked in #83 (LibreNMS) and #86 (the canary's
+discard half).
+
+**Summary strip.** Decision 8 promised /alerts a summary strip with active
+counts by severity and each transport's delivery state. It did not ship in
+that form. The per-category count chips stay on the Overview, and /alerts
+filters by category and severity. Delivery state is on the Transports tab
+(see the #61 amendment).
+
+**Reminds.** `remind` is a rule parameter in minutes (0 = never, the
+default), set on the Rules tab for every rule that is not an event. A
+missing or unreadable stored value means never.
