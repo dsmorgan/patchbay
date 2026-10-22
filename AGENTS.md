@@ -45,7 +45,14 @@ site-specific leaked into code, tests, or docs.
   third-party ones via the `patchbay.collectors` entry-point group —
   docs/collectors.md is the contract). They write raw observations; they never
   resolve conflicts — that's `normalize.py`'s job. `collect()` runs in a
-  caller-managed transaction: raise on failure, never `conn.commit()`.
+  caller-managed transaction: raise on failure, never `conn.commit()`, and
+  make every network call before the first write — the write lock lasts
+  from there to the commit, and the UI waits on it (#109).
+- **Nothing blocking on the event loop**: a route that touches SQLite is a
+  plain `def` (FastAPI runs it in the threadpool); one that must stay async
+  reads its body in an async dependency or offloads with `run_in_threadpool`.
+  A GET doesn't write (db.init's one-time migrations aside). One poll at a time across processes: the `poll_lease`
+  row in `app_state` (`db.claim_poll_lease`), not an in-process lock.
 - **Evidence ages out**: non-declared links and inferred switches expire after
   `EVIDENCE_TTL` (2h) without a refresh; live evidence is re-upserted every
   poll/normalize. Declared rows live and die by the .env/DB declaration only.
