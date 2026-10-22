@@ -1090,6 +1090,135 @@ def test_librenms_ports_query_stores_error_rates(conn, clean_env, monkeypatch):
     assert (row["in_discards"], row["out_discards"]) == (None, None)
 
 
+class _LnmsPollTimeClient(_LnmsRatesClient):
+    """_LnmsRatesClient whose port answers `poll_time` when asked for it; a
+    `strict` LibreNMS answers 422 to a request naming a column it lacks."""
+    poll_time = 1_800_000_000
+    strict = False
+
+    def get(self, url, **kw):
+        r = super().get(url, **kw)
+        outer = self
+        if "/ports?columns=" in url:
+            cols = url.split("columns=", 1)[1].split(",")
+            if "poll_time" in cols:
+                if outer.strict:
+                    r.status_code = 422
+                    def boom(): raise httpx.HTTPStatusError(
+                        "422", request=httpx.Request("GET", url),
+                        response=httpx.Response(422))
+                    r.raise_for_status = boom
+                else:
+                    body = r.json()
+                    body["ports"][0]["poll_time"] = outer.poll_time
+                    r.json = lambda: body
+        return r
+
+
+def _lnms_samples(conn):
+    return conn.execute(
+        "SELECT in_bps, src_ts FROM rate_history WHERE interface = '1/0/5' "
+        "ORDER BY ts, rowid").fetchall()
+
+
+def test_librenms_two_polls_in_one_window_store_one_sample(conn, clean_env, monkeypatch):
+    """#117: a second poll before LibreNMS has polled the port again reads the
+    same figures; poll_time hasn't moved, so no second rate_history row."""
+    from patchbay.collectors.librenms import LibreNmsCollector
+    _LnmsPollTimeClient.urls, _LnmsPollTimeClient.strict = [], False
+    _LnmsPollTimeClient.poll_time = 1_800_000_000
+    monkeypatch.setattr(httpx, "Client", _LnmsPollTimeClient)
+    monkeypatch.setattr(pdb, "now", lambda: 5000.0)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    monkeypatch.setattr(pdb, "now", lambda: 5030.0)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    assert [tuple(r) for r in _lnms_samples(conn)] == [(8000, 1_800_000_000.0)]
+    # the interface row itself still refreshes: only the history is deduped
+    assert conn.execute("SELECT in_bps FROM interfaces WHERE name = '1/0/5'"
+                        ).fetchone()[0] == 8000
+
+
+def test_librenms_poll_after_window_advances_stores_second_sample(conn, clean_env, monkeypatch):
+    from patchbay.collectors.librenms import LibreNmsCollector
+    _LnmsPollTimeClient.urls, _LnmsPollTimeClient.strict = [], False
+    _LnmsPollTimeClient.poll_time = 1_800_000_000
+    monkeypatch.setattr(httpx, "Client", _LnmsPollTimeClient)
+    monkeypatch.setattr(pdb, "now", lambda: 5000.0)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    _LnmsPollTimeClient.poll_time = 1_800_000_300
+    monkeypatch.setattr(pdb, "now", lambda: 5300.0)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    assert [r["src_ts"] for r in _lnms_samples(conn)] == [
+        1_800_000_000.0, 1_800_000_300.0]
+
+
+def test_librenms_dedup_survives_a_renamed_device(conn, clean_env, monkeypatch):
+    """normalize renames rate_history to the canonical device name; the
+    collector's next poll reports the raw sysName and must still find it."""
+    from patchbay.collectors.librenms import LibreNmsCollector
+    _LnmsPollTimeClient.urls, _LnmsPollTimeClient.strict = [], False
+    _LnmsPollTimeClient.poll_time = 1_800_000_000
+    monkeypatch.setattr(httpx, "Client", _LnmsPollTimeClient)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    # LibreNMS reports the FQDN; the stored rows carry the canonical name
+    orig = _LnmsPollTimeClient.get
+
+    def get(self, url, **kw):
+        r = orig(self, url, **kw)
+        if url.endswith("/devices"):
+            body = {"devices": [{"device_id": 1, "sysName": "SW1.lan",
+                                 "os": "netgear", "status": 1, "disabled": 0}]}
+            r.json = lambda: body
+        return r
+    monkeypatch.setattr(_LnmsPollTimeClient, "get", get)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    assert len(_lnms_samples(conn)) == 1
+
+
+def test_librenms_without_poll_time_stores_every_poll(conn, clean_env, monkeypatch):
+    """A LibreNMS that refuses the poll_time column (422 on the request that
+    names it) is asked again without it, and every poll stores a sample as
+    before: nothing can say two polls share a window."""
+    from patchbay.collectors.librenms import LibreNmsCollector
+    _LnmsPollTimeClient.urls, _LnmsPollTimeClient.strict = [], True
+    monkeypatch.setattr(httpx, "Client", _LnmsPollTimeClient)
+    for t in (5000.0, 5030.0):
+        monkeypatch.setattr(pdb, "now", lambda t=t: t)
+        LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    assert [tuple(r) for r in _lnms_samples(conn)] == [(8000, None), (8000, None)]
+    asked = [u for u in _LnmsPollTimeClient.urls if "/ports?columns=" in u]
+    assert any("poll_time" in u for u in asked) and any("poll_time" not in u for u in asked)
+    # once refused, the rest of that poll doesn't ask again (2 polls: 1 + 1)
+    assert sum("poll_time" in u for u in asked) == 2
+
+
+def test_librenms_poll_time_refusal_is_only_for_400_and_422(conn, clean_env, monkeypatch):
+    """An auth failure on the ports request still raises: it is not a column
+    problem, and retrying without poll_time would hide it."""
+    from patchbay.collectors.librenms import LibreNmsCollector
+
+    class Denied(_LnmsPollTimeClient):
+        def get(self, url, **kw):
+            r = super().get(url, **kw)
+            if "/ports?columns=" in url:
+                r.status_code = 401
+                def boom(): raise httpx.HTTPStatusError(
+                    "401", request=httpx.Request("GET", url),
+                    response=httpx.Response(401))
+                r.raise_for_status = boom
+            return r
+    monkeypatch.setattr(httpx, "Client", Denied)
+    with pytest.raises(httpx.HTTPStatusError):
+        LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+
+
+def test_librenms_ports_columns_are_a_real_ports_listing():
+    """poll_time is requested on top of PORTS_COLUMNS, never inside it."""
+    from patchbay.collectors import librenms
+    assert "poll_time" not in librenms.PORTS_COLUMNS.split(",")
+    assert librenms.POLL_TIME_COLUMN == "poll_time"
+
+
 def test_librenms_rate_sample_parses_every_counter():
     """A payload that does carry the discard rates (a later source, or a
     LibreNMS that moves them) maps each onto its own column."""
@@ -2602,6 +2731,32 @@ def test_unifi_error_rates_reach_port_canary(conn, clean_env, monkeypatch):
     canary = [i for i in items if i["rule"] == "port-canary"]
     assert [i["key"] for i in canary] == [
         "port:canary:sw-access-01:Port 1:in_errors"]
+
+
+def test_unifi_quick_repoll_stores_no_second_sample(conn, clean_env, monkeypatch):
+    """#117: a poll seconds after another re-reads the controller's rolling
+    rates and divides a counter delta by a tiny gap. No sample, and the error
+    baseline stays at the stored sample, so the next real poll measures the
+    whole gap."""
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(0, 0), 1000.0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(5, 0), 1002.0)
+    assert len(_err_rows(conn)) == 1
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(60, 0), 1060.0)
+    rows = _err_rows(conn)
+    assert len(rows) == 2 and rows[1]["in_errors"] == pytest.approx(1.0)
+    # the AP uplink obeys the same gap
+    n = lambda: conn.execute(
+        "SELECT count(*) FROM rate_history WHERE interface = 'eth0'").fetchone()[0]
+    after_ap = n()
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(61, 0), 1065.0)
+    assert n() == after_ap and len(_err_rows(conn)) == 2
+
+
+def test_unifi_repoll_after_the_gap_stores_a_sample(conn, clean_env, monkeypatch):
+    from patchbay.collectors.unifi import MIN_SAMPLE_GAP_S
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(0, 0), 1000.0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_errors(0, 0), 1000.0 + MIN_SAMPLE_GAP_S)
+    assert len(_err_rows(conn)) == 2
 
 
 def test_unifi_error_rate_dropped_after_long_gap(conn, clean_env, monkeypatch):

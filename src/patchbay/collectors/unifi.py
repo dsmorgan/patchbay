@@ -80,6 +80,28 @@ def _error_rates(prev: dict, now_ts: float, key: str, port: dict, live: bool,
     return out[0], out[1]
 
 
+SAMPLED_STATE_KEY = "unifi_rate_sampled"
+# A port is sampled at most once per this many seconds (#117). The rates are
+# the controller's rolling figures and the error rates come from counter
+# deltas, so a manual "Poll now" seconds after a poll re-reads the same
+# figures (a duplicate sample for the canary and the p95 baseline) or divides
+# a one-error delta by a two-second gap (a spike). Well under the 300 s
+# default interval, so a scheduled poll never trips it.
+MIN_SAMPLE_GAP_S = 30
+
+
+def _due(prev: dict, now_ts: float, key: str, seen: dict) -> bool:
+    """Whether this port gets a sample on this poll. A port sampled less than
+    MIN_SAMPLE_GAP_S ago keeps its earlier time in `seen`, so the gap is
+    measured from the last sample actually stored."""
+    last = prev.get(key)
+    if isinstance(last, (int, float)) and 0 <= now_ts - last < MIN_SAMPLE_GAP_S:
+        seen[key] = last
+        return False
+    seen[key] = now_ts
+    return True
+
+
 def _sample(conn: sqlite3.Connection, device: str, iface: str,
             in_bps: int | None, out_bps: int | None,
             in_errors: float | None = None,
@@ -145,6 +167,11 @@ class UnifiCollector:
         except ValueError:
             prev_err = {}
         seen_err: dict[str, list] = {}
+        try:
+            prev_sampled = json.loads(db.get_state(conn, SAMPLED_STATE_KEY) or "{}")
+        except ValueError:
+            prev_sampled = {}
+        seen_sampled: dict[str, float] = {}
         err_ts = db.now()
         ap_by_mac: dict[str, str] = {}
         sw_mac_to_name: dict[str, str] = {}        # switch chassis MAC → device name
@@ -196,9 +223,15 @@ class UnifiCollector:
                         in_bps=in_bps,
                         out_bps=out_bps,
                     )
+                    key = json.dumps([dev_name, port_name])
+                    if live and not _due(prev_sampled, err_ts, key, seen_sampled):
+                        # a repoll inside the gap: no sample, and the error
+                        # counters' baseline stays where it was
+                        if key in prev_err:
+                            seen_err[key] = prev_err[key]
+                        continue
                     in_err, out_err = _error_rates(
-                        prev_err, err_ts, json.dumps([dev_name, port_name]),
-                        port, live, seen_err)
+                        prev_err, err_ts, key, port, live, seen_err)
                     _sample(conn, dev_name, port_name, in_bps, out_bps,
                             in_err, out_err)
                 sw_port_names[dev_name] = port_idx_map
@@ -249,7 +282,9 @@ class UnifiCollector:
                 mac=d.get("mac"),
                 description="uplink",
             )
-            _sample(conn, dev_name, iface_name, ap_in, ap_out)
+            if not live or _due(prev_sampled, err_ts,
+                                json.dumps([dev_name, iface_name]), seen_sampled):
+                _sample(conn, dev_name, iface_name, ap_in, ap_out)
             # Physical link to the upstream switch via LLDP-discovered
             # port. Buffered like the switch uplinks so a renamed port
             # on the upstream switch resolves to its stored name.
@@ -261,6 +296,7 @@ class UnifiCollector:
             n_aps += 1
 
         db.set_state(conn, ERR_STATE_KEY, json.dumps(seen_err))
+        db.set_state(conn, SAMPLED_STATE_KEY, json.dumps(seen_sampled))
 
         # uplink_remote_port is a port index; resolve it through the
         # upstream switch's port_table so a renamed port still matches
