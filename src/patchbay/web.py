@@ -2106,13 +2106,20 @@ def ops_poll(source: str | None = None):
     if not _ops_lock.acquire(blocking=False):
         raise HTTPException(409, "an ops action is already running — wait for it")
     lines = [f"[warn] {w}" for w in settings.parse_warnings]
+    owner = db.lease_owner("web")
     conn = _conn()
     try:
         db.init(conn)
+        # _ops_lock covers this process; the lease covers the scheduled
+        # poller too, a separate process (#109). Answer now rather than
+        # hold the request open for a poll that is already running.
+        if not db.claim_poll_lease(conn, owner):
+            raise HTTPException(409, "a poll is already running — wait for it")
         for name, collector in sorted(collectors.items()):
             try:
                 lines.append(f"[ok]   {name}: {collector.collect(settings, conn)}")
                 conn.commit()
+                db.claim_poll_lease(conn, owner)   # renew: still polling
             except Exception as e:  # one failing source must not block the others
                 conn.rollback()
                 lines.append(f"[fail] {name}: {hide_userinfo(str(e))}")
@@ -2131,8 +2138,11 @@ def ops_poll(source: str | None = None):
         db.save_last_poll(conn, lines)
         conn.commit()
     finally:
-        conn.close()
-        _ops_lock.release()
+        try:
+            db.release_poll_lease(conn, owner)
+        finally:
+            conn.close()
+            _ops_lock.release()
     try:  # after commit: a receiver never holds the database or the lock
         dispatcher = transports.WebhookDispatcher(settings.db_path)
         alerting.dispatch(notes, dispatcher)

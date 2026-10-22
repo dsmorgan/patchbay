@@ -553,6 +553,91 @@ def get_state(conn: sqlite3.Connection, key: str) -> str | None:
     return row["value"] if row else None
 
 
+# The poll lease (#109): one poll at a time across processes. The web app's
+# Poll button and the scheduled poller are separate processes (separate
+# containers, usually), so an in-process lock can't keep them apart, and a
+# file lock would lean on how a bind mount implements locking. The database
+# both already share holds the lease instead: an app_state row naming its
+# holder and when it lapses. A holder renews it between collectors; one
+# that dies leaves a lease that lapses on its own after POLL_LEASE_TTL.
+POLL_LEASE = "poll_lease"
+POLL_LEASE_TTL = 900.0
+
+
+def lease_owner(kind: str) -> str:
+    """A name for one poll: who took it (cli, web), its process, and a
+    random part, since two containers can each run a pid 1."""
+    import os
+
+    return f"{kind}:{os.getpid()}:{secrets.token_hex(4)}"
+
+
+def _lease_holder(conn: sqlite3.Connection) -> dict | None:
+    row = conn.execute("SELECT value FROM app_state WHERE key = ?",
+                       (POLL_LEASE,)).fetchone()
+    try:
+        held = json.loads(row[0]) if row else None
+    except ValueError:
+        return None          # a damaged row holds nothing
+    if (isinstance(held, dict) and isinstance(held.get("owner"), str)
+            and isinstance(held.get("until"), (int, float))):
+        return held
+    return None
+
+
+def claim_poll_lease(conn: sqlite3.Connection, owner: str, *,
+                     ttl: float = POLL_LEASE_TTL) -> bool:
+    """Take the poll lease for owner, or renew it if owner holds it. False
+    when another poll holds an unexpired lease, or the database stayed
+    locked past the busy timeout. The read and the write share one
+    BEGIN IMMEDIATE, so two processes can't both see the lease free.
+    Commits any open transaction first, as executescript would."""
+    if conn.in_transaction:
+        conn.commit()
+    # a plain read first: a held lease is answered without waiting for the
+    # write lock, which the running poll may be holding
+    held = _lease_holder(conn)
+    if held and held["owner"] != owner and held["until"] > now():
+        return False
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError:
+        return False
+    try:
+        t = now()
+        held = _lease_holder(conn)
+        if held and held["owner"] != owner and held["until"] > t:
+            conn.rollback()
+            return False
+        set_state(conn, POLL_LEASE, json.dumps({"owner": owner, "until": t + ttl}))
+        conn.commit()
+        return True
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def release_poll_lease(conn: sqlite3.Connection, owner: str) -> None:
+    """Give the lease back if owner still holds it. Discards uncommitted
+    work, as closing the connection would: commit before releasing. Best
+    effort: a lease that can't be released lapses at its expiry."""
+    if conn.in_transaction:
+        conn.rollback()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as e:
+        log.warning("poll lease not released (it lapses on its own): %s", e)
+        return
+    try:
+        held = _lease_holder(conn)
+        if held and held["owner"] == owner:
+            conn.execute("DELETE FROM app_state WHERE key = ?", (POLL_LEASE,))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
 def save_last_poll(conn: sqlite3.Connection, lines: list[str]) -> None:
     """The most recent poll's per-source results. /ops renders these so a
     headless deployment's overnight failures are visible without a shell."""

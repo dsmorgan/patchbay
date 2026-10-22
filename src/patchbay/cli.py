@@ -11,11 +11,59 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
+from typing import Iterator
 
 from . import __version__, alerting, db
 from .collectors import all_collectors, available
 from .config import load_settings, read_poll_interval
 from .redact import hide_userinfo
+
+
+# How long a poll waits for another one to finish (#109). Past the lease's
+# TTL a dead holder's lease has lapsed, so a wait this long always ends.
+POLL_LEASE_WAIT = db.POLL_LEASE_TTL + 60
+POLL_LEASE_RETRY = 2.0
+
+
+@contextmanager
+def _poll_lease(conn: sqlite3.Connection, owner: str) -> Iterator[bool]:
+    """Ready the database, then hold the cross-process poll lease for the
+    with body: yields False when another poll kept it past POLL_LEASE_WAIT.
+    The web app's Poll button and this poller are separate processes, and
+    two polls at once fail each other's collectors on SQLite's write lock.
+    On exit the poll's work is committed (or, on an error, rolled back)
+    before the lease goes back."""
+    # `compose up` starts the web app and this poller together, and on a
+    # fresh database both run the same schema migrations at once. Real
+    # filesystems serialize that on SQLite's lock; Docker Desktop's
+    # shared mounts (macOS/Windows) can surface the collision as a
+    # spurious "disk I/O error" instead, so give the peer a moment and
+    # try once more before believing it.
+    try:
+        db.init(conn)
+    except sqlite3.OperationalError:
+        time.sleep(3)
+        db.init(conn)
+    deadline = time.monotonic() + POLL_LEASE_WAIT
+    waiting = False
+    while not db.claim_poll_lease(conn, owner):
+        if time.monotonic() >= deadline:
+            yield False
+            return
+        if not waiting:
+            print("[wait] another poll is running; waiting for it", file=sys.stderr)
+            waiting = True
+        time.sleep(POLL_LEASE_RETRY)
+    try:
+        yield True
+    except BaseException:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
+    finally:
+        db.release_poll_lease(conn, owner)
 
 
 def cmd_poll(args: argparse.Namespace) -> int:
@@ -42,18 +90,12 @@ def cmd_poll(args: argparse.Namespace) -> int:
 
     for w in settings.parse_warnings:
         say(f"[warn] {w}", err=True)
-    with db.connect(settings.db_path) as conn:
-        # `compose up` starts the web app and this poller together, and on a
-        # fresh database both run the same schema migrations at once. Real
-        # filesystems serialize that on SQLite's lock; Docker Desktop's
-        # shared mounts (macOS/Windows) can surface the collision as a
-        # spurious "disk I/O error" instead, so give the peer a moment and
-        # try once more before believing it.
-        try:
-            db.init(conn)
-        except sqlite3.OperationalError:
-            time.sleep(3)
-            db.init(conn)
+    owner = db.lease_owner("cli")
+    with db.connect(settings.db_path) as conn, _poll_lease(conn, owner) as leased:
+        if not leased:
+            print(f"[fail] poll: another poll held the lease for over "
+                  f"{POLL_LEASE_WAIT:.0f}s; skipped this cycle", file=sys.stderr)
+            return 1
         from .normalize import normalize
 
         def run_normalize() -> str:
@@ -86,6 +128,7 @@ def cmd_poll(args: argparse.Namespace) -> int:
                 conn.execute("RELEASE pre_normalize")
                 say(f"[warn] normalize after {name}: {e}", err=True)
             conn.commit()  # each source lands atomically
+            db.claim_poll_lease(conn, owner)   # renew: still polling
             say(f"[ok]   {name}: {summary}")
 
         try:  # the closing pass is the one whose summary the cycle reports
