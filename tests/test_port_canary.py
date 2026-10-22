@@ -252,7 +252,7 @@ def test_catalog_row_and_category(conn):
     alerting.seed_rules(conn)
     params = json.loads(conn.execute(
         "SELECT params FROM alert_rules WHERE name = 'port-canary'").fetchone()[0])
-    assert params == {"for": 2, "floor": 50, "multiplier": 100, "clear": 10,
+    assert params == {"for": 2, "remind": 0, "floor": 50, "multiplier": 100, "clear": 10,
                       "warmup_h": 24}
     assert alerting.RULES["port-canary"].category == "port"
     assert attention.CATEGORIES["port"] == "ports"
