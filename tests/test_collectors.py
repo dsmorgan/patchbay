@@ -1152,27 +1152,56 @@ def test_librenms_poll_after_window_advances_stores_second_sample(conn, clean_en
         1_800_000_000.0, 1_800_000_300.0]
 
 
-def test_librenms_dedup_survives_a_renamed_device(conn, clean_env, monkeypatch):
-    """normalize renames rate_history to the canonical device name; the
-    collector's next poll reports the raw sysName and must still find it."""
+def test_librenms_dedup_survives_an_alias_rename(conn, clean_env, monkeypatch):
+    """normalize moves rate_history to the alias target (here sw1 -> core1);
+    the next poll in the same window reports sw1 again and must not store a
+    duplicate, because the last poll_time is kept by port_id, not by name."""
     from patchbay.collectors.librenms import LibreNmsCollector
+    from patchbay.normalize import normalize
     _LnmsPollTimeClient.urls, _LnmsPollTimeClient.strict = [], False
     _LnmsPollTimeClient.poll_time = 1_800_000_000
     monkeypatch.setattr(httpx, "Client", _LnmsPollTimeClient)
     LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
-    # LibreNMS reports the FQDN; the stored rows carry the canonical name
-    orig = _LnmsPollTimeClient.get
-
-    def get(self, url, **kw):
-        r = orig(self, url, **kw)
-        if url.endswith("/devices"):
-            body = {"devices": [{"device_id": 1, "sysName": "SW1.lan",
-                                 "os": "netgear", "status": 1, "disabled": 0}]}
-            r.json = lambda: body
-        return r
-    monkeypatch.setattr(_LnmsPollTimeClient, "get", get)
+    normalize(conn, seed_aliases={"sw1": "core1"})
+    assert {r[0] for r in conn.execute("SELECT device FROM rate_history")} == {"core1"}
     LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
-    assert len(_lnms_samples(conn)) == 1
+    assert conn.execute("SELECT count(*) FROM rate_history").fetchone()[0] == 1
+    # the next window still stores
+    _LnmsPollTimeClient.poll_time = 1_800_000_300
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    assert conn.execute("SELECT count(*) FROM rate_history").fetchone()[0] == 2
+
+
+@pytest.mark.parametrize("raw, stored, window_dedup", [
+    ("1800000000", 1_800_000_000.0, True),     # numeric string
+    (1_800_000_000.0, 1_800_000_000.0, True),
+    ("2027-01-15 08:00:00", None, False),      # not a form the column returns
+    ("", None, False),
+    (-5, None, False),
+])
+def test_librenms_poll_time_forms(conn, clean_env, monkeypatch, raw, stored, window_dedup):
+    """poll_time is coerced once: a usable number dedups, anything else
+    stores every poll as before instead of failing the collection."""
+    from patchbay.collectors.librenms import LibreNmsCollector
+    _LnmsPollTimeClient.urls, _LnmsPollTimeClient.strict = [], False
+    _LnmsPollTimeClient.poll_time = raw
+    monkeypatch.setattr(httpx, "Client", _LnmsPollTimeClient)
+    for _ in range(2):
+        LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    rows = _lnms_samples(conn)
+    assert len(rows) == (1 if window_dedup else 2)
+    assert {r["src_ts"] for r in rows} == {stored}
+
+
+def test_librenms_poll_time_state_is_pruned_to_ports_seen(conn, clean_env, monkeypatch):
+    import json
+    from patchbay.collectors.librenms import LibreNmsCollector, POLL_TIMES_STATE_KEY
+    pdb.set_state(conn, POLL_TIMES_STATE_KEY, json.dumps({"7": 1.0, "999": 2.0}))
+    _LnmsPollTimeClient.urls, _LnmsPollTimeClient.strict = [], False
+    _LnmsPollTimeClient.poll_time = 1_800_000_000
+    monkeypatch.setattr(httpx, "Client", _LnmsPollTimeClient)
+    LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
+    assert json.loads(pdb.get_state(conn, POLL_TIMES_STATE_KEY)) == {"7": 1_800_000_000.0}
 
 
 def test_librenms_without_poll_time_stores_every_poll(conn, clean_env, monkeypatch):

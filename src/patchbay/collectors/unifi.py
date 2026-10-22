@@ -91,9 +91,10 @@ MIN_SAMPLE_GAP_S = 30
 
 
 def _due(prev: dict, now_ts: float, key: str, seen: dict) -> bool:
-    """Whether this port gets a sample on this poll. A port sampled less than
-    MIN_SAMPLE_GAP_S ago keeps its earlier time in `seen`, so the gap is
-    measured from the last sample actually stored."""
+    """Whether this port gets a sample on this poll. `seen` is next poll's
+    `prev`: it records now_ts for a due port, and keeps the earlier time for
+    one polled less than MIN_SAMPLE_GAP_S after it, so a run of quick
+    repolls can't push the next sample out."""
     last = prev.get(key)
     if isinstance(last, (int, float)) and 0 <= now_ts - last < MIN_SAMPLE_GAP_S:
         seen[key] = last

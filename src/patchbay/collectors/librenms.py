@@ -6,6 +6,8 @@ LibreNMS is the SNMP data plane; this collector never talks SNMP itself.
 
 from __future__ import annotations
 
+import json
+import math
 import re
 import sqlite3
 from typing import Any
@@ -85,19 +87,21 @@ PORTS_COLUMNS = ("port_id,ifName,ifIndex,ifAdminStatus,ifOperStatus,ifSpeed,"
 POLL_TIME_COLUMN = "poll_time"
 
 
-def _last_source_ts(conn: sqlite3.Connection, names: set[str],
-                    iface: str) -> float | None:
-    """The newest LibreNMS poll_time stored for this port, under the name as
-    reported or its canonical form (the normalizer renames rate_history)."""
-    best = None
-    for n in names:
-        row = conn.execute(
-            "SELECT src_ts FROM rate_history WHERE device = ? AND interface = ? "
-            "AND src_ts IS NOT NULL ORDER BY ts DESC LIMIT 1", (n, iface)
-        ).fetchone()
-        if row is not None and (best is None or row[0] > best):
-            best = row[0]
-    return best
+POLL_TIMES_STATE_KEY = "librenms_port_poll_times"
+
+
+def _poll_time(raw: Any) -> float | None:
+    """A port's poll_time as epoch seconds, or None when it is absent or not
+    a usable number. `ports.poll_time` is an unsigned integer column, so the
+    API sends an int (or, through some JSON encoders, a numeric string); a
+    datetime string is not a form it can return. None stores every poll."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        t = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return t if math.isfinite(t) and t > 0 else None
 
 
 def _rate_sample(p: dict) -> tuple | None:
@@ -178,8 +182,17 @@ class LibreNmsCollector:
             }
 
     def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
-        from ..normalize import canonical_name
         fetched = self._fetch(settings)
+        # last poll_time seen per LibreNMS port_id (#117). Keyed by id, not
+        # name: names are renamed by canonicalization and aliases. Rebuilt
+        # from the ports seen this poll, so it stays bounded.
+        try:
+            prev_times = json.loads(db.get_state(conn, POLL_TIMES_STATE_KEY) or "{}")
+        except ValueError:
+            prev_times = {}
+        if not isinstance(prev_times, dict):
+            prev_times = {}
+        seen_times: dict[str, float] = {}
         n_devices = n_ports = n_links = 0
         # the write phase: no network I/O from here on
         devices = fetched["devices"]
@@ -223,25 +236,29 @@ class LibreNmsCollector:
                              if p.get("ifOutOctets_rate") is not None else None),
                 )
                 n_ports += 1
+                # a poll_time equal to the last one seen for this port is the
+                # same measurement again (#117); no poll_time (older LibreNMS,
+                # or a port never polled) can't be told apart, so it is
+                # stored. Unequal, even lower, is a new measurement (a reset
+                # LibreNMS must not wedge the port).
+                src_ts = _poll_time(p.get("poll_time"))
+                pkey = str(p["port_id"]) if p.get("port_id") else None
+                last = prev_times.get(pkey) if pkey else None
+                if not isinstance(last, (int, float)):
+                    last = None
+                if pkey and (src_ts or last):
+                    seen_times[pkey] = src_ts if src_ts is not None else last
                 sample = _rate_sample(p)
-                if sample is None:
+                if sample is None or (src_ts is not None and src_ts == last):
                     continue
-                # a poll_time that hasn't moved is the same measurement
-                # again (#117); no poll_time (older LibreNMS, or a port
-                # never polled) can't be told apart, so it is stored
-                src_ts = p.get("poll_time")
-                if src_ts is not None:
-                    last = _last_source_ts(conn, {name, canonical_name(name)},
-                                           p["ifName"])
-                    if last is not None and src_ts <= last:
-                        continue
                 conn.execute(
                     "INSERT INTO rate_history (device, interface, ts, in_bps, "
                     f"out_bps, {', '.join(db.RATE_COUNTERS)}, src_ts) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (name, p["ifName"], db.now(), *sample,
-                     float(src_ts) if src_ts is not None else None),
+                    (name, p["ifName"], db.now(), *sample, src_ts),
                 )
+
+        db.set_state(conn, POLL_TIMES_STATE_KEY, json.dumps(seen_times))
 
         # Retire devices removed from LibreNMS — they stayed on every page
         # with frozen status forever (disabled devices still appear in the
@@ -249,6 +266,7 @@ class LibreNmsCollector:
         # this collector owns; guarded on a non-empty listing. Stored
         # names are post-normalize canonical, so match both forms.
         if devices:
+            from ..normalize import canonical_name
             seen_names: set[str] = set()
             for d in devices:
                 n = d.get("sysName") or d.get("hostname")
