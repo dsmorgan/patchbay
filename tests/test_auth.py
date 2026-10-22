@@ -179,3 +179,91 @@ def test_oidc_provider_error_text_is_not_reflected(clean_env):
     c = _client(clean_env, **OIDC_ENV)
     r = c.get("/auth/oidc/callback", params={"error": "visit https://evil.example"})
     assert r.headers["location"] == "/login?error=incomplete"
+
+
+@pytest.fixture()
+def fresh_login_queue(monkeypatch):
+    """Login pacing is process state; start each test with an empty queue."""
+    monkeypatch.setattr(auth, "_login_next_slot", 0.0)
+    return monkeypatch
+
+
+async def _concurrently(*coros):
+    return await asyncio.gather(*coros)
+
+
+def _async_client():
+    import patchbay.web as web
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=web.app),
+                             base_url="http://testserver", follow_redirects=False)
+
+
+def test_failed_logins_do_not_stall_other_requests(clean_env, fresh_login_queue):
+    for k, v in {"PATCHBAY_AUTH": "password",
+                 "PATCHBAY_PASSWORD_HASH": auth.hash_password("pw")}.items():
+        clean_env.setenv(k, v)
+    fresh_login_queue.setattr(auth, "LOGIN_DELAY", 0.4)
+
+    async def scenario():
+        async with _async_client() as c:
+            t0 = time.monotonic()
+
+            async def bad_login():
+                return await c.post("/login", data={"password": "nope"})
+
+            async def static_fetch():
+                await asyncio.sleep(0.05)  # let the logins get going first
+                r = await c.get("/static/d3.v7.min.js")
+                # measured from the start: a blocked loop delays the wake-up
+                # from the sleep above as much as the request itself
+                return r, time.monotonic() - t0
+
+            *logins, (static, took) = await _concurrently(
+                *(bad_login() for _ in range(4)), static_fetch())
+            return logins, static, took
+
+    logins, static, took = asyncio.run(scenario())
+    assert all("error=password" in r.headers["location"] for r in logins)
+    assert static.status_code == 200
+    # four failures hold ~0.4 s each plus a queue; the static file must not wait
+    assert took < 0.35
+
+
+def test_login_attempts_are_paced_across_clients(clean_env, fresh_login_queue):
+    for k, v in {"PATCHBAY_AUTH": "password",
+                 "PATCHBAY_PASSWORD_HASH": auth.hash_password("pw")}.items():
+        clean_env.setenv(k, v)
+    fresh_login_queue.setattr(auth, "LOGIN_DELAY", 0.1)
+
+    async def scenario():
+        async with _async_client() as c:
+            t0 = time.monotonic()
+            rs = await _concurrently(*(c.post("/login", data={"password": "x"})
+                                       for _ in range(5)))
+            return rs, time.monotonic() - t0
+
+    rs, took = asyncio.run(scenario())
+    assert all("error=password" in r.headers["location"] for r in rs)
+    # five attempts start one per 0.1 s, and the last still waits its 0.1 s
+    assert took >= 0.45
+
+
+def test_login_queue_turns_away_when_full(clean_env, fresh_login_queue):
+    for k, v in {"PATCHBAY_AUTH": "password",
+                 "PATCHBAY_PASSWORD_HASH": auth.hash_password("pw")}.items():
+        clean_env.setenv(k, v)
+    fresh_login_queue.setattr(auth, "LOGIN_DELAY", 0.1)
+    fresh_login_queue.setattr(auth, "LOGIN_QUEUE_MAX", 0.15)
+
+    async def scenario():
+        async with _async_client() as c:
+            return await _concurrently(*(c.post("/login", data={"password": "x"})
+                                         for _ in range(5)))
+
+    locations = [r.headers["location"] for r in asyncio.run(scenario())]
+    assert sum("error=password" in loc for loc in locations) == 2
+    assert sum("error=busy" in loc for loc in locations) == 3
+    time.sleep(0.25)  # the queue drains
+    c = _client(clean_env)
+    r = c.post("/login", data={"password": "pw", "next": "/vlans"})
+    assert r.headers["location"] == "/vlans"

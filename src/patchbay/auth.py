@@ -9,6 +9,7 @@ auto-generated and persisted in the DB unless PATCHBAY_SESSION_SECRET is set.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -21,6 +22,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from . import db
 from .config import Settings
@@ -37,11 +39,21 @@ PUBLIC_PREFIXES = ("/static/",)
 # Free text from the query string would let any link put words on the page.
 LOGIN_ERRORS = {
     "password": "wrong password",
+    "busy": "too many sign-in attempts; try again in a minute",
     "incomplete": "sign-in was not completed",
     "idp": "identity provider unreachable",
     "noclaim": "provider response had no identity claim",
     "denied": "this account is not on the allowed list",
 }
+
+# Brute-force brake for password sign-in: a failed attempt answers after
+# LOGIN_DELAY seconds, and attempts start at most one per LOGIN_DELAY across
+# the process. Both waits are awaited, never slept, so the rest of the UI
+# stays responsive. Attempts that would queue longer than LOGIN_QUEUE_MAX
+# are turned away without hashing.
+LOGIN_DELAY = 0.6
+LOGIN_QUEUE_MAX = 10.0
+_login_next_slot = 0.0
 
 log = logging.getLogger(__name__)
 
@@ -268,6 +280,21 @@ def oidc_allowed(settings: Settings, identity: str) -> bool:
 
 # --- routes ------------------------------------------------------------------
 
+async def _login_slot() -> bool:
+    """Wait for this password attempt's turn; False when the queue is too
+    long to join. Single-threaded asyncio makes the read-and-reserve of
+    the next slot atomic: nothing awaits between them."""
+    global _login_next_slot
+    now = time.monotonic()
+    start = max(now, _login_next_slot)
+    if start - now > LOGIN_QUEUE_MAX:
+        return False
+    _login_next_slot = start + LOGIN_DELAY
+    if start > now:
+        await asyncio.sleep(start - now)
+    return True
+
+
 def build_router(templates, get_settings) -> APIRouter:
     """Login/logout/OIDC routes. get_settings is a callable so the web app
     controls settings lifetime (fresh per request keeps tests simple)."""
@@ -293,9 +320,13 @@ def build_router(templates, get_settings) -> APIRouter:
         # python-multipart for starlette's form() machinery
         body = parse_qs((await request.body()).decode())
         form = {k: v[0] for k, v in body.items()}
-        if not check_password(settings, form.get("password", "")):
-            time.sleep(0.6)  # blunt the brute force
-            nxt = quote(safe_next(form.get("next") or "/"))
+        nxt = quote(safe_next(form.get("next") or "/"))
+        if not await _login_slot():
+            return RedirectResponse(f"/login?error=busy&next={nxt}", status_code=303)
+        # PBKDF2 is CPU work: off the event loop, or every page waits on it
+        if not await run_in_threadpool(check_password, settings,
+                                       form.get("password", "")):
+            await asyncio.sleep(LOGIN_DELAY)  # blunt the brute force
             return RedirectResponse(
                 f"/login?error=password&next={nxt}", status_code=303)
         resp = RedirectResponse(safe_next(form.get("next") or "/"),
