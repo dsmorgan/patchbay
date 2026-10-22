@@ -13,6 +13,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import time
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
@@ -31,6 +32,18 @@ STATE_COOKIE = "patchbay_oidc_state"
 # paths reachable without a session (login flow itself + static assets)
 PUBLIC_PATHS = {"/login", "/logout", "/auth/oidc/login", "/auth/oidc/callback"}
 PUBLIC_PREFIXES = ("/static/",)
+
+# The sign-in page shows only these messages, chosen by a code in ?error=.
+# Free text from the query string would let any link put words on the page.
+LOGIN_ERRORS = {
+    "password": "wrong password",
+    "incomplete": "sign-in was not completed",
+    "idp": "identity provider unreachable",
+    "noclaim": "provider response had no identity claim",
+    "denied": "this account is not on the allowed list",
+}
+
+log = logging.getLogger(__name__)
 
 
 # --- password hashing --------------------------------------------------------
@@ -269,7 +282,7 @@ def build_router(templates, get_settings) -> APIRouter:
             return RedirectResponse(safe_next(next), status_code=303)
         return templates.TemplateResponse(request, "login.html", {
             "mode": settings.auth_mode, "next": safe_next(next),
-            "error": error})
+            "error": LOGIN_ERRORS.get(error or "")})
 
     @router.post("/login")
     async def login_submit(request: Request):
@@ -284,7 +297,7 @@ def build_router(templates, get_settings) -> APIRouter:
             time.sleep(0.6)  # blunt the brute force
             nxt = quote(safe_next(form.get("next") or "/"))
             return RedirectResponse(
-                f"/login?error=wrong+password&next={nxt}", status_code=303)
+                f"/login?error=password&next={nxt}", status_code=303)
         resp = RedirectResponse(safe_next(form.get("next") or "/"),
                                 status_code=303)
         set_session(resp, request, settings, "operator")
@@ -334,22 +347,19 @@ def build_router(templates, get_settings) -> APIRouter:
         except (ValueError, TypeError):
             expected = None
         if error or not code or not expected or expected.get("state") != state:
-            return RedirectResponse(
-                f"/login?error={quote(error or 'sign-in was not completed')}",
-                status_code=303)
+            # the provider's own error text stays off the page (it arrives
+            # in the query string, so anyone can write it)
+            return RedirectResponse("/login?error=incomplete", status_code=303)
         try:
             identity = oidc_exchange(request, settings, code)
         except httpx.HTTPError:
-            return RedirectResponse(
-                "/login?error=identity+provider+unreachable", status_code=303)
+            return RedirectResponse("/login?error=idp", status_code=303)
         if not identity:
-            return RedirectResponse(
-                "/login?error=provider+response+had+no+identity+claim",
-                status_code=303)
+            return RedirectResponse("/login?error=noclaim", status_code=303)
         if not oidc_allowed(settings, identity):
-            return RedirectResponse(
-                f"/login?error={quote(identity + ' is not on the allowed list')}",
-                status_code=303)
+            log.warning("OIDC sign-in refused: %r is not on PATCHBAY_OIDC_ALLOWED",
+                        identity)
+            return RedirectResponse("/login?error=denied", status_code=303)
         resp = RedirectResponse(expected.get("next") or "/", status_code=303)
         resp.delete_cookie(STATE_COOKIE)
         set_session(resp, request, settings, identity)

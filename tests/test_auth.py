@@ -115,3 +115,67 @@ def test_oidc_state_cookie_cannot_authenticate(clean_env):
     c.cookies.set(auth.SESSION_COOKIE, state_value)  # attacker replays it
     r = c.get("/topology", follow_redirects=False)
     assert r.status_code == 303                      # still unauthenticated
+
+
+# --- #94: auth hardening -----------------------------------------------------
+
+import asyncio
+import json
+import time
+from urllib.parse import parse_qs, urlsplit
+
+import httpx
+import pytest
+
+OIDC_ENV = dict(PATCHBAY_AUTH="oidc",
+                PATCHBAY_OIDC_CLIENT_ID="cid", PATCHBAY_OIDC_CLIENT_SECRET="cs",
+                PATCHBAY_OIDC_AUTH_URL="https://idp.example/authorize",
+                PATCHBAY_OIDC_TOKEN_URL="https://idp.example/token")
+
+
+def _jwt(claims: dict) -> str:
+    return ".".join([auth._b64(b'{"alg":"none"}'),
+                     auth._b64(json.dumps(claims).encode()), "sig"])
+
+
+def _oidc_callback(clean_env, monkeypatch, claims, **env):
+    """Run the callback against a fake token endpoint answering claims in
+    an id_token; return the callback response."""
+    def handler(request):
+        return httpx.Response(200, json={"id_token": _jwt(claims)})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(auth.httpx, "Client", lambda **kw: real_client(
+        transport=httpx.MockTransport(handler)))
+    c = _client(clean_env, **{**OIDC_ENV, **env})
+    r = c.get("/auth/oidc/login")
+    state = parse_qs(urlsplit(r.headers["location"]).query)["state"][0]
+    return c, c.get(f"/auth/oidc/callback?code=abc&state={state}")
+
+
+def test_oidc_denied_identity_stays_off_the_url(clean_env, monkeypatch):
+    _, r = _oidc_callback(clean_env, monkeypatch,
+                          {"email": "mallory@example.com", "email_verified": True},
+                          PATCHBAY_OIDC_ALLOWED="alice@example.com")
+    assert r.headers["location"] == "/login?error=denied"
+
+
+def test_oidc_missing_claim(clean_env, monkeypatch):
+    _, r = _oidc_callback(clean_env, monkeypatch, {"sub": "123"})
+    assert r.headers["location"] == "/login?error=noclaim"
+
+
+def test_login_page_shows_only_known_messages(clean_env):
+    c = _client(clean_env, PATCHBAY_AUTH="password", PATCHBAY_PASSWORD="pw")
+    spoof = "Session expired, re-enter your password at https://evil.example"
+    page = c.get("/login", params={"error": spoof}).text
+    assert "evil.example" not in page and "Session expired" not in page
+    assert "wrong password" in c.get("/login?error=password").text
+    r = c.post("/login", data={"password": "nope", "next": "/"})
+    assert "error=password" in r.headers["location"]
+
+
+def test_oidc_provider_error_text_is_not_reflected(clean_env):
+    c = _client(clean_env, **OIDC_ENV)
+    r = c.get("/auth/oidc/callback", params={"error": "visit https://evil.example"})
+    assert r.headers["location"] == "/login?error=incomplete"
