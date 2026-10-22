@@ -473,3 +473,23 @@ filters by category and severity. Delivery state is on the Transports tab
 **Reminds.** `remind` is a rule parameter in minutes (0 = never, the
 default), set on the Rules tab for every rule that is not an event. A
 missing or unreadable stored value means never.
+
+## Amendment (2026-10-22): engine edge cases, issue #110
+
+**Disabling a rule (owner decision).** A disabled rule shows nowhere and
+closes its open alerts on the next poll. An alert a receiver heard about
+gets a `clear` whose `detail` is "rule disabled", so a generic receiver
+does not stay firing; Kuma, which follows state, is released on the same
+push. Switching a rule back on replays no event that happened while it
+was off.
+
+**`for` counts samples.** An item that names its sample (the port
+canary) counts a poll toward `for` only when the sample is newer than the
+last one counted. The canary's hold applies to every alert a receiver
+heard about, silenced or re-raised included.
+
+**One dispatch at a time.** Dispatches take a lease in `app_state` and
+send each transport's notes in the order the polls decided them, so a
+clear never reaches a receiver before its raise. An outcome the database
+will not take waits in a file beside it for the next dispatch.
+`REQUEST_S` bounds each request in wall-clock time.
