@@ -6,6 +6,16 @@ minor versions; the collector contract in
 [docs/collectors.md](docs/collectors.md) is the interface most likely to stay
 put.
 
+## [Unreleased]
+
+### Added
+- Reminders (#99). Each non-event rule on the **Rules** tab has a
+  **remind every** field, in minutes (0 = never). While an alert stays active
+  and unsilenced, patchbay re-sends it to generic webhooks at that interval,
+  counted from the last raise, escalation, or reminder. A `remind` value set
+  by hand in SQL before this release was read as seconds and is now read as
+  minutes. A damaged rule row no longer stops the alert engine.
+
 ## [0.21.0] — 2026-10-22
 
 ### Added
