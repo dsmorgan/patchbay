@@ -576,26 +576,39 @@ class WebhookDispatcher:
         try:
             if not conn.execute("SELECT 1 FROM alert_transports LIMIT 1").fetchone():
                 return
-            if self._lease(conn, owner):
-                try:
-                    self._cycle(conn, notes)
-                finally:
-                    _release(conn, owner)
-            else:
+            got = self._lease(conn, owner)
+            if got == "held":
                 self._defer(conn, notes)
+                return
+            if got == "locked":
+                # the database, not another dispatch, kept us out (a long
+                # write elsewhere): deliver now rather than delay every
+                # receiver; the outcome waits in a file if it must
+                self.lines.append("[warn] notify: the database is busy; "
+                                  "dispatching without the lease")
+            try:
+                self._cycle(conn, notes)
+            finally:
+                if got == "ok":
+                    _release(conn, owner)
         finally:
             conn.close()
 
-    def _lease(self, conn: sqlite3.Connection, owner: str) -> bool:
+    def _lease(self, conn: sqlite3.Connection, owner: str) -> str:
+        """"ok" when this dispatch holds the lease, "held" when another
+        dispatch kept it for LEASE_WAIT_S, "locked" when the database never
+        answered (each try waits out the busy timeout)."""
         waited_until = time.monotonic() + LEASE_WAIT_S
+        answered = False
         while True:
             try:
                 if _claim(conn, owner):
-                    return True
+                    return "ok"
+                answered = True
             except sqlite3.OperationalError:
                 pass   # locked past the busy timeout: keep waiting
             if time.monotonic() >= waited_until:
-                return False
+                return "held" if answered else "locked"
             time.sleep(0.25)
 
     @staticmethod

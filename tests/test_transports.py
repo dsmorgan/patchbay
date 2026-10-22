@@ -892,3 +892,23 @@ def test_request_s_bounds_the_wait_for_headers(monkeypatch):
         ok, result = transports._request(client, t, payload={})
     assert time.monotonic() - start < 0.8
     assert not ok and result.startswith("_Deadline")
+
+
+def test_a_database_locked_from_the_start_still_delivers(dbp, monkeypatch):
+    # a long write elsewhere keeps the lease unclaimable: that is not
+    # another dispatch, so the notes go out now and the outcome waits
+    monkeypatch.setattr(transports, "LEASE_WAIT_S", 0)
+    monkeypatch.setattr(transports, "OUTCOME_TRIES", 1)
+    monkeypatch.setattr(transports, "DB_TIMEOUT_S", 0.05)
+    _add(dbp, "hook", "generic", HOOK)
+    blocker = sqlite3.connect(dbp)
+    blocker.execute("BEGIN IMMEDIATE")
+    rec = Recorder()
+    d = transports.WebhookDispatcher(dbp, transport=rec.transport, now=T0)
+    d.send([_note("a:1")])
+    blocker.rollback()
+    blocker.close()
+    assert len(rec.seen) == 1
+    assert any("without the lease" in line for line in d.lines)
+    transports.WebhookDispatcher(dbp, transport=Recorder().transport, now=T0 + 300).send([])
+    assert [e["event"] for e in _events(dbp)] == ["notified"]
