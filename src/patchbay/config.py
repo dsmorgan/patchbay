@@ -351,9 +351,11 @@ class Settings:
     alert_snapshot_cooldown: int = ALERT_SNAPSHOT_COOLDOWN_DEFAULT
     alert_snapshot_keep: int = ALERT_SNAPSHOT_KEEP_DEFAULT
     # Hostnames the UI answers to (PATCHBAY_ALLOWED_HOSTS, each optionally
-    # with :port); empty = any Host, the pre-#94 behavior. localhost and the
-    # loopback addresses are always allowed (auth.LOOPBACK_HOSTS).
-    allowed_hosts: tuple[str, ...] = ()
+    # with :port). None = unset: any Host, the pre-#94 behavior. An empty
+    # tuple = set, but no entry was usable: loopback only, never open.
+    # localhost and the loopback addresses are always allowed
+    # (auth.LOOPBACK_HOSTS).
+    allowed_hosts: tuple[str, ...] | None = None
 
     @property
     def snapshot_keep_unknown(self) -> bool:
@@ -577,20 +579,25 @@ def load_settings() -> Settings:
     # read "https://name:port/path" as "name:port" and say so, rather than
     # keep an entry no Host header can ever match (that fails closed for
     # everyone but loopback, with nothing on screen to say why)
-    allowed_hosts: list[str] = []
-    for raw in (env("PATCHBAY_ALLOWED_HOSTS") or "").split(","):
+    raw_hosts = [h for h in (env("PATCHBAY_ALLOWED_HOSTS") or "").split(",")
+                 if h.strip()]
+    hosts: list[str] = []
+    for raw in raw_hosts:
         entry = raw.strip().lower()
-        if not entry:
-            continue
         name = entry.split("://", 1)[-1].split("/", 1)[0].rpartition("@")[2]
-        if not name:
+        if not name.lstrip("[").split(":", 1)[0]:
             warn("PATCHBAY_ALLOWED_HOSTS", raw)
             continue
         if name != entry:
             warnings.append(f"PATCHBAY_ALLOWED_HOSTS: read {raw.strip()!r} as "
                             f"{name!r} — list hostnames, not URLs")
-        allowed_hosts.append(name)
-    allowed_hosts = tuple(allowed_hosts)
+        hosts.append(name)
+    # set but nothing usable stays an allowlist (loopback only): an unusable
+    # value must never quietly mean "any host"
+    allowed_hosts = tuple(hosts) if raw_hosts else None
+    if raw_hosts and not hosts:
+        warnings.append("PATCHBAY_ALLOWED_HOSTS: no usable entry — only "
+                        "localhost and loopback addresses are allowed")
 
     alert_snapshot_cooldown = whole("PATCHBAY_ALERT_SNAPSHOT_COOLDOWN",
                                     ALERT_SNAPSHOT_COOLDOWN_DEFAULT)

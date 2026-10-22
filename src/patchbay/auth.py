@@ -252,7 +252,7 @@ def host_allowed(settings: Settings, value: str) -> bool:
         return False
     if host in LOOPBACK_HOSTS:
         return True
-    for entry in settings.allowed_hosts:
+    for entry in settings.allowed_hosts or ():
         want_host, want_port = _split_host(entry)
         if host == want_host and (
                 want_port in (None, port)
@@ -278,7 +278,7 @@ def gate(request: Request, settings: Settings) -> Response | None:
     # with an allowlist, every host the request names must be on it: Host,
     # and each X-Forwarded-Host hop. Checking only the forwarded one would let
     # a page served from a rebound name set the header itself.
-    if settings.allowed_hosts:
+    if settings.allowed_hosts is not None:
         named = [request.headers.get("host", "")] + [
             h for v in request.headers.getlist("x-forwarded-host")
             for h in v.split(",") if h.strip()]

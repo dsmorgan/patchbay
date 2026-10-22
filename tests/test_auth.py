@@ -429,6 +429,27 @@ def test_url_shaped_allowlist_entries_are_read_as_hosts(clean_env):
     assert "list hostnames, not URLs" in page
 
 
+@pytest.mark.parametrize("value", ["https://", "http:///x", "https://, :8080", "@"])
+def test_allowlist_with_no_usable_entry_is_loopback_only(clean_env, value):
+    import patchbay.web as web
+    from patchbay.config import load_settings
+    clean_env.setenv("PATCHBAY_ALLOWED_HOSTS", value)
+    s = load_settings()
+    assert s.allowed_hosts == ()
+    assert any("no usable entry" in w for w in s.parse_warnings)
+    other = TestClient(web.app, base_url="http://patchbay.example.net")
+    assert other.get("/").status_code == 400
+    local = TestClient(web.app, base_url="http://localhost:8080")
+    page = local.get("/ops").text
+    assert "loopback only" in page and 'id="hostwarn"' not in page
+
+
+def test_blank_allowlist_means_unset(clean_env):
+    from patchbay.config import load_settings
+    clean_env.setenv("PATCHBAY_ALLOWED_HOSTS", " , ")
+    assert load_settings().allowed_hosts is None
+
+
 def test_web_startup_prints_allowlist_warnings(clean_env, monkeypatch, capsys):
     import argparse
     import sys as _sys
