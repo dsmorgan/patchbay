@@ -112,11 +112,36 @@ def all_silences(conn: sqlite3.Connection, settings) -> list[dict]:
     return legacy + rows
 
 
+def _expect_row(spec: str, *, now: float, created_by: str) -> dict:
+    """The silence one PATCHBAY_EXPECT entry becomes. Raises ValueError when
+    no silence can express it: `sw1:` holds an expected tunnel's device-level
+    inhibition, which a port silence cannot name."""
+    return parse({"kind": expect_kind(spec), "scope": spec, "hours": "permanent",
+                  "reason": IMPORT_REASON},
+                 now=now, created_by=created_by, categories=set())
+
+
+def expect_invalid(settings) -> list[tuple[str, str]]:
+    """The entries an import cannot make a silence of, with the reason. They
+    keep silencing while the variable is set, so the operator fixes or drops
+    them before removing it."""
+    out = []
+    for spec in sorted(getattr(settings, "expected", None) or ()):
+        try:
+            _expect_row(spec, now=0.0, created_by="")
+        except ValueError as e:
+            out.append((spec, str(e)))
+    return out
+
+
 def expect_pending(conn: sqlite3.Connection, settings) -> int:
-    """How many PATCHBAY_EXPECT entries no permanent silence covers yet."""
+    """How many importable PATCHBAY_EXPECT entries no permanent silence
+    covers yet."""
     have = _permanent(db_silences(conn))
+    bad = {e for e, _ in expect_invalid(settings)}
     return sum((expect_kind(spec), spec) not in have
-               for spec in getattr(settings, "expected", None) or ())
+               for spec in getattr(settings, "expected", None) or ()
+               if spec not in bad)
 
 
 def import_expect(conn: sqlite3.Connection, settings, *, now: float,
@@ -144,9 +169,7 @@ def import_expect(conn: sqlite3.Connection, settings, *, now: float,
             out["covered"].append(spec)
             continue
         try:
-            row = parse({"kind": kind, "scope": spec, "hours": "permanent",
-                         "reason": IMPORT_REASON},
-                        now=now, created_by=created_by, categories=set())
+            row = _expect_row(spec, now=now, created_by=created_by)
         except ValueError as e:
             out["invalid"].append((spec, str(e)))
             continue
@@ -291,5 +314,4 @@ def page_context(conn: sqlite3.Connection, settings, *, now: float | None = None
                                      if s["created_at"] else None})
     rows.sort(key=lambda s: not s["live"])     # stable: env first within each
     return {"silences": rows, "silence_kinds": KINDS, "durations": DURATIONS,
-            "default_hours": DEFAULT_HOURS,
-            "expect_set": bool(getattr(settings, "expected", None))}
+            "default_hours": DEFAULT_HOURS}

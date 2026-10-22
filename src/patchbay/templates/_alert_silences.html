@@ -56,7 +56,7 @@ still recorded, but it leaves the Overview and is never sent. When the
 silence ends, an alert that still holds raises as new.</p>
 </details>
 
-{% if expect_set %}
+{% if silences | selectattr("source", "equalto", "env") | list %}
 <p class="sil-note">PATCHBAY_EXPECT is deprecated. Its entries below cannot be
 edited here. <a href="/ops">Import them as silences on Ops</a>, then remove the
 variable.</p>

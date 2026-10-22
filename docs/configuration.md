@@ -329,6 +329,11 @@ migrate before you upgrade past that point.
    `PATCHBAY_EXPECT` line and restart patchbay: patchbay never edits the
    env file. If you set it on **Ops**, clear the field and click **save**.
 
+If **Ops** lists an entry it cannot import, with the reason (an entry
+such as `sw1:` that no silence scope can express), fix or drop that entry
+before you remove the variable: it keeps silencing only while the variable
+is set.
+
 Coverage does not change at any step. An alert that was silenced before the
 import stays silenced after it, and after you remove the variable. To stop
 silencing an entry, end its silence on the **Silences** tab. Until you

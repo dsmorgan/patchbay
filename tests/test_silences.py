@@ -707,11 +707,13 @@ def test_ops_notice_shows_only_while_the_variable_is_set(clean_env, tmp_path):
     page = " ".join(client.get("/ops").text.split())
     assert "PATCHBAY_EXPECT is deprecated" in page
     assert "import as silences" in page and "2 of 2 entries are not yet a silence" in page
-    assert "delete the PATCHBAY_EXPECT line from your env file and restart" in page
+    # the finishing step waits until nothing is pending
+    assert "delete the PATCHBAY_EXPECT line" not in page
 
     _import_post(client)
     page = " ".join(client.get("/ops").text.split())
     assert "All 2 entries are now permanent silences" in page
+    assert "delete the PATCHBAY_EXPECT line from your env file and restart" in page
 
     clean_env.delenv("PATCHBAY_EXPECT")
     assert "PATCHBAY_EXPECT is deprecated" not in client.get("/ops").text
@@ -721,10 +723,9 @@ def test_ops_notice_tells_a_stored_declaration_to_clear_the_field(clean_env, tmp
     dbp, client = _web(clean_env, tmp_path)
     assert client.post("/ops/config", json={"var": "PATCHBAY_EXPECT",
                                             "value": "hyp1"}).status_code == 200
-    page = client.get("/ops").text
-    assert "PATCHBAY_EXPECT is deprecated" in page
-    assert "clear the PATCHBAY_EXPECT field" in page
+    assert "PATCHBAY_EXPECT is deprecated" in client.get("/ops").text
     _, body = _import_post(client)
+    assert "clear the PATCHBAY_EXPECT field" in client.get("/ops").text
     assert any("clear the PATCHBAY_EXPECT field" in line for line in body["lines"])
     # the stored declaration still silences until the operator clears it
     c = sqlite3.connect(dbp)
@@ -742,4 +743,26 @@ def test_silences_tab_points_a_legacy_row_at_the_import(clean_env, tmp_path):
     assert "PATCHBAY_EXPECT is deprecated" not in client.get("/alerts?tab=silences").text
     clean_env.setenv("PATCHBAY_EXPECT", "hyp1")
     assert "PATCHBAY_EXPECT is deprecated" in client.get("/alerts?tab=silences").text
+    # imported: no legacy row is listed, so the note goes with it
+    _import_post(client)
+    assert "PATCHBAY_EXPECT is deprecated" not in client.get("/alerts?tab=silences").text
+
+
+def test_ops_lists_an_entry_it_cannot_import_and_withholds_the_finish(clean_env, tmp_path):
+    # `sw1:` holds an expected tunnel's device-level inhibition; a port
+    # silence cannot name an empty interface
+    dbp, client = _web(clean_env, tmp_path, PATCHBAY_EXPECT="sw1:,hyp1")
+    page = " ".join(client.get("/ops").text.split())
+    assert "1 of 2 entries are not yet a silence" in page
+    assert "Cannot import" in page and "sw1: — scope: a port is device:interface" in page
+    _import_post(client)
+    page = " ".join(client.get("/ops").text.split())
+    assert "All 2" not in page and "0 of 2" not in page
+    assert "Cannot import" in page and "delete the PATCHBAY_EXPECT line" not in page
+    # it still silences while the variable is set
+    c = sqlite3.connect(dbp)
+    c.row_factory = sqlite3.Row
+    assert ("env", "sw1:") in {(r["source"], r["scope"])
+                               for r in silences.all_silences(c, load_settings())}
+    c.close()
 
