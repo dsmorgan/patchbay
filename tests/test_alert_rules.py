@@ -386,6 +386,12 @@ def test_catalog_defaults_per_adr(conn):
     assert alerting.RULES["snapshot-failed"].event
 
 
+def _seed(tmp_path):
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        pdb.init(c)
+        alerting.seed_rules(c)
+
+
 def test_rules_tab_lists_and_saves(clean_env, tmp_path):
     import patchbay.web as web
 
@@ -396,6 +402,7 @@ def test_rules_tab_lists_and_saves(clean_env, tmp_path):
     assert 'value="switch, ap, firewall, router, hypervisor"' in page
     assert "nowhere (attention list only)" in page    # read-only route
 
+    _seed(tmp_path)          # as a poll does; the GET above never writes
     with pdb.connect(str(tmp_path / "test.db")) as c:
         c.execute("UPDATE alert_rules SET params = '{\"for\": 1, \"remind\": 3600}' "
                   "WHERE name = 'device-down'")
@@ -427,7 +434,7 @@ def test_rules_tab_rejects_bad_values_without_writing(clean_env, tmp_path, form)
     import patchbay.web as web
 
     client = TestClient(web.app)
-    client.get("/alerts?tab=rules")                  # seeds the rows
+    _seed(tmp_path)                                  # as a poll does
     r = client.post("/alerts/rules/device-down", data={"enabled": "1", **form})
     assert r.status_code == 400
     with pdb.connect(str(tmp_path / "test.db")) as c:
@@ -522,7 +529,7 @@ def test_rules_tab_saves_remind_in_minutes_and_zero_clears_it(clean_env, tmp_pat
     import patchbay.web as web
 
     client = TestClient(web.app)
-    client.get("/alerts?tab=rules")
+    _seed(tmp_path)                                  # as a poll does
     url = "/alerts/rules/device-down"
     r = client.post(url, data={"enabled": "1", "param_for": "1", "param_remind": "90",
                                "param_roles": "switch"}, follow_redirects=False)
@@ -543,7 +550,7 @@ def test_rules_tab_rejects_bad_remind_without_writing(clean_env, tmp_path, bad):
     import patchbay.web as web
 
     client = TestClient(web.app)
-    client.get("/alerts?tab=rules")
+    _seed(tmp_path)                                  # as a poll does
     r = client.post("/alerts/rules/device-down",
                     data={"enabled": "1", "param_remind": bad})
     assert r.status_code == 400
@@ -556,7 +563,7 @@ def test_rules_tab_shows_never_for_a_damaged_stored_remind(clean_env, tmp_path):
     import patchbay.web as web
 
     client = TestClient(web.app)
-    client.get("/alerts?tab=rules")
+    _seed(tmp_path)                                  # as a poll does
     with pdb.connect(str(tmp_path / "test.db")) as c:
         c.execute("UPDATE alert_rules SET params = '{\"remind\": \"1h\"}' "
                   "WHERE name = 'device-down'")
