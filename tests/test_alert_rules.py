@@ -76,7 +76,9 @@ def test_device_down_roles_parameter_and_expected(conn, clean_env):
     assert it["silenced"]["scope"] == "sw1"
 
 
-def test_overview_hides_device_items_that_alerts_shows(clean_env, tmp_path):
+def test_overview_attention_lists_a_crit_device_item(clean_env, tmp_path):
+    # #118: the most urgent alert is not the one Attention omits. The device
+    # line, its chip, and the count all show; the cards stay as they are.
     from tests.test_web import seed
 
     import patchbay.web as web
@@ -86,10 +88,29 @@ def test_overview_hides_device_items_that_alerts_shows(clean_env, tmp_path):
     c.execute("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
     c.commit(); c.close()
     client = TestClient(web.app)
-    assert "switch sw1 is down" not in client.get("/").text
-    page = client.get("/alerts").text
-    assert "switch sw1 is down" in page
-    assert ">devices</a>" in page                    # a filter chip of its own
+    body = client.get("/").text
+    section = body[body.index('class="attention"'):]
+    section = section[:section.index("</section>")]
+    assert '<a href="/device/sw1">switch sw1 is down</a>' in section
+    assert 'class="attn-chip crit"\n         href="/alerts?category=device">1 devices</a>' in section
+    assert "all 1 →" in section
+    assert "All clear" not in section
+    assert "switch sw1 is down" in client.get("/alerts").text
+
+    # silenced, it leaves the box (and the chip) like any other item
+    clean_env.setenv("PATCHBAY_EXPECT", "sw1")
+    body = client.get("/").text
+    assert "switch sw1 is down" not in body[body.index('class="attention"'):]
+
+
+def test_overview_all_clear_claims_devices_it_checked(clean_env, tmp_path):
+    from tests.test_web import seed
+
+    import patchbay.web as web
+
+    seed(str(tmp_path / "test.db"))
+    body = TestClient(web.app).get("/").text
+    assert "every watched device reporting" in body
 
 
 def test_disabled_device_is_a_decision_not_an_alert(conn, settings):

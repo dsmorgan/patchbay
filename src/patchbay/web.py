@@ -346,10 +346,10 @@ def dashboard(request: Request):
         db.init(conn)
         settings = load_settings()
         exceptions, checked = attention_items(conn, settings)
-        # the cards below are the device-state UI; /alerts lists device items.
-        # A silenced item is known and fine; /alerts lists it on its own tab.
-        exceptions = [i for i in exceptions
-                      if i["category"] != "device" and not i["silenced"]]
+        # Device items are listed too (#118): the cards below show state, but
+        # a crit device item is the most urgent line the box can carry. A
+        # silenced item is known and fine; /alerts lists it on its own tab.
+        exceptions = [i for i in exceptions if not i["silenced"]]
         stamp_first_seen(conn, exceptions)
         for it in exceptions:
             it["since"] = _since(it["first_seen"])

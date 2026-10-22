@@ -46,9 +46,10 @@
 
 {# The attention list (issue #13): below the counts — the page opens with
    what the network IS — one flat ordered list, each line linking to the
-   page that owns the answer. Device state is not repeated here: the cards
-   below are the device-state UI. A silenced item (#62) is not listed here;
-   /alerts shows it on the Silenced tab. #}
+   page that owns the answer. A device that is down is listed (#118): the
+   cards below show it, but it is the most urgent line this box can carry.
+   A silenced item (#62) is not listed here; /alerts shows it on the
+   Silenced tab. #}
 {% if checked %}
 <section class="attention">
   {# issue #28: a distinct section — heading, severity-colored category

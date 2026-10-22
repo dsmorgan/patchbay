@@ -26,8 +26,7 @@ from . import db, silences
 
 STALE_MIN = 15  # same rule the top bar uses
 
-# category -> the short label the summary strip and filters show. The
-# Overview hides `device`: its cards are the device-state UI.
+# category -> the short label the summary strip and filters show
 CATEGORIES = {"device": "devices", "link": "links", "gateway": "gateways",
               "ipam": "IPAM", "source": "sources", "config": "config changes",
               "tunnel": "tunnels", "port": "ports"}
@@ -295,9 +294,8 @@ def attention_items(conn: sqlite3.Connection, settings, *,
     that owns the answer — not pre-categorized cards (issue #13). Rules only
     speak when they can actually check something, so `checked` names only
     the checks that ran and the all-clear line can only claim what it
-    verified. Device state is category `device`, which the Overview filters
-    out because its cards ARE the device-state UI; /alerts and the alert
-    channel show it.
+    verified. Device state is category `device`; the Overview lists it
+    (#118) beside the cards, which show the same state per device.
 
     Every item is returned, silenced or not: `silenced` holds the silence
     that covers it (silences.py, which also reads PATCHBAY_EXPECT), or
@@ -371,7 +369,7 @@ def attention_items(conn: sqlite3.Connection, settings, *,
             })
 
     now = db.now() if now is None else now
-    items += _device_down(conn, settings, now)
+    items += _device_down(conn, settings, now, checked)
     items += _link_down(conn, settings, checked)
     items += _gateway_degraded(conn, settings, now, checked)
     items += _config_changed(conn, settings, now)
@@ -430,19 +428,22 @@ def _apply_rule_settings(conn, items: list[dict]) -> list[dict]:
     return out
 
 
-def _device_down(conn, settings, now: float) -> list[dict]:
+def _device_down(conn, settings, now: float, checked: list[str]) -> list[dict]:
     """device-down: a device in a watched role reports a down state or has
     not been reported for DEVICE_STALE_S, the same definition the rail's
-    totals and the alert engine's inhibition use. No `checked` line: the
-    Overview hides this category, so its all-clear must not claim it."""
+    totals and the alert engine's inhibition use. The all-clear claims it
+    (#118) once the Overview lists device items, and only when a device in
+    a watched role exists to have been checked."""
     roles = _roles(rule_params(conn, "device-down",
                                {"roles": DEVICE_DOWN_ROLES})["roles"])
     cutoff = now - DEVICE_STALE_S
     out = []
+    watched = 0
     for r in conn.execute("SELECT name, role, status, last_seen FROM devices "
                           "ORDER BY name"):
         if (r["role"] or "").lower() not in roles:
             continue
+        watched += 1
         status = (r["status"] or "").lower()
         # disabled in the NMS on purpose: a decision, not a fault. It stays
         # in DOWN_STATES, so the engine still inhibits its cables.
@@ -462,6 +463,8 @@ def _device_down(conn, settings, now: float) -> list[dict]:
             "text": f"{r['role']} {r['name']} {what}",
             "href": f"/device/{r['name']}", "devices": [r["name"]],
         })
+    if watched:
+        checked.append("every watched device reporting")
     return out
 
 
