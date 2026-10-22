@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from . import alerting, db, expected_tunnels, known_cables, silences, transports
@@ -1374,6 +1374,40 @@ def api_freshness():
         except ValueError:
             ts = None
     return {"last_poll": ts}
+
+
+# When this process started: /healthz gives a database that has never been
+# polled this long (three poll intervals) before it calls the poller dead.
+_STARTED = time.time()
+
+
+@app.api_route("/healthz", methods=["GET", "HEAD"], response_class=PlainTextResponse)
+def healthz():
+    """Is the poller alive? 200 "ok" when the last poll finished within three
+    poll intervals, otherwise 503 "stale" (#111). Unauthenticated so a monitor
+    needs no credentials, so it says nothing else: no version, counts, or
+    timestamps. Read-only on its own connection, and a plain `def` so it runs
+    in the thread pool rather than on the event loop."""
+    settings = load_settings()
+    limit = 3 * settings.poll_interval
+    ts = None
+    try:
+        conn = sqlite3.connect(f"file:{settings.db_path}?mode=ro", uri=True,
+                               timeout=1)
+        try:
+            row = conn.execute("SELECT value FROM app_state WHERE key = 'last_poll'"
+                               ).fetchone()
+        finally:
+            conn.close()
+        ts = json.loads(row[0]).get("ts") if row else None
+    except (sqlite3.Error, ValueError, AttributeError, TypeError):
+        ts = None  # no database yet, or an unreadable record: nothing polled
+    if not isinstance(ts, (int, float)):
+        ts = _STARTED  # never polled: the grace period runs from startup
+    fresh = time.time() - ts <= limit
+    return PlainTextResponse("ok" if fresh else "stale",
+                             status_code=200 if fresh else 503,
+                             headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/positions/reset")
