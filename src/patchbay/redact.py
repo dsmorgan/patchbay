@@ -42,20 +42,30 @@ REDACTION_VERSION = 2
 SECRET_TAG_WORDS = ("prv", "crt", "cert", "pass", "pw", "secret", "psk",
                     "shared", "private", "key", "seed", "otp", "community",
                     "auth", "token", "hash", "credential", "tls")
+# names too short or common to match as substrings, matched whole: pfSense
+# keeps its Telegram and Slack notification tokens in <api>
+# (notifications/telegram/api, notifications/slack/api)
+SECRET_TAG_NAMES = ("api",)
 
-_SECRET_NAME_RE = re.compile("|".join(SECRET_TAG_WORDS), re.I)
+_SECRET_NAME_RE = re.compile(
+    "|".join(SECRET_TAG_WORDS) + "|^(?:" + "|".join(SECRET_TAG_NAMES) + ")$", re.I)
 # a leaf element: optional attributes (kept), and content that is any mix of
 # text, whitespace, CDATA sections, and comments (either may hold '<'). Their
-# bodies are tempered (they cannot run past their own terminator), so a
-# match never spans into a sibling element and hides it from the scan. Only
-# leaves match, so a secret is redacted where it sits, never its parent.
-_CDATA = r"<!\[CDATA\[(?:(?!\]\]>).)*\]\]>"
-_COMMENT = r"<!--(?:(?!-->).)*-->"
+# bodies are tempered: they cannot run past their own terminator, so a match
+# never spans into a sibling element and hides it from the scan; nor past
+# the next opener of their own kind, so a run of unclosed openers costs one
+# pass over the text, not one pass per opener. The quantifiers are
+# possessive (no backtracking into a body that already failed). Only leaves
+# match, so a secret is redacted where it sits, never its parent.
+_CDATA_BODY = r"(?:(?!\]\]>|<!\[CDATA\[).)*+"
+_CDATA = r"<!\[CDATA\[" + _CDATA_BODY + r"\]\]>"
+_COMMENT = r"<!--(?:(?!-->|<!--).)*+-->"
 _ELEMENT_RE = re.compile(
     r"<([a-z0-9_-]+)(\s[^>]*)?>"
-    r"((?:" + _CDATA + "|" + _COMMENT + r"|[^<])+)</\1\s*>",
+    r"((?:" + _CDATA + "|" + _COMMENT + r"|[^<])++)</\1\s*>",
     re.I | re.S)
-_UNWRAP_RE = re.compile(r"<!\[CDATA\[((?:(?!\]\]>).)*)\]\]>|" + _COMMENT, re.S)
+_UNWRAP_RE = re.compile(
+    r"<!\[CDATA\[(" + _CDATA_BODY + r")\]\]>|" + _COMMENT, re.S)
 # catch-all for key material hiding under tags the list doesn't know: any
 # element whose content is one long base64-ish run gets the same treatment
 # (a real ACME account key surfaced under a bare <key> before this existed;
@@ -111,9 +121,13 @@ def strip_stamps(text: str) -> str:
     return STAMP_RE.sub(PLACEHOLDER, text)
 
 
-# scheme://userinfo@ — the userinfo stops at the first '/', whitespace, or
-# quote, so an '@' later in a path or message is not mistaken for one
-_USERINFO_RE = re.compile(r"([a-z][a-z0-9+.-]*://)[^/\s@'\"<>]+@", re.I)
+# scheme://userinfo@ — the authority ends at the first '/', '?', '#',
+# whitespace, or quote, so an '@' in a path is not mistaken for one; within
+# it the userinfo runs to the LAST '@' (httpx accepts an unencoded '@' in a
+# password). The lookbehind starts a scheme only at the head of its run, so
+# a long run of scheme characters is scanned once, not once per position.
+_USERINFO_RE = re.compile(
+    r"(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*://)[^/?#\s'\"<>]*@", re.I)
 
 
 def hide_userinfo(text: str | None) -> str | None:
