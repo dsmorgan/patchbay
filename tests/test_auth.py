@@ -435,3 +435,34 @@ def test_ops_warns_when_open_to_any_host(clean_env):
     clean_env.setenv("PATCHBAY_PASSWORD", "pw")
     c.post("/login", data={"password": "pw", "next": "/"})
     assert 'id="hostwarn"' not in c.get("/ops").text
+
+
+def _framing_blocked(r) -> bool:
+    return (r.headers.get("x-frame-options") == "DENY"
+            and "frame-ancestors 'none'" in r.headers.get("content-security-policy", ""))
+
+
+def test_every_response_refuses_framing(clean_env):
+    import patchbay.web as web
+    c = _client(clean_env)
+    assert _framing_blocked(c.get("/"))
+    assert _framing_blocked(c.get("/static/d3.v7.min.js"))
+    assert _framing_blocked(c.get("/no-such-page"))
+    assert _framing_blocked(c.post("/api/positions/reset",
+                                   headers={"origin": "https://evil.example"}))
+    clean_env.setenv("PATCHBAY_ALLOWED_HOSTS", "patchbay.example.net")
+    assert _framing_blocked(
+        TestClient(web.app, base_url="http://attacker.example").get("/"))
+    clean_env.delenv("PATCHBAY_ALLOWED_HOSTS")
+    clean_env.setenv("PATCHBAY_AUTH", "password")
+    clean_env.setenv("PATCHBAY_PASSWORD", "pw")
+    assert _framing_blocked(c.get("/topology"))    # the redirect to sign in
+    assert _framing_blocked(c.get("/login"))
+
+
+def test_forbid_framing_keeps_an_existing_policy():
+    from fastapi.responses import Response
+    r = Response(headers={"Content-Security-Policy": "default-src 'self'"})
+    auth.forbid_framing(r)
+    assert r.headers["content-security-policy"] == \
+        "default-src 'self'; frame-ancestors 'none'"

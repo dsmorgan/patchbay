@@ -257,6 +257,17 @@ def host_allowed(settings: Settings, value: str) -> bool:
     return False
 
 
+def forbid_framing(response: Response) -> None:
+    """No page of patchbay belongs in someone else's frame: an open (auth
+    none) instance framed by another site could be clicked through."""
+    response.headers["X-Frame-Options"] = "DENY"
+    csp = response.headers.get("content-security-policy")
+    if not csp:
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    elif "frame-ancestors" not in csp:
+        response.headers["Content-Security-Policy"] = f"{csp}; frame-ancestors 'none'"
+
+
 def gate(request: Request, settings: Settings) -> Response | None:
     """Middleware body: None = let the request through (request.state.auth is
     set for templates), a Response = intercept with it."""
