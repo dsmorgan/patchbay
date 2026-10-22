@@ -6,7 +6,10 @@
 Each rule is built in; a site tunes it. Changes take effect on the next poll.
 A disabled rule shows nowhere: no attention-list item and no alert. A
 severity override applies on the attention list and in alerts alike.
-Event rules fire once per occurrence, so they have no <code>for</code>.</p>
+Event rules fire once per occurrence, so they have no <code>for</code> or
+<code>remind</code>. <code>remind</code> sends the alert again at that
+interval while it stays active, to transports that carry reminders (a
+Kuma monitor already stays down, so it needs none).</p>
 
 <div class="rules">
 {% for r in rules %}
@@ -29,7 +32,7 @@ Event rules fire once per occurrence, so they have no <code>for</code>.</p>
       </select>
     </label>
     {% for k, v in r.params.items() %}
-    <label>{{ k }}
+    <label>{% if k == 'remind' %}remind every (minutes, 0 = never){% else %}{{ k }}{% endif %}
       {% if v is boolean %}
       <select name="param_{{ k }}">
         <option value="true" {{ 'selected' if v }}>true</option>

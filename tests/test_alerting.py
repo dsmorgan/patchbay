@@ -37,7 +37,7 @@ def test_rules_seeded_from_catalog_without_overwriting_edits(conn):
     alerting.seed_rules(conn)
     rows = {r["name"]: r for r in conn.execute("SELECT * FROM alert_rules")}
     assert set(rows) == set(alerting.RULES)
-    assert json.loads(rows["ipam-drift"]["params"]) == {"for": 1}
+    assert json.loads(rows["ipam-drift"]["params"]) == {"for": 1, "remind": 0}
     assert rows["slow-link"]["route"] == "none"      # informs, never pages
     assert rows["stale-source"]["route"] is None     # the default route
 
@@ -104,13 +104,52 @@ def test_pending_that_clears_is_history_not_news(conn):
 
 def test_remind_renotifies_an_active_alert(conn):
     alerting.seed_rules(conn)
-    conn.execute("UPDATE alert_rules SET params = '{\"remind\": 3600}' "
-                 "WHERE name = 'slow-link'")
+    conn.execute("UPDATE alert_rules SET params = '{\"remind\": 60}' "
+                 "WHERE name = 'slow-link'")                  # minutes
     it = _item()
     alerting.evaluate(conn, [it], now=T0)
     assert alerting.evaluate(conn, [it], now=T0 + 1800) == []
+    assert alerting.evaluate(conn, [it], now=T0 + 3599) == []
     assert [n.kind for n in alerting.evaluate(conn, [it], now=T0 + 3600)] == ["remind"]
     assert alerting.evaluate(conn, [it], now=T0 + 3900) == []   # clock restarted
+    assert [n.kind for n in alerting.evaluate(conn, [it], now=T0 + 7200)] == ["remind"]
+
+
+def test_remind_zero_or_unset_never_renotifies(conn):
+    alerting.seed_rules(conn)                                 # remind 0 by default
+    it = _item()
+    alerting.evaluate(conn, [it], now=T0)
+    assert alerting.evaluate(conn, [it], now=T0 + 10 * 86400) == []
+
+
+@pytest.mark.parametrize("stored", [
+    '"1h"', '"soon"', '-5', '0', 'null', 'true', '[]', '{}', '1e999', '"nan"', '"inf"'])
+def test_damaged_remind_means_never_and_the_engine_keeps_running(conn, stored):
+    alerting.seed_rules(conn)
+    conn.execute("UPDATE alert_rules SET params = ? WHERE name = 'slow-link'",
+                 ('{"remind": %s}' % stored,))
+    it = _item()
+    assert [n.kind for n in alerting.evaluate(conn, [it], now=T0)] == ["raise"]
+    assert alerting.evaluate(conn, [it], now=T0 + 10 * 86400) == []
+    assert [n.kind for n in alerting.evaluate(conn, [], now=T0 + 11 * 86400)] == ["clear"]
+
+
+@pytest.mark.parametrize("stored", ["null", "[]", '"x"', "3", "not json"])
+def test_non_dict_rule_params_are_treated_as_empty(conn, stored):
+    alerting.seed_rules(conn)
+    conn.execute("UPDATE alert_rules SET params = ? WHERE name = 'slow-link'", (stored,))
+    it = _item()
+    assert [n.kind for n in alerting.evaluate(conn, [it], now=T0)] == ["raise"]
+    row = next(r for r in alerting.rule_settings(conn) if r["name"] == "slow-link")
+    assert row["params"] == {"for": 1, "remind": 0}
+
+
+def test_remind_minutes_reads_numbers_and_numeric_strings():
+    assert alerting.remind_minutes(30) == 30
+    assert alerting.remind_minutes("45") == 45
+    assert alerting.remind_minutes(0.5) == 0.5
+    for bad in (None, 0, -1, "1h", True, float("inf"), float("nan"), [], {}):
+        assert alerting.remind_minutes(bad) is None
 
 
 def test_event_rule_notifies_and_clears_in_one_cycle(conn):

@@ -34,6 +34,7 @@ Like `attention.py`, this imports no web framework: the poller calls it.
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -54,7 +55,7 @@ EVENT_KEEP_MAX = 10_000
 class Rule:
     category: str
     event: bool = False        # one-shot: notify and clear in the same cycle
-    params: dict = field(default_factory=lambda: {"for": 1})
+    params: dict = field(default_factory=lambda: {"for": 1, "remind": 0})
     route: str | None = None   # None = the default route; 'none' = nowhere
     summary: str = ""          # when it fires, for the Rules tab
 
@@ -68,14 +69,14 @@ RULES: dict[str, Rule] = {
     # hypervisor is watched by default (#60): a host powered off on purpose
     # is a silence, and a host that died unannounced takes its guests with it
     "device-down": Rule(
-        category="device", params={"for": 1, "roles": list(DEVICE_DOWN_ROLES)},
+        category="device", params={"for": 1, "remind": 0, "roles": list(DEVICE_DOWN_ROLES)},
         summary="A device in a watched role reports a down state, or has not "
                 "been reported for two hours."),
     # a pulled cable keeps alerting after its link row expires (#79): the
     # known_cables record holds it until the port is up, the cable is
     # retired, or retain_days pass without it being seen up
     "link-down": Rule(
-        category="link", params={"for": 1, "retain_days": CABLE_RETAIN_DAYS},
+        category="link", params={"for": 1, "remind": 0, "retain_days": CABLE_RETAIN_DAYS},
         summary="A port on a stated cable (LLDP, UniFi, or declared) is down "
                 "while its device is up. A cable between two infrastructure "
                 "devices (switch, ap, firewall, router, hypervisor) still counts "
@@ -84,7 +85,7 @@ RULES: dict[str, Rule] = {
                 "seen up. A cable to any other device clears when its report "
                 "expires."),
     "gateway-degraded": Rule(
-        category="gateway", params={"for": 1, "loss": GATEWAY_LOSS_PCT},
+        category="gateway", params={"for": 1, "remind": 0, "loss": GATEWAY_LOSS_PCT},
         summary="Critical when the firewall reports a gateway down; warning "
                 "when its packet loss exceeds the loss percentage."),
     # informs on the attention list but routes nowhere (ADR-0003 Decision
@@ -99,7 +100,7 @@ RULES: dict[str, Rule] = {
     "ipam-drift": Rule(
         category="ipam", summary="IPAM records and the network disagree."),
     "expected-tunnel-missing": Rule(
-        category="tunnel", params={"for": 1, "idle_is_down": True},
+        category="tunnel", params={"for": 1, "remind": 0, "idle_is_down": True},
         summary="A tunnel declared on the Tunnels tab is absent, not up, or "
                 "has not been reported for two hours. A WireGuard tunnel with a stale "
                 "handshake (idle) counts as down unless idle_is_down is false."),
@@ -114,7 +115,7 @@ RULES: dict[str, Rule] = {
     # baseline (#64, ADR-0003 Decision 5); `for` 2 so one bad sample is quiet
     "port-canary": Rule(
         category="port",
-        params={"for": CANARY_FOR, "floor": CANARY_FLOOR,
+        params={"for": CANARY_FOR, "remind": 0, "floor": CANARY_FLOOR,
                 "multiplier": CANARY_MULTIPLIER, "clear": CANARY_CLEAR,
                 "warmup_h": CANARY_WARMUP_H},
         summary="A port's error or discard rate is at least multiplier × its "
@@ -181,6 +182,33 @@ def seed_rules(conn: sqlite3.Connection, catalog: dict[str, Rule] = RULES) -> No
             (name, json.dumps(rule.params), rule.route))
 
 
+# Re-notification interval, in minutes, kept in a rule's params as `remind`
+# (0 = never). A year is the ceiling the form accepts; the engine reads
+# whatever is stored without trusting it (see `remind_minutes`).
+REMIND_MAX_MIN = 525_600
+
+
+def remind_minutes(raw) -> float | None:
+    """The stored `remind` as minutes, or None for never. A missing, zero,
+    negative, non-numeric, or non-finite value means never: a damaged row
+    must not stop the engine (the `attention.rule_params` doctrine)."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        minutes = float(raw)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return minutes if math.isfinite(minutes) and minutes > 0 else None
+
+
+def _remind_shown(raw) -> int | float:
+    """What the Rules tab shows for a stored value: whole minutes, or 0."""
+    minutes = remind_minutes(raw)
+    if minutes is None:
+        return 0
+    return int(minutes) if minutes == int(minutes) else minutes
+
+
 SEVERITIES = ("crit", "warn", "info")
 _RANK = {"info": 1, "warn": 2, "crit": 3}
 
@@ -201,7 +229,9 @@ def rule_settings(conn: sqlite3.Connection,
             "summary": rule.summary,
             "enabled": cfg.get("enabled", True), "severity": cfg.get("severity"),
             "route": cfg.get("route", rule.route),
-            "params": {k: stored.get(k, v) for k, v in rule.params.items()},
+            "params": {k: (_remind_shown(stored.get(k, v)) if k == "remind"
+                           else stored.get(k, v))
+                       for k, v in rule.params.items()},
         })
     return out
 
@@ -223,6 +253,14 @@ def _parse_param(key: str, default, raw: str):
         if v in ("0", "false", "off", "no"):
             return False
         raise ValueError(f"{key}: true or false")
+    if key == "remind":
+        try:
+            n = int(raw)
+        except ValueError:
+            raise ValueError(f"{key}: whole minutes, 0 for never") from None
+        if not 0 <= n <= REMIND_MAX_MIN:
+            raise ValueError(f"{key}: 0 (never) to {REMIND_MAX_MIN} minutes")
+        return n
     if isinstance(default, int):
         try:
             n = int(raw)
@@ -246,7 +284,7 @@ def update_rule(conn: sqlite3.Connection, name: str, form: dict[str, str],
                 catalog: dict[str, Rule] = RULES) -> None:
     """Apply one Rules-tab form: enabled, severity override, and the rule's
     parameters. The route is not edited here (the Transports tab owns it),
-    and stored keys the form does not carry, such as `remind`, are kept.
+    and stored keys the form does not carry are kept.
     Raises KeyError for an unknown rule and ValueError for a bad value,
     before writing anything."""
     rule = catalog[name]
@@ -277,6 +315,8 @@ def _config(conn: sqlite3.Connection, catalog: dict[str, Rule]) -> dict[str, dic
             params = json.loads(r["params"] or "{}")
         except ValueError:
             params = {}
+        if not isinstance(params, dict):   # `null` or `[]`: damaged, not fatal
+            params = {}
         out[r["name"]] = {"enabled": bool(r["enabled"]), "severity": r["severity"],
                           "params": params, "route": r["route"]}
     return out
@@ -294,7 +334,7 @@ def _rule_for(name: str, catalog: dict[str, Rule], config: dict[str, dict]) -> d
         "enabled": cfg.get("enabled", True),
         "severity": cfg.get("severity"),
         "for": for_polls,
-        "remind": params.get("remind"),
+        "remind": remind_minutes(params.get("remind")),
         "event": rule.event,
         "route": cfg.get("route", rule.route),
     }
@@ -447,7 +487,7 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
                    f"{row['severity']} -> {a['severity']}")
             notes.append(_note("escalate", a, row["raised_at"], rule["route"]))
         elif (state == "active" and rule["remind"]
-              and now - (notified or active_at or now) >= float(rule["remind"])):
+              and now - (notified or active_at or now) >= rule["remind"] * 60):
             notified = now
             notes.append(_note("remind", a, row["raised_at"], rule["route"]))
         conn.execute(

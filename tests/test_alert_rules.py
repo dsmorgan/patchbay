@@ -342,9 +342,12 @@ def test_catalog_defaults_per_adr(conn):
     alerting.seed_rules(conn)
     rows = {r["name"]: r for r in conn.execute("SELECT * FROM alert_rules")}
     assert json.loads(rows["device-down"]["params"]) == {
-        "for": 1, "roles": ["switch", "ap", "firewall", "router", "hypervisor"]}
-    assert json.loads(rows["gateway-degraded"]["params"]) == {"for": 1, "loss": 5.0}
-    assert json.loads(rows["link-down"]["params"]) == {"for": 1, "retain_days": 30}
+        "for": 1, "remind": 0,
+        "roles": ["switch", "ap", "firewall", "router", "hypervisor"]}
+    assert json.loads(rows["gateway-degraded"]["params"]) == {
+        "for": 1, "remind": 0, "loss": 5.0}
+    assert json.loads(rows["link-down"]["params"]) == {
+        "for": 1, "remind": 0, "retain_days": 30}
     # config changed and slow link inform without paging
     assert {n for n, r in rows.items() if r["route"] == "none"} == {
         "config-changed", "slow-link"}
@@ -455,3 +458,65 @@ def test_disabling_a_rule_clears_its_alerts_without_notifying(conn, settings):
     assert a["state"] == "cleared"
     assert conn.execute("SELECT detail FROM alert_events WHERE event = 'cleared'"
                         ).fetchone()[0] == "rule disabled"
+
+
+def test_rules_tab_remind_field_on_stateful_rules_only(clean_env, tmp_path):
+    import re
+
+    import patchbay.web as web
+
+    client = TestClient(web.app)
+    page = client.get("/alerts?tab=rules").text
+    assert "remind every (minutes, 0 = never)" in page
+    for name, rule in alerting.RULES.items():
+        form = re.search(rf'<form class="rule" id="rule-{name}".*?</form>', page, re.S)[0]
+        assert ('name="param_remind"' in form) == (not rule.event), name
+
+
+def test_rules_tab_saves_remind_in_minutes_and_zero_clears_it(clean_env, tmp_path):
+    import patchbay.web as web
+
+    client = TestClient(web.app)
+    client.get("/alerts?tab=rules")
+    url = "/alerts/rules/device-down"
+    r = client.post(url, data={"enabled": "1", "param_for": "1", "param_remind": "90",
+                               "param_roles": "switch"}, follow_redirects=False)
+    assert r.status_code == 303
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        assert json.loads(c.execute("SELECT params FROM alert_rules WHERE "
+                                    "name = 'device-down'").fetchone()[0])["remind"] == 90
+    assert 'name="param_remind"\n             value="90"' in client.get(
+        "/alerts?tab=rules").text.split('id="rule-device-down"')[1]
+    client.post(url, data={"enabled": "1", "param_remind": "0"})
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        assert json.loads(c.execute("SELECT params FROM alert_rules WHERE "
+                                    "name = 'device-down'").fetchone()[0])["remind"] == 0
+
+
+@pytest.mark.parametrize("bad", ["-1", "1.5", "1h", "", "525601"])
+def test_rules_tab_rejects_bad_remind_without_writing(clean_env, tmp_path, bad):
+    import patchbay.web as web
+
+    client = TestClient(web.app)
+    client.get("/alerts?tab=rules")
+    r = client.post("/alerts/rules/device-down",
+                    data={"enabled": "1", "param_remind": bad})
+    assert r.status_code == 400
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        assert json.loads(c.execute("SELECT params FROM alert_rules WHERE "
+                                    "name = 'device-down'").fetchone()[0])["remind"] == 0
+
+
+def test_rules_tab_shows_never_for_a_damaged_stored_remind(clean_env, tmp_path):
+    import patchbay.web as web
+
+    client = TestClient(web.app)
+    client.get("/alerts?tab=rules")
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        c.execute("UPDATE alert_rules SET params = '{\"remind\": \"1h\"}' "
+                  "WHERE name = 'device-down'")
+        c.execute("UPDATE alert_rules SET params = 'null' WHERE name = 'ipam-drift'")
+    page = client.get("/alerts?tab=rules")
+    assert page.status_code == 200
+    assert 'name="param_remind"\n             value="0"' in page.text.split(
+        'id="rule-device-down"')[1]
