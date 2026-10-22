@@ -145,7 +145,8 @@ def rule_routes(conn: sqlite3.Connection) -> dict[str, str | None]:
 
 def route_label(conn: sqlite3.Connection, raw: str | None) -> str:
     """Human text for a stored route, for read-only display."""
-    names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM alert_transports")}
+    names = {r["id"]: r["name"] + ("" if r["enabled"] else " (off)")
+             for r in conn.execute("SELECT id, name, enabled FROM alert_transports")}
 
     def one(route: Route | None) -> str:
         if route is None:
@@ -703,6 +704,16 @@ class WebhookDispatcher:
         backlog = _remove_each(outbox, handled) + [
             e for _, d in pending for e in d.get("outbox") or [] if isinstance(e, dict)]
         held_down = kuma_alerts(conn, default)
+        # the default route is the first transport unless the site pinned
+        # one; a disabled first transport swallows everything routed by
+        # default, and nothing else says why
+        if (default and default.transport_id in transports
+                and not transports[default.transport_id]["enabled"]
+                and any(parse_route(n.route) == "default" for n in notes)):
+            self.lines.append(
+                f"[warn] notify: the default route points at "
+                f"{transports[default.transport_id]['name']}, which is disabled; "
+                f"nothing routed by default is sent")
 
         alert_rows: dict[str, tuple] = {}
 

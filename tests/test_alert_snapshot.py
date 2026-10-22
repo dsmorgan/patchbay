@@ -462,7 +462,8 @@ def test_done_when_unplugged_aps_on_the_demo(clean_env, tmp_path, monkeypatch):
     with pdb.connect(dbp) as c:
         c.execute("INSERT INTO alert_transports (name, kind, url) VALUES (?, ?, ?)",
                   ("hook", "generic", "https://hooks.example.com/w/t"))
-        # the demo's own (disabled) transport is the default; route to this one
+        # the demo's own transport is disabled and first, so it is the default
+        # route and swallows everything: route to this one
         pdb.set_state(c, transports.DEFAULT_ROUTE_KEY, "2:warn")
     client = TestClient(web.app)
     client.post("/ops/poll")   # whatever the demo already has open is old news

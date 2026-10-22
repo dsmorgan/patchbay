@@ -251,12 +251,9 @@ class LibreNmsCollector:
                 sample = _rate_sample(p)
                 if sample is None or (src_ts is not None and src_ts == last):
                     continue
-                conn.execute(
-                    "INSERT INTO rate_history (device, interface, ts, in_bps, "
-                    f"out_bps, {', '.join(db.RATE_COUNTERS)}) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (name, p["ifName"], db.now(), *sample),
-                )
+                db.record_rates(conn, name, p["ifName"],
+                                **dict(zip(("in_bps", "out_bps", *db.RATE_COUNTERS),
+                                           sample)))
 
         db.set_state(conn, POLL_TIMES_STATE_KEY, json.dumps(seen_times))
 
