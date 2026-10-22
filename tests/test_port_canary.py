@@ -344,3 +344,52 @@ def test_rules_tab_edits_canary_params(clean_env, tmp_path):
         p = json.loads(c.execute("SELECT params FROM alert_rules "
                                  "WHERE name = 'port-canary'").fetchone()[0])
     assert (p["floor"], p["multiplier"], p["for"], p["clear"]) == (500, 1000, 3, 10)
+
+
+# --- db.record_rates: the collector contract's way in --------------------------
+
+def test_record_rates_writes_one_sample_in_the_table_columns(conn, clock):
+    assert pdb.record_rates(conn, "sw1", "1/0/5", in_bps=4_000_000, out_bps=9,
+                            in_errors=0.5, out_errors=0.0, in_discards=2.0,
+                            out_discards=3.0) is True
+    row = dict(conn.execute("SELECT * FROM rate_history").fetchone())
+    assert row["device"] == "sw1" and row["interface"] == "1/0/5"
+    assert row["ts"] == T0                                   # defaults to now
+    assert (row["in_bps"], row["out_bps"]) == (4_000_000, 9)
+    assert (row["in_errors"], row["out_errors"]) == (0.5, 0.0)   # 0 is a value
+    assert (row["in_discards"], row["out_discards"]) == (2.0, 3.0)
+
+
+def test_record_rates_omits_what_the_source_did_not_report(conn):
+    pdb.record_rates(conn, "sw1", "1/0/5", in_errors=7.0, ts=T0 - 60)
+    row = conn.execute("SELECT * FROM rate_history").fetchone()
+    assert row["ts"] == T0 - 60
+    assert row["in_errors"] == 7.0
+    assert all(row[c] is None for c in ("in_bps", "out_bps", "out_errors",
+                                        "in_discards", "out_discards"))
+
+
+def test_record_rates_writes_nothing_when_nothing_is_live(conn):
+    assert pdb.record_rates(conn, "sw1", "1/0/5") is False
+    assert conn.execute("SELECT COUNT(*) FROM rate_history").fetchone()[0] == 0
+
+
+def test_record_rates_leaves_the_commit_to_the_caller(conn):
+    conn.commit()
+    pdb.record_rates(conn, "sw1", "1/0/5", in_bps=1)
+    assert conn.in_transaction
+
+
+def test_samples_from_record_rates_feed_the_canary(conn, settings, clock):
+    """What an out-of-tree collector does: a week of quiet samples, then a
+    flood on one port, all through the helper."""
+    ts = T0 - 48 * H
+    while ts < T0 - 2 * H:
+        pdb.record_rates(conn, "sw1", "1/0/5", in_bps=1_000_000,
+                         in_errors=0.1, ts=ts)
+        ts += 300
+    pdb.record_rates(conn, "sw1", "1/0/5", in_bps=1_000_000, in_errors=900.0,
+                     ts=T0 - 60)
+    [item] = _canaries(conn, settings)
+    assert item["key"] == "port:canary:sw1:1/0/5:in_errors"
+    assert "baseline 0.1/s" in item["text"]
