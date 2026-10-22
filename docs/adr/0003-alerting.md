@@ -514,3 +514,7 @@ silence brings the row back while the variable is set. patchbay never edits
 the env file, so removing the variable is the operator's step. Stage 2, the
 next release, ignores the variable with a parse warning naming the alerts
 page.
+
+Stage 2 shipped as written: entries no longer silence
+anything, so the legacy row and its drop-out rule are gone, and the import
+stays available on /ops while the variable is set.

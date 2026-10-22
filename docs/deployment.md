@@ -553,10 +553,10 @@ rebuild.
    docker compose -f docker-compose.stack.yml up -d
    ```
 
-1. If your configuration sets `PATCHBAY_EXPECT`, it is deprecated: import
-   its entries as silences on **Ops** and then remove it. See
+1. If your configuration sets `PATCHBAY_EXPECT`, patchbay now ignores it and
+   warns: its entries no longer silence anything. Import them as silences on
+   **Ops** and then remove the variable. See
    [Migrate PATCHBAY_EXPECT to silences](configuration.md#migrate-patchbay_expect-to-silences).
-   A later release ignores the variable.
 1. Open `/ops`: the header shows the running version, and every source
    should report `[ok]` after the first poll. If something is wrong, roll back
    by pinning the previous image tag and [restoring](#restore) the backup.
