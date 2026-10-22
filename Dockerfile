@@ -29,11 +29,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --extra web --no-editable
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Runs unprivileged: docker-entrypoint.sh starts as root only long enough
-# to fix /data ownership (an install from before this image dropped root
-# has a root-owned /data), then drops to uid 10001 with setpriv (util-linux,
-# already in the base image). Compose `user:` skips the chown and runs the
-# command as that user directly.
+# Runs as a fixed unprivileged user and never chowns anything. /data is
+# owned by that user here, before VOLUME, so a fresh named volume inherits
+# it. A bind mount keeps the host's ownership: docker-entrypoint.sh checks
+# it and says how to fix a root-owned one from an earlier release.
 RUN groupadd --gid 10001 patchbay \
  && useradd --uid 10001 --gid patchbay --no-create-home \
     --shell /usr/sbin/nologin patchbay \
@@ -49,6 +48,7 @@ ENV PATCHBAY_ENV=/data/.env \
     PATCHBAY_BUILD=$GIT_SHA
 VOLUME /data
 EXPOSE 8080
+USER 10001:10001
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 # the web UI by default; the poller service overrides the command
