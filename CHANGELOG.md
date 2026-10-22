@@ -26,6 +26,10 @@ put.
 - pfSense gateways that are up no longer draw as down on the topology and
   the Overview. A gateway in an unknown or degraded state draws amber, the
   same way alerts treat it (#96).
+- Topology map (#97): a click on a node selects it without pinning it; only
+  a drag pins. Selecting a node or a panel peer, pressing Escape, dragging,
+  and shift-click unpin keep your zoom and pan. The map re-fits on first
+  load, a filter change, or the fit button.
 
 ## [0.21.0] — 2026-10-22
 
