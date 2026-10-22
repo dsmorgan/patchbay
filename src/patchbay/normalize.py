@@ -94,7 +94,7 @@ def _retire_stale_aliases(conn: sqlite3.Connection, keys: dict[str, str],
     """Drop the aliases the identity rule no longer makes.
 
     Before #98, every name was cut at its first dot, and each merge wrote
-    an alias from the full name to the cut one ("10.0.0.21" -> "10",
+    an alias from the full name to the cut one ("192.0.2.21" -> "192",
     "ubuntu-22.04" -> "ubuntu-22", "Rack-Switch" -> "rack-switch"). Those
     aliases outlive the rule: left in place, _rename_refs would keep
     rewriting the device's links, fdb, routes and pin onto the old merged
