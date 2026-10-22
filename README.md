@@ -137,9 +137,17 @@ and renders one navigable picture:
   trunks carry it, which access ports sit in it, and its gateway and subnets,
   with deep links into your IPAM. The drift page reports where IPAM records and
   live ARP or lease data disagree.
+- **Alerts** — rules for device down, link down, gateway loss, missing VPN
+  tunnels, stale sources, IPAM drift, config changes, and port-counter
+  canaries that flag a port whose error rate jumps far above its own
+  baseline. Send alerts to an Uptime Kuma push monitor or a generic webhook,
+  set how often an active alert repeats, silence an alert with an expiry and
+  a reason, and let a critical alert take a snapshot of the network as it
+  was. You edit all of it on the Alerts page; see
+  [Notifications](docs/deployment.md#8-notifications).
 - **Config history** — one timeline of config diffs across every device, so you
   can answer "what changed since it last worked". Rendered from Oxidized's git
-  repository.
+  repository and from the firewall's stored config revisions.
 - **Patch panels** — panels you declare in `PATCHBAY_PANELS`, mapped from port
   descriptions, so the wall plate and the switch port agree on record.
 - **Ops page** — the effective configuration with secrets redacted, editable
@@ -158,7 +166,7 @@ patchbay does not reimplement polling. Proven tools do the commodity work, and
 patchbay does the aggregation, correlation, and visualization they can't:
 
 ```
-devices ──► LibreNMS  (SNMP metrics, LLDP links, graphs, alerting)
+devices ──► LibreNMS  (SNMP metrics, LLDP links, graphs)
         ──► Oxidized  (config backup → git)
         ──► native APIs (UniFi, OPNsense, pfSense, vSphere, phpIPAM — richer than SNMP)
                  │
@@ -167,7 +175,7 @@ devices ──► LibreNMS  (SNMP metrics, LLDP links, graphs, alerting)
          normalizer → devices / interfaces / links / endpoints / subnets / VLANs
                  │
                  ▼
-         topology · routed view · health · VLAN overlay · config diffs · graph proxy · snapshots
+         topology · routed view · health · VLAN overlay · config diffs · graph proxy · snapshots · alerts
 ```
 
 The normalizer holds the correlation logic: it merges devices across sources
@@ -190,7 +198,7 @@ changing core. The reference deployment uses:
 |---|---|---|
 | Netgear M4300 series | SNMPv3 + LLDP (LibreNMS) | Oxidized (SSH) |
 | Brocade/Ruckus ICX (FastIron) | SNMPv3 + LLDP (LibreNMS) | Oxidized (SSH, legacy KEX) |
-| OPNsense | SNMP + REST API | not yet — see the roadmap |
+| OPNsense | SNMP + REST API | `config.xml` over the API, secrets redacted |
 | UniFi APs | self-hosted Network app API | controller autobackup |
 | VMware vSphere / ESXi 7 | pyVmomi | n/a |
 | Unmanaged switches | inferred from MAC tables | n/a |

@@ -257,6 +257,20 @@ after you save it, and keeps it out of logs, poll output, alert history,
 and snapshots. To change a URL, paste a new one in the transport's edit
 form; leaving the field empty keeps the stored URL.
 
+### Repeat a notification while an alert stays active
+
+By default, patchbay notifies once when an alert raises and once when it
+clears. To hear about an alert that stays active, open **Alerts → Rules** and
+set **remind every (minutes, 0 = never)** on the rule. patchbay then sends
+the notification again each time that many minutes pass since the last one,
+until the alert clears. The default is 0, which never repeats. Event rules
+(`config-changed`, `snapshot-failed`) have no field, because they fire once.
+
+Reminds reach `generic` transports. A Kuma monitor needs none: patchbay
+pushes its state on every poll, so it stays down for as long as an alert
+holds it. A silenced alert sends no reminds. Reminds go out on a poll, so
+an interval shorter than your poll interval sends one per poll.
+
 ### Set up an Uptime Kuma push monitor
 
 1. In Uptime Kuma, click **Add New Monitor** and set **Monitor Type** to
