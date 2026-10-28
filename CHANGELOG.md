@@ -24,6 +24,10 @@ put.
   `db.record_rates()` is the collector contract's way to write rate samples
   (`docs/collectors.md`). Route labels mark a disabled transport "(off)",
   and a poll warns when the default route points at one.
+- UniFi switch ports now record discard rates in `rate_history`, from the `rx_dropped` and `tx_dropped` counters the collector already reads, with the same reset, gap, and repoll rules as error rates. No alert judges them yet. (#83)
+- `PATCHBAY_LIBRENMS_DISCARDS` collects LibreNMS discard rates for ports on a stated cable (LLDP, UniFi, or declared) to a switch, AP, firewall, or hypervisor. It is off by default because each such port costs one extra API call per poll, and you can turn it on from `/ops`. A repoll inside LibreNMS's polling window makes no call. (#83)
+- `/ops` shows each source's poll time: the last poll and the median of recent successful polls. The LibreNMS row also shows whether discard collection is on, how many statistics calls the last poll made, and the median poll time with discards on and off. (#83)
+- The port canary judges error rates only. Discard samples can't raise, hold, or clear a canary until #86 decides whether they should. (#83)
 
 ### Changed
 - `PATCHBAY_EXPECT` is ignored (#69): its entries no longer silence
