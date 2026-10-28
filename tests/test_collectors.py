@@ -2795,6 +2795,74 @@ def test_unifi_error_rate_dropped_after_long_gap(conn, clean_env, monkeypatch):
     assert _err_rows(conn)[-1]["in_errors"] == pytest.approx(1.0)
 
 
+# --- UniFi: port discard rates by delta (#83) ---------------------------------
+
+def _usw_drops(rx, tx, *, rx_err=0, tx_err=0, state=1):
+    usw = _usw_errors(rx_err, tx_err, state=state)
+    usw["port_table"][0]["rx_dropped"] = rx
+    usw["port_table"][0]["tx_dropped"] = tx
+    return usw
+
+
+def test_unifi_discard_rate_by_delta(conn, clean_env, monkeypatch):
+    """rx_dropped/tx_dropped ride the payload #70 already reads: no extra
+    call, and the rates land beside the error rates in the same sample."""
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(100, 10), 1000.0)
+    assert [(r["in_discards"], r["out_discards"]) for r in _err_rows(conn)] == [
+        (None, None)]
+    _poll_unifi(conn, clean_env, monkeypatch,
+                _usw_drops(700, 10, rx_err=60), 1060.0)
+    last = _err_rows(conn)[-1]
+    assert last["in_discards"] == pytest.approx(10.0)
+    assert last["out_discards"] == pytest.approx(0.0)
+    assert last["in_errors"] == pytest.approx(1.0)
+
+
+def test_unifi_discard_counter_reset_and_gap_rules(conn, clean_env, monkeypatch):
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(1000, 1000), 1000.0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(5, 1060), 1060.0)
+    last = _err_rows(conn)[-1]
+    assert last["in_discards"] is None            # reset: no negative, no spike
+    assert last["out_discards"] == pytest.approx(1.0)
+    # a missed-poll gap is not a rate, and the next poll measures from it
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(900, 900), 1060.0 + 86400)
+    last = _err_rows(conn)[-1]
+    assert last["in_discards"] is None and last["out_discards"] is None
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(960, 900), 1120.0 + 86400)
+    assert _err_rows(conn)[-1]["in_discards"] == pytest.approx(1.0)
+
+
+def test_unifi_discards_keep_their_baseline_through_a_quick_repoll(
+        conn, clean_env, monkeypatch):
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(0, 0), 1000.0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(5, 0), 1002.0)
+    assert len(_err_rows(conn)) == 1
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(120, 0), 1060.0)
+    assert _err_rows(conn)[-1]["in_discards"] == pytest.approx(2.0)
+
+
+def test_unifi_non_live_device_stores_no_discard_rates(conn, clean_env, monkeypatch):
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(0, 0), 1000.0)
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(900, 900, state=0), 1060.0)
+    assert len(_err_rows(conn)) == 1
+    _poll_unifi(conn, clean_env, monkeypatch, _usw_drops(1000, 1000), 1120.0)
+    assert _err_rows(conn)[-1]["in_discards"] is None
+
+
+def test_unifi_discard_flood_raises_no_canary(conn, clean_env, monkeypatch):
+    from patchbay import alerting, attention
+    t0 = 1_800_000_000.0
+    for i in range(3):
+        _poll_unifi(conn, clean_env, monkeypatch,
+                    _usw_drops(i * 60 * 5000, i * 60 * 9000), t0 + i * 60)
+        items, _ = attention.attention_items(conn, _unifi_settings(clean_env))
+        assert [i for i in items if i["rule"] == "port-canary"] == []
+        alerting.evaluate(conn, items, now=t0 + i * 60)
+    assert _err_rows(conn)[-1]["in_discards"] == pytest.approx(5000.0)
+    assert conn.execute("SELECT COUNT(*) FROM alerts "
+                        "WHERE rule = 'port-canary'").fetchone()[0] == 0
+
+
 class _OnsClientNoIscLeases(_OnsClient):
     """Base stub, but the ISC leases endpoint 404s (site on Dnsmasq/Kea)."""
     def get(self, url, **kw):
