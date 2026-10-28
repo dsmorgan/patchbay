@@ -133,14 +133,20 @@ def cmd_poll(args: argparse.Namespace) -> int:
                              prune_declared=settings.declarations_readable)
 
         for name, collector in sorted(collectors.items()):
+            started = time.monotonic()
             try:
                 summary = collector.collect(settings, conn)
             except Exception as e:  # one failing source must not block the others
                 conn.rollback()  # ...and must not commit half a collection
+                # committed at once: the next collector fetches before it
+                # writes, and must not fetch holding this write's lock (#109)
+                db.record_poll_time(conn, name, time.monotonic() - started, ok=False)
+                conn.commit()
                 # error text can echo a source URL with its credentials
                 say(f"[fail] {name}: {hide_userinfo(str(e))}", err=True)
                 rc = 1
                 continue
+            db.record_poll_time(conn, name, time.monotonic() - started)
             # normalize inside the SAME transaction as the source (#38): the
             # web UI reads whatever is committed, and a collector's raw writes
             # briefly held alias-named duplicate links until the old

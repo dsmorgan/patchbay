@@ -712,6 +712,51 @@ def save_last_poll(conn: sqlite3.Connection, lines: list[str]) -> None:
     set_state(conn, "last_poll", json.dumps({"ts": now(), "lines": lines}))
 
 
+# Seconds each collector's collect() took (#83), per source: the last
+# poll's figure and whether it succeeded, plus the last few successful
+# ones, so /ops shows what each source costs and one slow poll can be told
+# from a slow source. #86 reads the LibreNMS figure with and without its
+# statistics calls. One app_state row, bounded by sources x POLL_TIMES_KEEP.
+POLL_TIMES = "poll_times"
+POLL_TIMES_KEEP = 12
+
+
+def poll_times(conn: sqlite3.Connection) -> dict[str, dict]:
+    """The POLL_TIMES record, {} when absent or unreadable."""
+    try:
+        data = json.loads(get_state(conn, POLL_TIMES) or "{}")
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def record_poll_time(conn: sqlite3.Connection, source: str, seconds: float,
+                     ok: bool = True) -> None:
+    """Record how long one collector's collect() took. A failed run updates
+    the last figure only: its time measures the failure (a timeout, a
+    refused login), not what the source costs. Never commits. The record is
+    a convenience, so a database error writing it is logged and swallowed:
+    it must never cost the collection it rides with (a failed statement
+    leaves SQLite's transaction intact)."""
+    try:
+        _record_poll_time(conn, source, seconds, ok)
+    except sqlite3.Error as e:
+        log.warning("poll time for %s not recorded: %s", source, e)
+
+
+def _record_poll_time(conn: sqlite3.Connection, source: str, seconds: float,
+                      ok: bool) -> None:
+    data = poll_times(conn)
+    entry = data.get(source) if isinstance(data.get(source), dict) else {}
+    recent = [x for x in entry.get("recent") or []
+              if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    if ok:
+        recent = (recent + [round(seconds, 3)])[-POLL_TIMES_KEEP:]
+    data[source] = {"ts": now(), "ok": ok, "last": round(seconds, 3),
+                    "recent": recent}
+    set_state(conn, POLL_TIMES, json.dumps(data, sort_keys=True))
+
+
 # Snapshot failures, newest last, for the snapshot-failed rule. A snapshot
 # runs after the poll commits, so the rule reads this record on the next
 # poll. The cap only bounds the list: the rule reads the last day.

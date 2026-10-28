@@ -1887,6 +1887,102 @@ def test_cli_poll_masks_userinfo_in_failure_lines(clean_env, monkeypatch, capsys
     assert "[fail] oxidized" in out.err and "FAKEoxpw" not in out.err + out.out
 
 
+# --- per-source poll time (#83) ------------------------------------------------
+
+def test_record_poll_time_keeps_recent_successes(conn, monkeypatch):
+    monkeypatch.setattr(pdb, "now", lambda: 1000.0)
+    for i in range(pdb.POLL_TIMES_KEEP + 3):
+        pdb.record_poll_time(conn, "librenms", float(i))
+    e = pdb.poll_times(conn)["librenms"]
+    assert e["recent"] == [float(i) for i in range(3, pdb.POLL_TIMES_KEEP + 3)]
+    assert (e["last"], e["ok"], e["ts"]) == (14.0, True, 1000.0)
+    # a failure is the last figure, not a cost sample
+    pdb.record_poll_time(conn, "librenms", 30.0, ok=False)
+    e = pdb.poll_times(conn)["librenms"]
+    assert (e["last"], e["ok"]) == (30.0, False) and 30.0 not in e["recent"]
+    pdb.set_state(conn, pdb.POLL_TIMES, "not json")
+    assert pdb.poll_times(conn) == {}
+    pdb.record_poll_time(conn, "unifi", 0.5)
+    assert set(pdb.poll_times(conn)) == {"unifi"}
+
+
+def test_record_poll_time_never_raises_into_the_collection(conn, caplog):
+    conn.execute("DROP TABLE app_state")
+    pdb.record_poll_time(conn, "librenms", 1.0)      # logged, not raised
+    assert "poll time for librenms not recorded" in caplog.text
+
+
+class _TimedSource:
+    def __init__(self, name, fail=False, check=None):
+        self.name, self.fail, self.check = name, fail, check
+
+    def configured(self, settings):
+        return True
+
+    def collect(self, settings, conn):
+        if self.check:
+            self.check(conn)
+        pdb.save_raw(conn, source=self.name, endpoint="x", payload=[])
+        if self.fail:
+            raise RuntimeError("source down")
+        return "ok"
+
+
+def _timed_sources(seen: list):
+    # sorted order: the failing source runs first, and the next one checks
+    # that its record did not leave a write transaction open (#109)
+    return {"a-down": _TimedSource("a-down", fail=True),
+            "b-up": _TimedSource("b-up", check=lambda c: seen.append(c.in_transaction))}
+
+
+def test_cli_poll_records_each_sources_time(clean_env, monkeypatch, tmp_path):
+    import argparse
+    from patchbay import cli
+
+    seen: list = []
+    monkeypatch.setattr(cli, "available", lambda s: _timed_sources(seen))
+    assert cli.cmd_poll(argparse.Namespace(source=None)) == 1
+    assert seen == [False]
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        times = pdb.poll_times(c)
+    assert times["a-down"]["ok"] is False and times["a-down"]["recent"] == []
+    assert times["b-up"]["ok"] is True and len(times["b-up"]["recent"]) == 1
+
+
+def test_ops_poll_records_times_and_ops_shows_them(clean_env, monkeypatch, client,
+                                                   tmp_path):
+    import json
+    import patchbay.collectors as collectors
+    from patchbay.collectors.librenms import STATISTICS_STATE_KEY
+
+    seen: list = []
+    monkeypatch.setattr(collectors, "available", lambda s: _timed_sources(seen))
+    client.post("/ops/poll")
+    assert seen == [False]
+    body = client.get("/ops").text
+    assert "Poll time per source" in body
+    assert "a-down" in body and "· failed</span>" in body and "b-up" in body
+    # LibreNMS's row says what its statistics calls cost
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        for secs in (2.0, 4.0, 9.0):
+            pdb.record_poll_time(c, "librenms", secs)
+        pdb.set_state(c, STATISTICS_STATE_KEY, json.dumps(
+            {"ts": 1.0, "on": True, "calls": 38, "error": None}))
+    monkeypatch.setattr(collectors, "available",
+                        lambda s: {"librenms": _TimedSource("librenms")})
+    body = client.get("/ops").text
+    assert "9.0 s" in body and "4.0 s" in body and "(3 polls)" in body
+    assert "discards on · 38 statistics calls" in body
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        pdb.set_state(c, STATISTICS_STATE_KEY, json.dumps(
+            {"ts": 1.0, "on": False, "calls": 0, "error": None}))
+    assert "discards off" in client.get("/ops").text
+
+
+def test_ops_hides_poll_time_until_a_source_has_polled(clean_env, client):
+    assert "Poll time per source" not in client.get("/ops").text
+
+
 # --- /healthz (#111) -----------------------------------------------------------
 
 def _set_last_poll(db_path, age_seconds):

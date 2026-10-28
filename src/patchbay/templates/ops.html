@@ -47,6 +47,25 @@ poll.</p>
   >{{ last_poll.lines | join("\n") }}</pre>
 </details>
 {% endif %}
+{% if poll_cost %}
+{# #83: what each source costs per poll; #86 weighs the LibreNMS
+   statistics calls against it #}
+<details id="pollcost" style="max-width: 900px; margin-top: 0.3rem">
+  <summary class="muted" style="cursor: pointer; font-size: 0.8rem">
+    Poll time per source</summary>
+  <table style="font-size: 0.78rem; margin-top: 0.4rem">
+    <tr><th>source</th><th>last poll</th><th>median of recent polls</th><th></th></tr>
+    {% for c in poll_cost %}
+    <tr><td class="mono">{{ c.source }}</td>
+      <td class="mono">{{ c.last }}{% if c.failed %}
+        <span style="color: var(--crit)">· failed</span>{% endif %}</td>
+      <td class="mono">{{ c.median }}{% if c.n %}
+        <span class="muted">({{ c.n }} {{ "poll" if c.n == 1 else "polls" }})</span>{% endif %}</td>
+      <td class="muted">{{ c.note }}</td></tr>
+    {% endfor %}
+  </table>
+</details>
+{% endif %}
 </div>
 
 <h2>Declarations — what only you can tell patchbay</h2>
