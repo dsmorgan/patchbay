@@ -2914,3 +2914,120 @@ def test_vsphere_reads_vcenter_before_it_writes(conn, clean_env, monkeypatch):
     assert conn.in_transaction
     assert conn.execute("SELECT parent FROM devices WHERE name = 'vm-a'"
                         ).fetchone()[0] == "hyp1"
+
+
+# --- removed gateways, hosts, VLANs leave (#127) ---------------------------
+
+class _OnsGwClient(_OnsClient):
+    gateways: list = []
+    fail = False
+
+    def get(self, url, **kw):
+        if "gateway" in url:
+            outer = self
+
+            class R:
+                status_code = 200
+                text = ""
+                def raise_for_status(self_):
+                    if outer.fail:
+                        raise httpx.HTTPStatusError("boom", request=None, response=None)
+                def json(self_): return {"items": outer.gateways}
+            return R()
+        return super().get(url, **kw)
+
+
+def test_opnsense_prunes_gateways_the_firewall_stops_reporting(conn, clean_env, monkeypatch):
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    monkeypatch.setattr(httpx, "Client", _OnsGwClient)
+    monkeypatch.setattr(_OnsGwClient, "gateways", [
+        {"name": "WAN_OLD", "address": "192.0.2.1", "status_translated": "Offline"},
+        {"name": "WAN_KEEP", "address": "192.0.2.2", "status_translated": "Online"}])
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    monkeypatch.setattr(_OnsGwClient, "gateways", [
+        {"name": "WAN_KEEP", "address": "192.0.2.2", "status_translated": "Online"},
+        {"name": "WAN_NEW", "address": "192.0.2.3", "status_translated": "Online"}])
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    names = {r[0] for r in conn.execute("SELECT name FROM gateways")}
+    assert names == {"WAN_KEEP", "WAN_NEW"}
+
+
+def test_opnsense_gateway_prune_skips_empty_listing_and_other_sources(conn, clean_env, monkeypatch):
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    now = pdb.now()
+    conn.executemany(
+        "INSERT INTO gateways (name, address, status, source, last_seen) "
+        "VALUES (?, '192.0.2.1', 'up', ?, ?)",
+        [("WAN_A", "opnsense", now), ("WAN_PF", "pfsense", now)])
+    monkeypatch.setattr(httpx, "Client", _OnsGwClient)
+    monkeypatch.setattr(_OnsGwClient, "gateways", [])
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert {r[0] for r in conn.execute("SELECT name FROM gateways")} == {"WAN_A", "WAN_PF"}
+    monkeypatch.setattr(_OnsGwClient, "gateways", [
+        {"name": "WAN_B", "address": "192.0.2.2", "status_translated": "Online"}])
+    OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert {r[0] for r in conn.execute("SELECT name FROM gateways")} == {"WAN_B", "WAN_PF"}
+
+
+def test_vsphere_retires_hosts_vcenter_no_longer_reports(conn, clean_env, monkeypatch):
+    from patchbay.collectors.vsphere import VsphereCollector
+    pdb.upsert_device(conn, name="fw1", source="opnsense", role="firewall")
+    keep, gone = _vs_host("hyp1"), _vs_host("hyp2")
+    _vs_stub(monkeypatch, [keep, gone], [])
+    VsphereCollector().collect(_vs_settings(clean_env), conn)
+    gid = conn.execute("SELECT id FROM devices WHERE name='hyp2'").fetchone()[0]
+    pdb.upsert_interface(conn, device_id=gid, name="vmnic0", mac="02:00:00:00:07:01")
+    pdb.upsert_link(conn, a_device="hyp2", a_interface="vmnic0", b_device="sw1",
+                    b_interface="1/0/1", source="vsphere-hint")
+    _vs_stub(monkeypatch, [keep], [])
+    VsphereCollector().collect(_vs_settings(clean_env), conn)
+    assert {r[0] for r in conn.execute(
+        "SELECT name FROM devices WHERE role='hypervisor'")} == {"hyp1"}
+    assert conn.execute("SELECT COUNT(*) FROM interfaces WHERE device_id=?",
+                        (gid,)).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM links WHERE source='vsphere-hint'"
+                        ).fetchone()[0] == 0
+    assert "fw1" in get_names(conn)                 # other sources untouched
+    _vs_stub(monkeypatch, [], [])                   # empty listing: no wipe
+    VsphereCollector().collect(_vs_settings(clean_env), conn)
+    assert "hyp1" in get_names(conn)
+
+
+def test_oxidized_replaces_config_device_vlans_on_each_parse(conn, clean_env, monkeypatch):
+    from patchbay.collectors.oxidized import OxidizedCollector
+    monkeypatch.setattr(httpx, "Client", _OxClient)
+    monkeypatch.setattr(_OxClient, "config",
+                        "vlan 22 name lab\n tagged ethe 1/1/1\nvlan 30 name old\n"
+                        " tagged ethe 1/1/2\n")
+    OxidizedCollector().collect(_ox_settings(clean_env), conn)
+    dv = lambda: {(r["vid"], r["source"]) for r in conn.execute(
+        "SELECT * FROM device_vlans WHERE device='sw1'")}
+    assert (30, "config") in dv()
+    conn.execute("INSERT INTO device_vlans (device, vid, source) "
+                 "VALUES ('sw1', 99, 'qbridge')")
+    monkeypatch.setattr(_OxClient, "config", "vlan 22 name lab\n tagged ethe 1/1/1\n")
+    OxidizedCollector().collect(_ox_settings(clean_env), conn)
+    assert (30, "config") not in dv() and (22, "config") in dv()
+    assert (99, "qbridge") in dv()                  # a live report survives
+    assert conn.execute("SELECT COUNT(*) FROM vlans WHERE vid=30").fetchone()[0] == 0
+
+
+def test_pfsense_gateway_delay_is_latency_not_jitter(conn, clean_env, monkeypatch):
+    from patchbay.collectors.pfsense import PfsenseCollector
+
+    class Client(PfClient):
+        def get(self, url, **kw):
+            if url.endswith("status/gateways"):
+                return PfResponse([
+                    {"name": "WAN_DHCP", "interface": "igc0", "status": "online",
+                     "monitorip": "203.0.113.1", "delay": "12.3ms", "stddev": "0.4ms"}])
+            return super().get(url, **kw)
+
+    monkeypatch.setattr(httpx, "Client", Client)
+    PfsenseCollector().collect(_pf_settings(clean_env), conn)
+    assert conn.execute("SELECT delay FROM gateways WHERE name='WAN_DHCP'"
+                        ).fetchone()[0] == "12.3ms"
+    monkeypatch.setattr(httpx, "Client", PfClient)  # no delay field: stddev fallback
+    PfsenseCollector().collect(_pf_settings(clean_env), conn)
+    assert conn.execute("SELECT delay FROM gateways WHERE name='WAN_DHCP'"
+                        ).fetchone()[0] == "1.2"

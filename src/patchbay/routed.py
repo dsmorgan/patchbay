@@ -15,6 +15,7 @@ import sqlite3
 from typing import Any
 
 from . import db
+from .attention import DEVICE_STALE_S
 from .normalize import canonical_name
 
 # rails are keyed by VLAN id where one is known ("v20"), else by the subnet
@@ -249,7 +250,8 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                          "interface": r["interface"], "rail": None})
     default = defaults[0] if defaults else None
     gws = [dict(r) for r in conn.execute(
-        "SELECT name, address, status, loss, delay FROM gateways")]
+        "SELECT name, address, status, loss, delay FROM gateways "
+        "WHERE last_seen >= ?", (db.now() - DEVICE_STALE_S,))]
 
     # which rail a default route leaves on: the exit interface's VLAN
     # membership (untagged first), else the rail holding the next-hop
