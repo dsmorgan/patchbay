@@ -423,3 +423,24 @@ def test_fetch_graph_image_unconfigured_is_no_graph_not_an_error(clean_env, tmp_
     from patchbay.config import load_settings
 
     assert web.fetch_graph_image(load_settings(), "sw1", "1/0/1", "port_bits") is None
+
+
+def test_snapshot_notes_oxidized_answering_non_json(clean_env, tmp_path, monkeypatch):
+    """#128: a 200 that is not JSON (a proxy or SSO login page) is an
+    unreachable source, not a failed snapshot."""
+    import patchbay.web as web
+    from patchbay.config import load_settings
+    from patchbay.snapshot import write_snapshot
+    from tests.test_web import seed
+
+    seed(str(tmp_path / "test.db"))
+    clean_env.setenv("OXIDIZED_URL", "http://ox.invalid")
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    monkeypatch.setattr(web, "_ox_client", lambda settings: httpx.Client(
+        transport=httpx.MockTransport(lambda req: httpx.Response(
+            200, text="<html>Sign in</html>", headers={"content-type": "text/html"})),
+        base_url="http://ox.invalid"))
+    t = write_snapshot(load_settings()).read_text()
+    assert 'id="dev-sw1"' in t
+    assert "Oxidized configs unavailable: Oxidized did not answer with JSON" in t
+    assert "<h2>Device configs (redacted)</h2>" not in t
