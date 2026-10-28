@@ -538,9 +538,12 @@ def test_name_only_declaration_is_the_cable_lldp_reports(conn):
     assert links(conn) == [("edge1", "e1/1/24", "tv", "eth0", "lldp")]
     assert _cables(conn) == [("edge1", "e1/1/24", "tv", "eth0")]
     assert json.loads(pdb.get_state(conn, "declaration_conflicts")) == []
+    # the declaration stands in with the port discovery reported, so it
+    # stays the same cable
     conn.execute("DELETE FROM links WHERE source = 'lldp'")
     normalize(conn, declared_links=decl)
-    assert links(conn) == [("edge1", "e1/1/24", "tv", "?", "declared")]
+    assert links(conn) == [("edge1", "e1/1/24", "tv", "eth0", "declared")]
+    assert _cables(conn) == [("edge1", "e1/1/24", "tv", "eth0")]
 
 
 def test_removed_seed_alias_is_retired(conn):

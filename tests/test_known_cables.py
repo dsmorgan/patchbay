@@ -465,6 +465,45 @@ def test_host_cable_clears_when_its_link_row_expires(conn, settings, clock, role
     assert len(_known(conn)) == 1          # recorded, just not held
 
 
+@pytest.mark.parametrize("role", ["host", "ap"])
+def test_pulled_name_only_declared_cable_keeps_one_key(conn, settings, clock, role):
+    """A name-only declaration (sw1:1/0/2=tv) that LLDP reports as tv:eth0
+    stays one cable when the cable is pulled: the declaration takes over
+    from the expiring LLDP row under the same key, so the alert neither
+    clears nor fires again (#126)."""
+    decl = [("sw1", "1/0/2", "tv", "?")]
+    key = "link-down:sw1:1/0/2:tv:eth0"
+
+    def poll(*, lldp: bool, oper: str):
+        for name, r, iface in (("sw1", "switch", "1/0/2"), ("tv", role, "eth0")):
+            did = pdb.upsert_device(conn, name=name, source="librenms", role=r,
+                                    status="up")
+            pdb.upsert_interface(conn, device_id=did, name=iface,
+                                 oper_status=oper, admin_status="up")
+        if lldp:
+            pdb.upsert_link(conn, a_device="sw1", a_interface="1/0/2",
+                            b_device="tv", b_interface="eth0", source="lldp")
+        normalize.normalize(conn, declared_links=decl)
+        items = attention.attention_items(conn, settings, now=clock.t)[0]
+        keys = [i["key"] for i in items if i["rule"] == "link-down"]
+        notes = alerting.evaluate(conn, items, now=clock.t)
+        assert len(_known(conn)) == 1
+        return keys, [(n.kind, n.key) for n in notes]
+
+    assert poll(lldp=True, oper="up") == ([], [])
+    clock.t += 300
+    assert poll(lldp=False, oper="down") == ([key], [("raise", key)])
+    # the LLDP row outlives its TTL and expires: the declaration holds the key
+    clock.t += normalize.EVIDENCE_TTL + 300
+    assert poll(lldp=False, oper="down") == ([key], [])
+    clock.t += 300
+    assert poll(lldp=False, oper="down") == ([key], [])
+    assert _open(conn) == {key: "active"}
+    assert [r[-1] for r in conn.execute(
+        "SELECT a_device, a_interface, b_device, b_interface, source FROM links")] \
+        == ["declared"]
+
+
 def test_switch_to_switch_cable_holds(conn, settings, clock):
     # the infra case, explicitly: both ends are switches
     assert _pull(conn, settings, clock) == []
