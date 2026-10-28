@@ -21,6 +21,7 @@ import httpx
 
 from . import db
 from . import routed
+from .attention import DEVICE_STALE_S
 from .config import Settings
 from .redact import redact_xml, strip_stamps
 from .retention import alert_prunable, classify
@@ -164,7 +165,9 @@ def generate(settings: Settings) -> str:
         subnets = [dict(r) for r in conn.execute("SELECT * FROM subnets ORDER BY cidr")]
         endpoints = [dict(r) for r in conn.execute(
             "SELECT * FROM endpoints ORDER BY hostname IS NULL, hostname, mac")]
-        gateways = [dict(r) for r in conn.execute("SELECT * FROM gateways ORDER BY name")]
+        gateways = [dict(r) for r in conn.execute(
+            "SELECT * FROM gateways WHERE last_seen >= ? ORDER BY name",
+            (db.now() - DEVICE_STALE_S,))]
         tunnels_by_dev: dict[str, list[dict]] = {}
         for r in conn.execute("SELECT * FROM tunnels ORDER BY device, type, name"):
             tunnels_by_dev.setdefault(r["device"], []).append(dict(r))
