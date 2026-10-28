@@ -949,3 +949,16 @@ def test_two_egress_routers_each_hold_a_default(conn):
     assert rt["fw1"]["default"] and rt["fw2"]["default"]
     by = {r["key"]: r for r in g["rails"]}
     assert by["v1"]["wan"] and by["v103"]["wan"]             # both ways out draw
+
+
+def test_stale_gateway_rows_are_not_in_the_routed_graph(conn):
+    seed_site(conn)
+    now = pdb.now()
+    conn.executemany(
+        "INSERT INTO gateways (name, address, status, source, last_seen) "
+        "VALUES (?, '192.0.2.254', 'Offline', 'opnsense', ?)",
+        [("WAN_STALE", now - 30 * 86400)])
+    conn.execute("INSERT INTO gateways (name, address, status, source, last_seen) "
+                 "VALUES ('WAN_LIVE', '192.0.2.253', 'Online', 'opnsense', ?)", (now,))
+    names = [g["name"] for g in build_routed_graph(conn, _S())["gateways"]]
+    assert names == ["WAN_LIVE"]

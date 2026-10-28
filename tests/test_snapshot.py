@@ -450,3 +450,24 @@ def test_snapshot_notes_oxidized_answering_non_json(clean_env, tmp_path, monkeyp
     assert 'id="dev-sw1"' in t
     assert f"Oxidized configs unavailable: {note}" in t
     assert "<h2>Device configs (redacted)</h2>" not in t
+
+def test_snapshot_omits_stale_gateways(clean_env, tmp_path):
+    import sqlite3
+
+    from tests.test_web import seed
+
+    db_path = str(tmp_path / "test.db")
+    seed(db_path)
+    c = sqlite3.connect(db_path)
+    c.executemany(
+        "INSERT INTO gateways (name, address, status, source, last_seen) "
+        "VALUES (?, '192.0.2.254', 'Online', 'opnsense', ?)",
+        [("GW_STALE_ONE", __import__("time").time() - 30 * 86400),
+         ("GW_FRESH_ONE", __import__("time").time())])
+    c.commit(); c.close()
+    from patchbay.config import load_settings
+    from patchbay.snapshot import write_snapshot
+
+    clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    t = write_snapshot(load_settings()).read_text()
+    assert "GW_FRESH_ONE" in t and "GW_STALE_ONE" not in t

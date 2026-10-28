@@ -3031,3 +3031,16 @@ def test_pfsense_gateway_delay_is_latency_not_jitter(conn, clean_env, monkeypatc
     PfsenseCollector().collect(_pf_settings(clean_env), conn)
     assert conn.execute("SELECT delay FROM gateways WHERE name='WAN_DHCP'"
                         ).fetchone()[0] == "1.2"
+
+
+def test_opnsense_failed_gateway_fetch_prunes_nothing(conn, clean_env, monkeypatch):
+    from patchbay.collectors.opnsense import OpnsenseCollector
+    conn.execute("INSERT INTO gateways (name, address, status, source, last_seen) "
+                 "VALUES ('WAN_A', '192.0.2.1', 'up', 'opnsense', ?)", (pdb.now(),))
+    monkeypatch.setattr(httpx, "Client", _OnsGwClient)
+    monkeypatch.setattr(_OnsGwClient, "gateways", [
+        {"name": "WAN_B", "address": "192.0.2.2", "status_translated": "Online"}])
+    monkeypatch.setattr(_OnsGwClient, "fail", True)
+    with pytest.raises(Exception):
+        OpnsenseCollector().collect(_ons_settings(clean_env), conn)
+    assert [r[0] for r in conn.execute("SELECT name FROM gateways")] == ["WAN_A"]
