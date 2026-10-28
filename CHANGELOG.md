@@ -56,6 +56,7 @@ put.
 - Fixed OPNsense gateways, vSphere hosts, and Oxidized config VLANs staying in patchbay after you remove them at the source. Each collector now prunes what its source stops reporting, only after a successful fetch. (#127)
 - Fixed the topology internet cloud and the Overview gateway tiles showing a gateway that nothing has refreshed for two hours as "Offline". (#127)
 - Fixed the pfSense gateway delay column showing jitter (`stddev`) instead of latency. (#127)
+- Fixed config guards that silently deleted, blocked, or overloaded: config revisions are no longer trimmed when the stored keep setting can't be read, `PATCHBAY_VLAN_FILTER` accepts ranges like `10-20` and skips entries with bad terms with a parse warning, an identity alias such as `fw1=fw1` is rejected with a parse warning instead of deleting the device's data, a plain `PATCHBAY_PASSWORD` with non-ASCII characters no longer fails every sign-in with a 500, stored identity alias rows no longer delete a device's data, the alert snapshot keep count is not applied when it can't be read, and the patch panel page caps gap-fill so one huge position number can't build an enormous page. (#125)
 
 ## [0.23.0] — 2026-10-22
 
