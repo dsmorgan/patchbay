@@ -49,6 +49,10 @@ put.
   error-counter baseline. Duplicates no longer count toward a canary, skew
   its 7-day baseline, or show in graphs. The first poll after upgrading can
   still store one duplicate per port.
+- Fixed links from /alerts, the Overview Attention box, History, and webhook messages that 404ed when a device name contained `#`, `?`, `&`, or a space. (#128)
+- Fixed a VM's device page showing no interfaces, MAC, status, or endpoints. (#128)
+- Fixed /configs hiding the stored firewall config history while Oxidized is unreachable. (#128)
+- Fixed the break-glass snapshot failing when Oxidized answers 200 with something other than JSON. The snapshot now notes that Oxidized configs are unavailable. (#128)
 
 ## [0.23.0] — 2026-10-22
 
