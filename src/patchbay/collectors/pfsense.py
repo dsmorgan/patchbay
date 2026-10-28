@@ -286,7 +286,10 @@ class PfsenseCollector:
                 (gw_name,
                  gw.get("monitorip") or gw.get("srcip"),
                  status,
-                 gw.get("loss"), gw.get("stddev"), NAME, db.now()),
+                 gw.get("loss"),
+                 # delay is latency; stddev is jitter, only a fallback
+                 gw.get("delay") if gw.get("delay") is not None else gw.get("stddev"),
+                 NAME, db.now()),
             )
 
         # VPN tunnels (#42): each type's rows land only when its own
