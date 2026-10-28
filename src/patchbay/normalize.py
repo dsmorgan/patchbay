@@ -1085,6 +1085,20 @@ QUIET_STATUS = ("down", "notresponding", "disabled")
 ENDPOINT_TTL = 7 * 86400
 
 
+def _quiet_devices(conn: sqlite3.Connection) -> set[str]:
+    return {r["name"] for r in conn.execute(
+        f"SELECT name FROM devices WHERE LOWER(status) IN "
+        f"({','.join('?' * len(QUIET_STATUS))})", QUIET_STATUS)}
+
+
+def _outlived(row: sqlite3.Row, quiet: set[str]) -> bool:
+    """Whether a discovered link row is past its source's TTL, and no end
+    is a quiet device whose silence explains it: the row expires."""
+    if row["a_device"] in quiet or row["b_device"] in quiet:
+        return False
+    return (row["last_seen"] or 0) < db.now() - SOURCE_TTL.get(row["source"], EVIDENCE_TTL)
+
+
 def _expire_stale_evidence(conn: sqlite3.Connection) -> int:
     """Discovered evidence that stops being reported ages out: a moved cable's
     old lldp row, an inferred switch whose MACs vanished. Live rows are
@@ -1099,17 +1113,13 @@ def _expire_stale_evidence(conn: sqlite3.Connection) -> int:
     a cable really did move meanwhile, the next poll after it powers on
     replaces the evidence anyway."""
     cutoff = db.now() - EVIDENCE_TTL
-    quiet = {r["name"] for r in conn.execute(
-        f"SELECT name FROM devices WHERE LOWER(status) IN "
-        f"({','.join('?' * len(QUIET_STATUS))})", QUIET_STATUS)}
+    quiet = _quiet_devices(conn)
     dropped = 0
     for r in conn.execute(
             "SELECT id, a_device, b_device, source, last_seen FROM links "
             "WHERE source != 'declared' AND COALESCE(last_seen, 0) < ?",
             (db.now() - min(EVIDENCE_TTL, *SOURCE_TTL.values()),)).fetchall():
-        if r["a_device"] in quiet or r["b_device"] in quiet:
-            continue
-        if (r["last_seen"] or 0) >= db.now() - SOURCE_TTL.get(r["source"], EVIDENCE_TTL):
+        if not _outlived(r, quiet):
             continue
         conn.execute("DELETE FROM links WHERE id = ?", (r["id"],))
         dropped += 1
@@ -1204,11 +1214,50 @@ def _joins(row: sqlite3.Row, ad: str, ai: str, bd: str, bi: str,
             or ((ra, rb) == (bd, ad) and port_matches(rai, bi) and port_matches(rbi, ai)))
 
 
+def _fill_unknown_port(conn: sqlite3.Connection,
+                       decl: tuple[str, str, str, str],
+                       quiet: set[str]) -> tuple[str, str, str, str]:
+    """A name-only declaration ("edge1:e1/1/24=tv") with its '?' end
+    replaced by the port discovery reported for that cable: from a live
+    LLDP, UniFi or hint row, else from the cable's known-cables record.
+    Without it, the declaration that stands in when discovery goes quiet
+    (a pulled cable) would be a different cable to link-down, `tv:?`
+    instead of `tv:eth0`, and an open alert would resolve and fire again
+    under the new key (#126). Unchanged when nothing names one port."""
+    ad, ai, bd, bi = decl
+    if (ai == "?") == (bi == "?"):
+        return decl
+    if ai == "?":
+        b, b_if, a, a_if = _fill_unknown_port(conn, (bd, bi, ad, ai), quiet)
+        return a, a_if, b, b_if
+    pa, pb = sorted([ad, bd])
+
+    def far_port(a_device, a_interface, b_device, b_interface) -> str | None:
+        if (a_device, a_interface, b_device) == (ad, ai, bd):
+            return b_interface
+        if (b_device, b_interface, a_device) == (ad, ai, bd):
+            return a_interface
+        return None
+
+    live = {far_port(r["a_device"], r["a_interface"], r["b_device"], r["b_interface"])
+            for r in conn.execute(
+                "SELECT * FROM links WHERE a_device=? AND b_device=? "
+                "AND source IN ('lldp', 'unifi', 'vsphere-hint')", (pa, pb))
+            if not _outlived(r, quiet)} - {None, "?"}
+    known = {far_port(*r) for r in conn.execute(
+        "SELECT a_device, a_interface, b_device, b_interface FROM known_cables "
+        "WHERE a_device=? AND b_device=?", (pa, pb))} - {None, "?"}
+    ports = live or known
+    return (ad, ai, bd, next(iter(ports))) if len(ports) == 1 else decl
+
+
 def _apply_declared_links(conn: sqlite3.Connection,
                           declared: list[tuple[str, str, str, str]],
                           prune: bool = True) -> None:
     """Operator-stated cabling wins: insert it, and drop weaker evidence rows
     ('?' ends) for the same device pair that it supersedes."""
+    quiet = _quiet_devices(conn)
+    declared = [_fill_unknown_port(conn, d, quiet) for d in declared]
     # undeclaring must actually undeclare: retire rows whose declaration
     # has been removed from the site .env — but only when we're sure we have
     # the full declaration set (prune=False when the DB read failed, so a
@@ -1255,12 +1304,14 @@ def _apply_declared_links(conn: sqlite3.Connection,
         # normalize, so it reappears the moment discovery goes quiet again.
         # A declared '?' end matches any port on its device: a name-only
         # declaration ("edge1:e1/1/24=tv") is the cable LLDP reports from
-        # that port to tv, whatever tv calls its end (#126).
+        # that port to tv, whatever tv calls its end (#126). A row past its
+        # TTL confirms nothing: it expires this pass, and the declaration
+        # must still be standing when it does, or link-down loses the cable.
         live = conn.execute(
             "SELECT * FROM links WHERE a_device=? AND b_device=? "
             "AND source IN ('lldp', 'unifi', 'vsphere-hint')", (pa, pb)).fetchall()
         if any(_joins(r, ad, ai, bd, bi, lambda x, y: y == "?" or x == y)
-               for r in live):
+               and not _outlived(r, quiet) for r in live):
             a, b = sorted([(ad, ai), (bd, bi)])
             conn.execute(
                 "DELETE FROM links WHERE a_device=? AND a_interface=? AND b_device=? "

@@ -341,7 +341,8 @@ A declared cable replaces only the half-known (`?`-ended) evidence of the
 same cable, not a second cable between the same two devices. A name-only
 declaration (`sw:e1/1/24=basement-tv`) and an LLDP or UniFi report from
 that port to the same device are one cable: the live report is drawn, and
-the declaration returns when discovery goes quiet.
+the declaration returns when discovery goes quiet, with the far port
+discovery reported. The cable keeps one link-down alert throughout.
 
 ### Migrate PATCHBAY_EXPECT to silences
 
