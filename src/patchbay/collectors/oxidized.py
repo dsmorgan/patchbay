@@ -281,9 +281,11 @@ class OxidizedCollector:
                     "INSERT OR REPLACE INTO port_roles "
                     "(device, interface, role, detail, source) VALUES (?, ?, ?, ?, ?)",
                     (dev, iface, role, detail, NAME))
-            # config evidence replaces prior trunk *assumptions* (but never
-            # a live Q-BRIDGE report) for this device
-            conn.execute("DELETE FROM device_vlans WHERE device = ? AND source = 'trunk'",
+            # config evidence replaces prior trunk *assumptions* and prior
+            # config rows (a VLAN deleted from the config must leave the
+            # device), but never a live Q-BRIDGE report, for this device
+            conn.execute("DELETE FROM device_vlans WHERE device = ? "
+                         "AND source IN ('trunk', 'config')",
                          (dev,))
             for iface, vid, tag in rows:
                 conn.execute(
