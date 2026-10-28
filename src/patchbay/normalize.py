@@ -1130,6 +1130,26 @@ def _expire_stale_evidence(conn: sqlite3.Connection) -> int:
     return dropped
 
 
+def _retire_removed_seeds(conn: sqlite3.Connection, seeds: dict[str, str],
+                          prune: bool = True) -> None:
+    """Mark the aliases PATCHBAY_ALIASES seeds, and drop the marked ones
+    whose entry is gone (#126). Nothing else deletes a seeded alias, so
+    removing an entry would otherwise keep rewriting whatever later turns
+    up under the old name onto the old target. A merge that rewrites the
+    alias clears the mark: the row is then the identity rule's, not the
+    operator's. Retiring waits for a readable declaration set (`prune`),
+    so a false empty can't drop every seed. An alias seeded before #126
+    carries no mark; re-adding the entry and removing it again retires it."""
+    if seeds:
+        conn.execute(f"UPDATE aliases SET seeded = 1 WHERE alias IN "
+                     f"({','.join('?' * len(seeds))})", list(seeds))
+    if not prune:
+        return
+    for r in conn.execute("SELECT alias FROM aliases WHERE seeded = 1").fetchall():
+        if r[0] not in seeds:
+            conn.execute("DELETE FROM aliases WHERE alias = ?", (r[0],))
+
+
 def _apply_declared_links(conn: sqlite3.Connection,
                           declared: list[tuple[str, str, str, str]],
                           prune: bool = True) -> None:
@@ -1245,6 +1265,7 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
     for alias, canonical in seed_aliases.items():
         conn.execute("INSERT OR REPLACE INTO aliases (alias, canonical) VALUES (?, ?)",
                      (alias, canonical))
+    _retire_removed_seeds(conn, seed_aliases or {}, prune=prune_declared)
     before = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
     keys = {r["name"]: _identity_key(r)
             for r in conn.execute("SELECT * FROM devices").fetchall()}

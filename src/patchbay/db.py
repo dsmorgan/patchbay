@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 CREATE TABLE IF NOT EXISTS aliases (
     alias TEXT PRIMARY KEY,    -- name some source used (fqdn, serial, ...)
-    canonical TEXT NOT NULL    -- devices.name it resolves to
+    canonical TEXT NOT NULL,   -- devices.name it resolves to
+    seeded INTEGER NOT NULL DEFAULT 0  -- 1 = from PATCHBAY_ALIASES (#126)
 );
 CREATE TABLE IF NOT EXISTS interfaces (
     id INTEGER PRIMARY KEY,
@@ -435,6 +436,9 @@ def init(conn: sqlite3.Connection) -> None:
     tcols = {r[1] for r in conn.execute("PRAGMA table_info(tunnels)")}
     if tcols and "allowed_ips" not in tcols:  # #98: route-to-peer matching
         conn.execute("ALTER TABLE tunnels ADD COLUMN allowed_ips TEXT")
+    aliascols = {r[1] for r in conn.execute("PRAGMA table_info(aliases)")}
+    if "seeded" not in aliascols:  # #126: a removed PATCHBAY_ALIASES entry retires
+        conn.execute("ALTER TABLE aliases ADD COLUMN seeded INTEGER NOT NULL DEFAULT 0")
     rcols = {r[1] for r in conn.execute("PRAGMA table_info(routes)")}
     if rcols and "flags" not in rcols:  # discard routes must not read as reach
         conn.execute("ALTER TABLE routes ADD COLUMN flags TEXT")
