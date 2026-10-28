@@ -498,13 +498,15 @@ def test_declared_unmanaged_and_vlan_filter_resolve_device_names(conn):
     pdb.upsert_link(conn, a_device="core1", a_interface="1/0/2",
                     b_device="edge1", b_interface="p1", source="lldp")
     conn.executemany("INSERT INTO device_vlans (device, vid, source) VALUES (?, ?, ?)",
-                     [("core1", 10, "librenms"), ("core1", 20, "librenms")])
+                     [("core1", v, "librenms") for v in (10, 20, 30)])
+    # two spellings of one port pass the VLANs of both
     normalize(conn, declared_unmanaged=[(None, "Core1.lab.example", "1/0/9")],
-              vlan_filters={("edge1.lab.example", "p1"): {10}})
+              vlan_filters={("edge1.lab.example", "p1"): {10},
+                            ("EDGE1", "p1"): {20}})
     assert get_dev(conn, "unmanaged@core1:1/0/9") is not None
     assert get_dev(conn, "unmanaged@Core1.lab.example:1/0/9") is None
     assert {r[0] for r in conn.execute(
-        "SELECT vid FROM device_vlans WHERE device = 'edge1'")} == {10}
+        "SELECT vid FROM device_vlans WHERE device = 'edge1'")} == {10, 20}
 
 
 def test_declared_link_keeps_a_parallel_cable_between_the_pair(conn):

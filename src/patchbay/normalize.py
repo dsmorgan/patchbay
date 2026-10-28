@@ -1197,11 +1197,16 @@ def resolve_declarations(
            dict[tuple[str, str], set[int]]]:
     """PATCHBAY_UNMANAGED, PATCHBAY_LINKS and PATCHBAY_VLAN_FILTER with
     their device names resolved (declared_name_resolver). An unmanaged
-    switch's label is its own identity and stays as written."""
+    switch's label is its own identity and stays as written. Two filter
+    entries that resolve to one port ("sw1:p1" and "SW1.lan:p1") pass
+    the VLANs of both, so neither spelling silently overrides the other."""
     resolve = declared_name_resolver(conn)
+    filters: dict[tuple[str, str], set[int]] = {}
+    for (d, i), v in (vlan_filters or {}).items():
+        filters.setdefault((resolve(d), i), set()).update(v)
     return ([(label, resolve(d), i) for label, d, i in unmanaged or []],
             [(resolve(ad), ai, resolve(bd), bi) for ad, ai, bd, bi in links or []],
-            {(resolve(d), i): v for (d, i), v in (vlan_filters or {}).items()})
+            filters)
 
 
 def _joins(row: sqlite3.Row, ad: str, ai: str, bd: str, bi: str,
