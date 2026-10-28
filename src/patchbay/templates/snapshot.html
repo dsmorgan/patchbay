@@ -168,6 +168,9 @@ network.{% endif %}</p>
 </div>
 {% endif %}
 
+{% if configs_error %}
+<p class="muted snapnote">Oxidized configs unavailable: {{ configs_error }} when this snapshot was generated.</p>
+{% endif %}
 {% if configs %}
 <h2>Device configs (redacted)</h2>
 {% for c in configs %}

@@ -206,13 +206,15 @@ def generate(settings: Settings) -> str:
                 graphs_by_dev.setdefault(dev, []).append(
                     {"iface": iface, "uri": _data_uri(*got)})
     # latest configs: patchbay-held firewall revisions first, then Oxidized,
-    # all scrubbed; an unreachable Oxidized means a snapshot without its
-    # configs, never no snapshot.
+    # all scrubbed; an unreachable Oxidized (or one answering with
+    # something other than JSON) means a snapshot without its configs and a
+    # note saying why, never no snapshot.
     configs: list[dict] = []
     for fw in fw_configs:
         text, redacted = scrub_config(fw["text"])
         configs.append({"name": fw["device"], "text": text,
                         "redacted": redacted, "lines": text.count("\n") + 1})
+    configs_error = None
     if settings.oxidized_url:
         try:
             with web._ox_client(settings) as client:
@@ -229,7 +231,10 @@ def generate(settings: Settings) -> str:
                                     "redacted": redacted,
                                     "lines": text.count("\n") + 1})
         except httpx.HTTPError:
-            pass
+            configs_error = "Oxidized was unreachable"
+        except ValueError:
+            # 200 with a body that is not JSON: a proxy or SSO login page
+            configs_error = "Oxidized did not answer with JSON"
 
     for d in devices:
         d["ports"] = ports_by_dev.get(d["name"], [])
@@ -248,6 +253,7 @@ def generate(settings: Settings) -> str:
         graphs_error=graphs_error, generated=time.strftime("%Y-%m-%d %H:%M %Z"), ages=ages,
         devices=devices, links=links, vlans=vlans, subnets=subnets,
         endpoints=endpoints, gateways=gateways, configs=configs,
+        configs_error=configs_error,
         n_ipam=n_ipam, is_demo=is_demo, font_url=font_url, totals=totals,
         tunnel_labels=web.TUNNEL_TYPE_LABEL, now=db.now())
 
