@@ -715,10 +715,14 @@ def save_last_poll(conn: sqlite3.Connection, lines: list[str]) -> None:
 # Seconds each collector's collect() took (#83), per source: the last
 # poll's figure and whether it succeeded, plus the last few successful
 # ones, so /ops shows what each source costs and one slow poll can be told
-# from a slow source. #86 reads the LibreNMS figure with and without its
-# statistics calls. One app_state row, bounded by sources x POLL_TIMES_KEEP.
+# from a slow source. A collector whose cost depends on a setting names
+# its mode (collectors.poll_mode), and the successful times are also kept
+# per mode, so #86 reads the LibreNMS figure with and without its
+# statistics calls even after the setting changes. One app_state row,
+# bounded by sources x (1 + POLL_MODES_KEEP) x POLL_TIMES_KEEP.
 POLL_TIMES = "poll_times"
 POLL_TIMES_KEEP = 12
+POLL_MODES_KEEP = 4
 
 
 def poll_times(conn: sqlite3.Connection) -> dict[str, dict]:
@@ -731,7 +735,7 @@ def poll_times(conn: sqlite3.Connection) -> dict[str, dict]:
 
 
 def record_poll_time(conn: sqlite3.Connection, source: str, seconds: float,
-                     ok: bool = True) -> None:
+                     ok: bool = True, mode: str | None = None) -> None:
     """Record how long one collector's collect() took. A failed run updates
     the last figure only: its time measures the failure (a timeout, a
     refused login), not what the source costs. Never commits. The record is
@@ -739,22 +743,36 @@ def record_poll_time(conn: sqlite3.Connection, source: str, seconds: float,
     it must never cost the collection it rides with (a failed statement
     leaves SQLite's transaction intact)."""
     try:
-        _record_poll_time(conn, source, seconds, ok)
+        _record_poll_time(conn, source, seconds, ok, mode)
     except sqlite3.Error as e:
         log.warning("poll time for %s not recorded: %s", source, e)
 
 
+def _times(raw: Any) -> list[float]:
+    return [x for x in raw if isinstance(x, (int, float)) and not isinstance(x, bool)
+            ] if isinstance(raw, list) else []
+
+
 def _record_poll_time(conn: sqlite3.Connection, source: str, seconds: float,
-                      ok: bool) -> None:
+                      ok: bool, mode: str | None) -> None:
     data = poll_times(conn)
     entry = data.get(source) if isinstance(data.get(source), dict) else {}
-    recent = [x for x in entry.get("recent") or []
-              if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    recent = _times(entry.get("recent"))
+    raw_modes = entry.get("by_mode")
+    by_mode = {m: _times(v) for m, v in raw_modes.items()
+               if isinstance(m, str)} if isinstance(raw_modes, dict) else {}
     if ok:
-        recent = (recent + [round(seconds, 3)])[-POLL_TIMES_KEEP:]
+        took = round(seconds, 3)
+        recent = (recent + [took])[-POLL_TIMES_KEEP:]
+        if mode:
+            # the mode just used moves last, so the oldest unused one goes
+            times = by_mode.pop(mode, [])
+            by_mode[mode] = (times + [took])[-POLL_TIMES_KEEP:]
+            while len(by_mode) > POLL_MODES_KEEP:
+                by_mode.pop(next(iter(by_mode)))
     data[source] = {"ts": now(), "ok": ok, "last": round(seconds, 3),
-                    "recent": recent}
-    set_state(conn, POLL_TIMES, json.dumps(data, sort_keys=True))
+                    "recent": recent, "mode": mode, "by_mode": by_mode}
+    set_state(conn, POLL_TIMES, json.dumps(data))
 
 
 # Snapshot failures, newest last, for the snapshot-failed rule. A snapshot

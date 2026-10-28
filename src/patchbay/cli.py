@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from . import __version__, alerting, db
-from .collectors import all_collectors, available
+from .collectors import all_collectors, available, poll_mode
 from .config import load_settings, read_poll_interval
 from .redact import hide_userinfo
 
@@ -140,13 +140,15 @@ def cmd_poll(args: argparse.Namespace) -> int:
                 conn.rollback()  # ...and must not commit half a collection
                 # committed at once: the next collector fetches before it
                 # writes, and must not fetch holding this write's lock (#109)
-                db.record_poll_time(conn, name, time.monotonic() - started, ok=False)
+                db.record_poll_time(conn, name, time.monotonic() - started,
+                                    ok=False, mode=poll_mode(collector, settings))
                 conn.commit()
                 # error text can echo a source URL with its credentials
                 say(f"[fail] {name}: {hide_userinfo(str(e))}", err=True)
                 rc = 1
                 continue
-            db.record_poll_time(conn, name, time.monotonic() - started)
+            db.record_poll_time(conn, name, time.monotonic() - started,
+                                mode=poll_mode(collector, settings))
             # normalize inside the SAME transaction as the source (#38): the
             # web UI reads whatever is committed, and a collector's raw writes
             # briefly held alias-named duplicate links until the old

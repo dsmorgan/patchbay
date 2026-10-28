@@ -178,7 +178,12 @@ discards whenever your source has them; the rule ignores them until
 The poller times each collector's `collect()` and `/ops` shows the last
 figure and the median of recent successful polls per source. A collector
 that spends extra calls on an optional feature should say how many in its
-summary line, as LibreNMS does with its statistics calls.
+summary line, as LibreNMS does with its statistics calls, and may define
+`poll_mode(settings) -> str` naming the setting's state (LibreNMS returns
+`"discards on"` or `"discards off"`). Recent times are then also kept per
+mode, and `/ops` shows the median for each, so the feature's cost stays
+readable after the setting changes. The method is optional; an error in it
+only drops the label.
 
 ## Configuration
 

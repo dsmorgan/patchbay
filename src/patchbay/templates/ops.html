@@ -61,7 +61,7 @@ poll.</p>
         <span style="color: var(--crit)">· failed</span>{% endif %}</td>
       <td class="mono">{{ c.median }}{% if c.n %}
         <span class="muted">({{ c.n }} {{ "poll" if c.n == 1 else "polls" }})</span>{% endif %}</td>
-      <td class="muted">{{ c.note }}</td></tr>
+      <td class="muted">{{ c.note }}{% if c.modes %}<div>{{ c.modes }}</div>{% endif %}</td></tr>
     {% endfor %}
   </table>
 </details>

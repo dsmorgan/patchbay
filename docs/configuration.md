@@ -236,8 +236,9 @@ rates need no setting: they arrive in the payload the collector already
 reads.
 
 `/ops` shows each source's poll time and, for LibreNMS, the number of
-statistics calls the last poll made, so you can compare the cost with the
-setting on and off.
+statistics calls the last poll made and the median poll time with discards
+on and with them off, kept separately, so you can compare the cost of the
+setting directly.
 
 `VSPHERE_TLS_VERIFY` exists because a stock vCenter serves a self-signed VMCA
 certificate that nothing trusts. Set it to `0` only until you fix that, and

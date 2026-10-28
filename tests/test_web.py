@@ -1979,6 +1979,76 @@ def test_ops_poll_records_times_and_ops_shows_them(clean_env, monkeypatch, clien
     assert "discards off" in client.get("/ops").text
 
 
+def test_record_poll_time_keeps_recent_times_per_mode(conn):
+    """#83: the cost with and without a setting stays readable after a
+    toggle, so #86 can compare the two medians directly."""
+    for secs in (3.0, 3.2, 3.4):
+        pdb.record_poll_time(conn, "librenms", secs, mode="discards off")
+    for secs in (9.0, 9.4):
+        pdb.record_poll_time(conn, "librenms", secs, mode="discards on")
+    pdb.record_poll_time(conn, "librenms", 30.0, ok=False, mode="discards on")
+    e = pdb.poll_times(conn)["librenms"]
+    assert e["by_mode"] == {"discards off": [3.0, 3.2, 3.4],
+                            "discards on": [9.0, 9.4]}
+    assert e["recent"] == [3.0, 3.2, 3.4, 9.0, 9.4] and e["mode"] == "discards on"
+    # bounded: per mode, and in the number of modes (oldest unused goes)
+    for i in range(pdb.POLL_TIMES_KEEP + 2):
+        pdb.record_poll_time(conn, "librenms", 1.0, mode="discards on")
+    for m in ("a", "b", "c"):
+        pdb.record_poll_time(conn, "librenms", 1.0, mode=m)
+    by_mode = pdb.poll_times(conn)["librenms"]["by_mode"]
+    assert len(by_mode) == pdb.POLL_MODES_KEEP and "discards off" not in by_mode
+    assert len(by_mode["discards on"]) == pdb.POLL_TIMES_KEEP
+
+
+def test_poll_mode_is_optional_and_never_fails_a_poll(clean_env):
+    from patchbay.collectors import poll_mode
+    from patchbay.collectors.librenms import LibreNmsCollector
+    from patchbay.config import load_settings
+
+    s = load_settings()
+    assert poll_mode(LibreNmsCollector(), s) == "discards off"
+    clean_env.setenv("PATCHBAY_LIBRENMS_DISCARDS", "on")
+    assert poll_mode(LibreNmsCollector(), load_settings()) == "discards on"
+
+    class Broken:
+        def poll_mode(self, settings):
+            raise RuntimeError("no")
+    assert poll_mode(_TimedSource("x"), s) is None
+    assert poll_mode(Broken(), s) is None
+
+
+def test_cli_poll_records_the_collectors_mode(clean_env, monkeypatch, tmp_path):
+    import argparse
+    from patchbay import cli
+
+    class Moded(_TimedSource):
+        def poll_mode(self, settings):
+            return "discards on"
+    monkeypatch.setattr(cli, "available", lambda s: {"librenms": Moded("librenms")})
+    assert cli.cmd_poll(argparse.Namespace(source=None)) == 0
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        e = pdb.poll_times(c)["librenms"]
+    assert list(e["by_mode"]) == ["discards on"] and len(e["by_mode"]["discards on"]) == 1
+
+
+def test_ops_shows_the_median_with_and_without_discards(clean_env, monkeypatch,
+                                                        client, tmp_path):
+    import patchbay.collectors as collectors
+
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        pdb.init(c)
+        for secs in (3.0, 3.4, 3.8):
+            pdb.record_poll_time(c, "librenms", secs, mode="discards off")
+        for secs in (9.0, 9.8):
+            pdb.record_poll_time(c, "librenms", secs, mode="discards on")
+    monkeypatch.setattr(collectors, "available",
+                        lambda s: {"librenms": _TimedSource("librenms")})
+    body = client.get("/ops").text
+    assert ("median by mode · discards off: 3.4 s (3 polls), "
+            "discards on: 9.4 s (2 polls)") in body
+
+
 def test_ops_hides_poll_time_until_a_source_has_polled(clean_env, client):
     assert "Poll time per source" not in client.get("/ops").text
 
