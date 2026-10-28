@@ -1948,3 +1948,16 @@ def test_healthz_still_obeys_the_host_allowlist(client, clean_env):
                       ).status_code in (200, 503)
     assert client.get("/healthz", headers={"host": "127.0.0.1:8080"}
                       ).status_code in (200, 503)      # the container's own probe
+
+
+def test_confignode_links_encode_the_node_name(clean_env, tmp_path, client):
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    c.row_factory = sqlite3.Row
+    pdb.init(c)
+    for i in range(2):
+        c.execute("INSERT INTO config_revisions (device, fetched_at, text, sha, message)"
+                  " VALUES (?,?,?,?,?)", ("fw #2", 1000 + i, f"cfg {i}", f"h{i}", f"rev-{i}"))
+    c.commit(); c.close()
+    body = client.get("/configs/fw%20%232").text
+    assert 'href="/configs/fw%20%232?v=current"' in body
+    assert "/configs/fw%20%232?v=" in body and "/configs/fw #2" not in body

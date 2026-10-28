@@ -1116,3 +1116,14 @@ def test_a_disabled_default_transport_is_labeled_and_named_in_the_poll(dbp):
     c.close()
     d = _poll(dbp, [_item("a"), _item("b")], 1200.0, rec)
     assert not any("default route" in line for line in d.lines)
+
+
+def test_generic_payload_url_encodes_odd_device_names(clean_env):
+    from patchbay import attention
+
+    href = f"/device/{attention.quote('Sw #1 a?b&c', safe='')}"
+    n = alerting.Notification(key="k", rule="device-down", kind="raise", severity="crit",
+                              text="t", href=href, raised_at=0.0, route="all",
+                              detail="")
+    p = transports.generic_payload(n, transport="t", base="https://pb.example", now=1.0)
+    assert p["url"] == "https://pb.example/device/Sw%20%231%20a%3Fb%26c"
