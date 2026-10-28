@@ -6,6 +6,7 @@ Server-rendered, reads the SQLite model the collectors maintain. Run with
 
 from __future__ import annotations
 
+import dataclasses
 import ipaddress
 import json
 import sqlite3
@@ -27,7 +28,7 @@ from .attention import (CATEGORIES, DEVICE_STALE_S, STALE_MIN, attention_items, 
                         gateway_state, human_age, human_speed, ip_sort_key, ipam_link,
                         source_ages, speed_tier, stamp_first_seen)
 from .config import load_settings
-from .normalize import canonical_name
+from .normalize import canonical_name, resolve_declarations
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -960,6 +961,12 @@ def _busier(*readings: float | None) -> float | None:
 def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]:
     """Build the topology graph as script-safe JSON (plus whether any 24h
     peak samples exist). Shared by /topology and the snapshot generator."""
+    # declared unmanaged and VLAN-filter ports, under the names normalize
+    # resolved them to (an FQDN or alias reaches its device, #126)
+    unmanaged, _, vlan_filters = resolve_declarations(
+        conn, settings.unmanaged, None, settings.vlan_filters)
+    settings = dataclasses.replace(settings, unmanaged=unmanaged,
+                                   vlan_filters=vlan_filters)
     devs = conn.execute(
         f"SELECT * FROM devices WHERE role IN ({','.join('?' * len(TOPO_ROLES))}) "
         "ORDER BY name", TOPO_ROLES).fetchall()

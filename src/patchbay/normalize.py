@@ -19,6 +19,7 @@ import json
 import re
 import sqlite3
 from collections import Counter
+from collections.abc import Callable
 
 from . import alerting, db, known_cables
 
@@ -1150,6 +1151,49 @@ def _retire_removed_seeds(conn: sqlite3.Connection, seeds: dict[str, str],
             conn.execute("DELETE FROM aliases WHERE alias = ?", (r[0],))
 
 
+def declared_name_resolver(conn: sqlite3.Connection) -> Callable[[str], str]:
+    """Resolve a device name an operator typed into a declaration the way
+    discovered names resolve (#126): through the aliases table, then by
+    canonical name ("core1.lab.example" and "Core1" are "core1"). A name
+    that resolves to nothing known stays as written: a name-only far end
+    ("basement-tv") is often a host no source reports. Call it after the
+    merge and rename passes, once the aliases table is final."""
+    names = {r[0] for r in conn.execute("SELECT name FROM devices")}
+    alias_map = dict(conn.execute("SELECT alias, canonical FROM aliases").fetchall())
+
+    def follow(name: str) -> str:
+        seen: set[str] = set()
+        while name in alias_map and name not in seen:
+            seen.add(name)
+            name = alias_map[name]
+        return name
+
+    def resolve(name: str) -> str:
+        for n in (name, canonical_name(name)):
+            if n in alias_map:
+                return follow(n)
+            if n in names:
+                return n
+        return name
+    return resolve
+
+
+def resolve_declarations(
+        conn: sqlite3.Connection,
+        unmanaged: list[tuple[str | None, str, str]] | None = None,
+        links: list[tuple[str, str, str, str]] | None = None,
+        vlan_filters: dict[tuple[str, str], set[int]] | None = None,
+) -> tuple[list[tuple[str | None, str, str]], list[tuple[str, str, str, str]],
+           dict[tuple[str, str], set[int]]]:
+    """PATCHBAY_UNMANAGED, PATCHBAY_LINKS and PATCHBAY_VLAN_FILTER with
+    their device names resolved (declared_name_resolver). An unmanaged
+    switch's label is its own identity and stays as written."""
+    resolve = declared_name_resolver(conn)
+    return ([(label, resolve(d), i) for label, d, i in unmanaged or []],
+            [(resolve(ad), ai, resolve(bd), bi) for ad, ai, bd, bi in links or []],
+            {(resolve(d), i): v for (d, i), v in (vlan_filters or {}).items()})
+
+
 def _apply_declared_links(conn: sqlite3.Connection,
                           declared: list[tuple[str, str, str, str]],
                           prune: bool = True) -> None:
@@ -1280,6 +1324,10 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
     _demote_kernel_link_ends(conn)
     _fuse_links(conn)
     _fill_single_port_links(conn)
+    # declarations name devices the way the operator typed them; resolve
+    # them like discovered names, now that the aliases table is final
+    declared_unmanaged, declared_links, vlan_filters = resolve_declarations(
+        conn, declared_unmanaged, declared_links, vlan_filters)
     # Declarations are applied FIRST, because everything downstream reasons
     # about which ports are already claimed. Run afterwards, they arrived too
     # late for the first poll of a fresh database: an fdb-uplink duplicating a

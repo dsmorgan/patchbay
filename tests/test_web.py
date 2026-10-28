@@ -1123,6 +1123,28 @@ def test_labeled_unmanaged_node_keeps_vlan_chips(clean_env, tmp_path, client):
     assert 24 in node["vlans"]
 
 
+def test_unmanaged_and_vlan_filter_declared_by_alias_reach_the_device(
+        clean_env, tmp_path, client):
+    # declarations naming the switch by an alias resolve to it on the map
+    # too, so the node keeps the filter's VLAN chips (#126)
+    clean_env.setenv("PATCHBAY_UNMANAGED", "closet-switch=sw1.example.lan:1/0/9")
+    clean_env.setenv("PATCHBAY_VLAN_FILTER", "SW1.example.lan:1/0/9=73")
+    db_path = str(tmp_path / "test.db")
+    seed(db_path)
+    c = sqlite3.connect(db_path)
+    c.row_factory = sqlite3.Row
+    from patchbay.config import load_settings
+    from patchbay.normalize import normalize
+    s = load_settings()
+    normalize(c, declared_unmanaged=s.unmanaged, vlan_filters=s.vlan_filters)
+    c.commit(); c.close()
+    g = _graph(client, tmp_path)
+    node = next(n for n in g["nodes"] if n["name"] == "closet-switch")
+    assert 73 in node["vlans"]
+    assert any({e["source"], e["target"]} == {"sw1", "closet-switch"}
+               for e in g["links"])
+
+
 def test_labeled_unmanaged_node_gets_vlans_from_endpoint_ips(clean_env, tmp_path, client):
     # the last-resort VLAN fallback (addresses of endpoints behind the
     # switch) must find labeled nodes too, not only unmanaged@ names

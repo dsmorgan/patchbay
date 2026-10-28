@@ -465,6 +465,48 @@ def test_discovery_beats_a_stale_declaration_and_reports_it(conn):
     assert any("vmhost2" in n and "1/0/14" in n for n in notes), notes
 
 
+def _cables(conn):
+    return [tuple(r) for r in conn.execute(
+        "SELECT a_device, a_interface, b_device, b_interface FROM known_cables "
+        "ORDER BY a_device, a_interface")]
+
+
+def test_declared_link_ends_resolve_through_aliases_and_domains(conn):
+    # a declaration naming a device by FQDN, case, or alias draws the cable to
+    # that device, and its link-down memory keeps one first sighting (#126)
+    dev(conn, "core1", "librenms", last_seen=NOW, role="switch", status="up")
+    dev(conn, "core1.lab.example", "unifi", last_seen=NOW, role="switch")
+    dev(conn, "nas1", "vsphere", last_seen=NOW, role="hypervisor", status="up")
+    dev(conn, "edge1", "librenms", last_seen=NOW, role="switch", status="up")
+    decl = [("core1.lab.example", "1/0/5", "NAS1", "eth0"),
+            ("old-edge", "1/0/6", "core1", "1/0/1")]
+    seen = set()
+    for _ in range(3):
+        normalize(conn, {"old-edge": "edge1"}, declared_links=decl)
+        seen.add(conn.execute("SELECT first_seen FROM known_cables "
+                              "WHERE b_device = 'nas1'").fetchone()[0])
+    assert links(conn) == [("core1", "1/0/1", "edge1", "1/0/6", "declared"),
+                           ("core1", "1/0/5", "nas1", "eth0", "declared")]
+    assert _cables(conn) == [("core1", "1/0/1", "edge1", "1/0/6"),
+                             ("core1", "1/0/5", "nas1", "eth0")]
+    assert len(seen) == 1, "the known-cables record reset"
+
+
+def test_declared_unmanaged_and_vlan_filter_resolve_device_names(conn):
+    dev(conn, "core1", "librenms", last_seen=NOW, role="switch", status="up")
+    dev(conn, "edge1", "librenms", last_seen=NOW, role="switch", status="up")
+    pdb.upsert_link(conn, a_device="core1", a_interface="1/0/2",
+                    b_device="edge1", b_interface="p1", source="lldp")
+    conn.executemany("INSERT INTO device_vlans (device, vid, source) VALUES (?, ?, ?)",
+                     [("core1", 10, "librenms"), ("core1", 20, "librenms")])
+    normalize(conn, declared_unmanaged=[(None, "Core1.lab.example", "1/0/9")],
+              vlan_filters={("edge1.lab.example", "p1"): {10}})
+    assert get_dev(conn, "unmanaged@core1:1/0/9") is not None
+    assert get_dev(conn, "unmanaged@Core1.lab.example:1/0/9") is None
+    assert {r[0] for r in conn.execute(
+        "SELECT vid FROM device_vlans WHERE device = 'edge1'")} == {10}
+
+
 def test_removed_seed_alias_is_retired(conn):
     # removing a PATCHBAY_ALIASES entry stops the rewrite; aliases the
     # identity rule wrote are not the operator's to retire (#126)
