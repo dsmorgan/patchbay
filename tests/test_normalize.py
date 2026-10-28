@@ -548,6 +548,30 @@ def test_name_only_declaration_is_the_cable_lldp_reports(conn):
     assert _cables(conn) == [("edge1", "e1/1/24", "tv", "eth0")]
 
 
+def test_name_only_declaration_lets_go_of_a_moved_cables_port(conn):
+    # tv learned as tv:eth0 behind edge1:e1/1/24, then moved to edge2:5 with
+    # the declaration left as it was: tv:eth0 is edge2's cable now, so the
+    # declaration falls back to tv:? instead of claiming it twice (#126)
+    for n in ("edge1", "edge2"):
+        dev(conn, n, "librenms", last_seen=NOW, role="switch", status="up")
+    dev(conn, "tv", "phpipam", last_seen=NOW, role="host", status="up")
+    decl = [("edge1", "e1/1/24", "tv", "?")]
+    pdb.upsert_link(conn, a_device="edge1", a_interface="e1/1/24",
+                    b_device="tv", b_interface="eth0", source="lldp")
+    normalize(conn, declared_links=decl)
+    assert _cables(conn) == [("edge1", "e1/1/24", "tv", "eth0")]
+    conn.execute("UPDATE links SET last_seen = ? WHERE source = 'lldp'",
+                 (NOW - EVIDENCE_TTL - 60,))
+    pdb.upsert_link(conn, a_device="edge2", a_interface="5",
+                    b_device="tv", b_interface="eth0", source="lldp")
+    for _ in range(2):
+        normalize(conn, declared_links=decl)
+    assert links(conn) == [("edge1", "e1/1/24", "tv", "?", "declared"),
+                           ("edge2", "5", "tv", "eth0", "lldp")]
+    assert _cables(conn) == [("edge1", "e1/1/24", "tv", "?"),
+                             ("edge2", "5", "tv", "eth0")]
+
+
 def test_removed_seed_alias_is_retired(conn):
     # removing a PATCHBAY_ALIASES entry stops the rewrite; aliases the
     # identity rule wrote are not the operator's to retire (#126)
