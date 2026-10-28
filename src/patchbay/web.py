@@ -1760,6 +1760,41 @@ def _json_state(conn, key: str):
         return None
 
 
+def _seconds(x: float) -> str:
+    return f"{x:.1f} s" if x < 100 else f"{x:,.0f} s"
+
+
+def _poll_cost(conn, sources: list[str]) -> list[dict]:
+    """Per-source poll time for /ops (#83): the last collect() and the
+    median of the recent successful ones, plus what LibreNMS spent on
+    statistics calls, so the cost of PATCHBAY_LIBRENMS_DISCARDS (#86) and a
+    slow source show without a shell. Configured sources only, and only
+    once they have polled."""
+    from statistics import median
+
+    from .collectors.librenms import NAME as LIBRENMS, STATISTICS_STATE_KEY
+
+    times = db.poll_times(conn)
+    stats = _json_state(conn, STATISTICS_STATE_KEY)
+    out = []
+    for src in sources:
+        e = times.get(src)
+        if not isinstance(e, dict) or not isinstance(e.get("last"), (int, float)):
+            continue
+        recent = [x for x in e.get("recent") or [] if isinstance(x, (int, float))]
+        note = ""
+        if src == LIBRENMS and isinstance(stats, dict):
+            note = (f"discards on · {stats.get('calls', 0)} statistics calls"
+                    if stats.get("on") else "discards off")
+            if stats.get("on") and stats.get("error"):
+                note += f" · stopped after {stats['error']}"
+        out.append({"source": src, "last": _seconds(e["last"]),
+                    "failed": e.get("ok") is False,
+                    "median": _seconds(median(recent)) if recent else "—",
+                    "n": len(recent), "note": note})
+    return out
+
+
 def _config_keep_text(s) -> str:
     """Effective per-device config revision keep, with where it came from."""
     if s.config_keep is None:
@@ -1890,6 +1925,7 @@ def ops(request: Request):
     last_poll = None
     ages: dict = {}
     conflicts: list = []
+    poll_cost: list = []
     expect_pending = len(settings.expected)   # unknown: assume none imported
     # (an over-count only while the database is unreadable)
     conn = None
@@ -1908,10 +1944,11 @@ def ops(request: Request):
                 last_poll = None
         ages = source_ages(conn)
         conflicts = _json_state(conn, "declaration_conflicts") or []
+        poll_cost = _poll_cost(conn, sorted(available(settings)))
     except sqlite3.Error:
         # corrupt or locked past the timeout: still render, read-only
         readable = False
-        last_poll, ages, conflicts = None, {}, []
+        last_poll, ages, conflicts, poll_cost = None, {}, [], []
     finally:
         if conn is not None:
             conn.close()
@@ -1932,6 +1969,7 @@ def ops(request: Request):
         "export": "\n".join(f'{v}="{stored[v]}"' for v in DECLARATION_VARS
                             if stored.get(v)),
         "last_poll": last_poll,
+        "poll_cost": poll_cost,
         "conflicts": conflicts,
         # open UI + any Host accepted: a web page the operator visits can
         # rebind its own name to this address and drive the UI
@@ -2262,11 +2300,18 @@ def ops_poll(source: str | None = None):
         claimed = True
         heartbeat.enter_context(db.lease_heartbeat(settings.db_path, owner))
         for name, collector in sorted(collectors.items()):
+            started = time.monotonic()
             try:
                 lines.append(f"[ok]   {name}: {collector.collect(settings, conn)}")
+                db.record_poll_time(conn, name, time.monotonic() - started)
                 conn.commit()
             except Exception as e:  # one failing source must not block the others
                 conn.rollback()
+                # committed at once, as the poller does: the next collector
+                # must not fetch holding this write's lock (#109)
+                db.record_poll_time(conn, name, time.monotonic() - started,
+                                    ok=False)
+                conn.commit()
                 lines.append(f"[fail] {name}: {hide_userinfo(str(e))}")
         try:
             lines.append(f"[ok]   normalize: {normalize(conn, settings.aliases, settings.unmanaged, settings.links, settings.vlan_filters, prune_declared=settings.declarations_readable)}")
