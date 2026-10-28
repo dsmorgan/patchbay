@@ -102,6 +102,9 @@
   {% endfor %}
 </table>
 </div>
+{% endif %}
+{# outside the Ports condition: a VM's only interface is a kernel-kind vNIC,
+   so `ports` and `hidden` are both empty there #}
 {% if kernel_ports %}
 <h2>Kernel interfaces — {{ kernel_ports | length }}
   <span style="text-transform: none; letter-spacing: 0; font-weight: 400">; vSwitch-side (vmk), carry addresses — no cable ends here</span></h2>
@@ -144,7 +147,6 @@
   </tr>
   {% endif %}{% endfor %}
 </template>
-{% endif %}
 {% endif %}
 
 {% if tunnels %}

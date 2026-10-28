@@ -8,10 +8,12 @@
 The Oxidized container must also publish its REST API: bind
 <span class="mono">rest: 0.0.0.0:8888</span> in its config and map the port in
 docker-compose.</p>
-{% elif error %}
+{% else %}
+{# an Oxidized outage must not hide the firewall history patchbay stores itself #}
+{% if error %}
 <p><span class="dot down"></span>Oxidized unreachable at
 <span class="mono">{{ oxidized_url }}</span>: <span class="muted">{{ error }}</span></p>
-{% else %}
+{% endif %}
 <h2>What changed</h2>
 {% if entries %}
 <div class="scroll"><table>
