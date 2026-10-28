@@ -1349,3 +1349,12 @@ def test_an_alias_never_captures_a_live_device(conn):
     normalize(conn)
     assert not conn.execute("SELECT * FROM aliases").fetchall()
     assert links(conn) == [("sw1", "1/0/2", "ubuntu-22", "eth0", "lldp")]
+
+
+def test_identity_seed_alias_deletes_nothing(conn):
+    dev(conn, "fw1", "librenms", last_seen=NOW, role="firewall")
+    pdb.upsert_link(conn, a_device="fw1", a_interface="1", b_device="x",
+                    b_interface="2", source="lldp")
+    normalize(conn, {"fw1": "fw1"})
+    assert ("fw1", "1", "x", "2", "lldp") in links(conn)
+    assert conn.execute("SELECT COUNT(*) FROM aliases WHERE alias = 'fw1'").fetchone()[0] == 0

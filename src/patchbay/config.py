@@ -113,7 +113,7 @@ DECLARATION_HELP = {
         "what": "Trunks with a restricted VLAN list. Trunks are otherwise "
                 "assumed to carry every VLAN, since allowed-lists aren't "
                 "readable over SNMP.",
-        "syntax": "device:interface=vid+vid+vid, comma-separated",
+        "syntax": "device:interface=vid+vid+lo-hi, comma-separated",
         "example": "core1:1/0/11=1+24+73",
     },
     "PATCHBAY_CAPACITY": {
@@ -379,7 +379,8 @@ class Settings:
     snapshot_at: str | None
     # Config revisions kept per device (0 = unlimited). Where the value came
     # from is declaration_sources["PATCHBAY_CONFIG_KEEP"], absent = default.
-    config_keep: int
+    # None = the stored value couldn't be read this cycle: trim nothing.
+    config_keep: int | None
     # Snapshot on critical (#66): the flag, the cooldown in minutes (0 =
     # none), and the alert snapshots' own keep count (0 = unlimited).
     alert_snapshot: bool = False
@@ -411,6 +412,21 @@ class Settings:
     @property
     def wan_port(self) -> tuple[str, str] | None:
         return self.wan_ports[0] if self.wan_ports else None
+
+
+def _parse_vlan_terms(text: str) -> set[int] | None:
+    """VLAN ids from "1+24+73" or ranges like "10-20" (1-4094). None when
+    any term is not one, so a typo can't turn into an empty or partial set."""
+    vids: set[int] = set()
+    for term in text.split("+"):
+        m = re.fullmatch(r"(\d+)(?:-(\d+))?", term.strip())
+        if not m:
+            return None
+        lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
+        if not 1 <= lo <= hi <= 4094:
+            return None
+        vids.update(range(lo, hi + 1))
+    return vids
 
 
 def load_settings(*, read_db: bool = True) -> Settings:
@@ -469,7 +485,13 @@ def load_settings(*, read_db: bool = True) -> Settings:
     for pair in (env("PATCHBAY_ALIASES") or "").split(","):
         if "=" in pair:
             alias, canonical = pair.split("=", 1)
-            aliases[alias.strip()] = canonical.strip()
+            alias, canonical = alias.strip(), canonical.strip()
+            if not alias or not canonical or alias == canonical:
+                # an identity alias would hand a device's data to itself and
+                # drop it on the next normalize
+                warn("PATCHBAY_ALIASES", pair)
+                continue
+            aliases[alias] = canonical
         elif pair.strip():
             warn("PATCHBAY_ALIASES", pair)
     expected = set()
@@ -528,7 +550,11 @@ def load_settings(*, read_db: bool = True) -> Settings:
         port, _, vids = spec.partition("=")
         if vids and ":" in port:  # the colon must be in the port half
             dev, iface = port.strip().split(":", 1)
-            vlan_filters[(dev, iface)] = {int(v) for v in vids.split("+") if v.strip().isdigit()}
+            vids_set = _parse_vlan_terms(vids)
+            if vids_set is None:  # a bad term would block VLANs it didn't mean to
+                warn("PATCHBAY_VLAN_FILTER", spec)
+                continue
+            vlan_filters[(dev.strip(), iface.strip())] = vids_set
         elif spec.strip():
             warn("PATCHBAY_VLAN_FILTER", spec)
     capacities = {}
@@ -609,6 +635,10 @@ def load_settings(*, read_db: bool = True) -> Settings:
             warnings.append(f"PATCHBAY_CONFIG_KEEP: {raw_keep!r} is not a "
                             "whole number of 0 or more — using "
                             f"{CONFIG_KEEP_DEFAULT}")
+    if not declarations_readable and _env("PATCHBAY_CONFIG_KEEP") is None:
+        # same reasoning as snapshot_keep: the stored value may keep more
+        # than the default, so trim nothing until it can be read
+        config_keep = None
     raw_flag = (env("PATCHBAY_ALERT_SNAPSHOT") or "").strip().lower()
     alert_snapshot = raw_flag in _TRUE
     if raw_flag and raw_flag not in _TRUE + _FALSE:

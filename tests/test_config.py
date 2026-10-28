@@ -195,3 +195,30 @@ def test_poll_interval_is_capped_at_a_day(clean_env):
         s = load_settings()
         assert s.poll_interval == POLL_INTERVAL_MAX
         assert any("over a day" in w for w in s.parse_warnings)
+
+
+def test_vlan_filter_accepts_ranges_and_rejects_bad_terms(clean_env):
+    clean_env.setenv("PATCHBAY_VLAN_FILTER",
+                     "sw1:p1=1+10-12,sw1:p2=1-10x,sw1:p3=0-5,sw1:p4=abc")
+    s = load_settings()
+    assert s.vlan_filters == {("sw1", "p1"): {1, 10, 11, 12}}
+    assert sum("PATCHBAY_VLAN_FILTER" in w for w in s.parse_warnings) == 3
+
+
+def test_identity_alias_is_rejected(clean_env):
+    clean_env.setenv("PATCHBAY_ALIASES", "fw1=fw1,bmc1=hyp1")
+    s = load_settings()
+    assert s.aliases == {"bmc1": "hyp1"}
+    assert any("PATCHBAY_ALIASES" in w and "fw1=fw1" in w for w in s.parse_warnings)
+
+
+def test_config_keep_none_when_declarations_unreadable(clean_env, monkeypatch):
+    from patchbay import config as cfg
+
+    def boom(_):
+        raise cfg.DeclarationReadError("database is locked")
+
+    monkeypatch.setattr(cfg, "_db_declarations", boom)
+    assert cfg.load_settings().config_keep is None
+    clean_env.setenv("PATCHBAY_CONFIG_KEEP", "7")
+    assert cfg.load_settings().config_keep == 7
