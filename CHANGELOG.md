@@ -61,6 +61,10 @@ put.
 - Fixed the topology internet cloud and the Overview gateway tiles showing a gateway that nothing has refreshed for two hours as "Offline". (#127)
 - Fixed the pfSense gateway delay column showing jitter (`stddev`) instead of latency. (#127)
 - Fixed config guards that silently deleted, blocked, or overloaded: config revisions are no longer trimmed when the stored keep setting can't be read, `PATCHBAY_VLAN_FILTER` accepts ranges like `10-20` and skips entries with bad terms with a parse warning, an identity alias such as `fw1=fw1` is rejected with a parse warning instead of deleting the device's data, a plain `PATCHBAY_PASSWORD` with non-ASCII characters no longer fails every sign-in with a 500, stored identity alias rows no longer delete a device's data, the alert snapshot keep count is not applied when it can't be read, and the patch panel page caps gap-fill so one huge position number can't build an enormous page. (#125)
+- Declared links, unmanaged switches, and VLAN filters now resolve device names through aliases and canonical names. A declaration that names a device by FQDN or alias now reaches that device instead of a phantom, and its link-down record no longer resets every poll. Two VLAN filter entries for one port now pass the VLANs of both. (#126)
+- A declared link no longer deletes a second, discovered cable between the same two devices. (#126)
+- A name-only declared link (`edge1:e1/1/24=tv`) and the LLDP or UniFi report of the same cable are now one edge and one known-cables record. When the cable is pulled, the declaration takes over with the far port that discovery reported, so the link-down alert keeps one key. (#126)
+- Removing a `PATCHBAY_ALIASES` entry now removes its alias on the next poll. An entry removed before this release keeps resolving until you add it again, let one poll run, and remove it. (#126)
 
 ## [0.23.0] — 2026-10-22
 
