@@ -296,6 +296,12 @@ class OpnsenseCollector:
         gws = take("gws")
         if gws is not None:
             db.save_raw(conn, source=NAME, endpoint="routes/gateway/status", payload=gws)
+            # prune only on a real listing (fetched above, before any write):
+            # a renamed or removed gateway must not keep its last status. An
+            # empty listing is no evidence, so the staleness bound in the
+            # views covers the last gateway going away.
+            if gws.get("items"):
+                conn.execute("DELETE FROM gateways WHERE source = ?", (NAME,))
             for g in gws.get("items", []):
                 conn.execute(
                     "INSERT INTO gateways (name, address, status, loss, delay, source, last_seen) "
