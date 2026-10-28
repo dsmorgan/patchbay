@@ -240,8 +240,9 @@ def test_redundant_wan_ports_share_one_cloud(clean_env, tmp_path, client):
     for name in ("1/0/16", "1/0/17"):
         c.execute("INSERT INTO interfaces (device_id, name, oper_status) "
                   "SELECT id, ?, 'up' FROM devices WHERE name='sw1'", (name,))
-    c.execute("INSERT INTO gateways (name, address, status, source) "
-              "VALUES ('WAN_GW', '192.0.2.254', 'Online', 'opnsense')")
+    c.execute("INSERT INTO gateways (name, address, status, source, last_seen) "
+              "VALUES ('WAN_GW', '192.0.2.254', 'Online', 'opnsense', ?)",
+              (pdb.now(),))
     c.commit(); c.close()
     clean_env.setenv("PATCHBAY_WAN_NAME", "Fiber")
     clean_env.setenv("PATCHBAY_WAN_PORT", "sw1:1/0/16,sw1:1/0/17")
@@ -257,8 +258,9 @@ def test_two_providers_get_their_own_clouds(clean_env, tmp_path, client):
     for name in ("1/0/16", "1/0/17"):
         c.execute("INSERT INTO interfaces (device_id, name, oper_status) "
                   "SELECT id, ?, 'up' FROM devices WHERE name='sw1'", (name,))
-    c.execute("INSERT INTO gateways (name, address, status, source) "
-              "VALUES ('WAN_GW', '192.0.2.254', 'Online', 'opnsense')")
+    c.execute("INSERT INTO gateways (name, address, status, source, last_seen) "
+              "VALUES ('WAN_GW', '192.0.2.254', 'Online', 'opnsense', ?)",
+              (pdb.now(),))
     c.commit(); c.close()
     clean_env.setenv("PATCHBAY_WAN_NAME", "Fiber,Cable")
     clean_env.setenv("PATCHBAY_WAN_PORT", "sw1:1/0/16,sw1:1/0/17")
@@ -1767,8 +1769,8 @@ def test_gateway_status_reads_the_same_on_cloud_and_overview(
     c = sqlite3.connect(str(tmp_path / "test.db"))
     c.execute("INSERT INTO interfaces (device_id, name, oper_status) "
               "SELECT id, '1/0/16', 'up' FROM devices WHERE name='sw1'")
-    c.execute("INSERT INTO gateways (name, address, status, source) "
-              "VALUES ('WAN_GW', '192.0.2.254', ?, ?)", (status, source))
+    c.execute("INSERT INTO gateways (name, address, status, source, last_seen) "
+              "VALUES ('WAN_GW', '192.0.2.254', ?, ?, ?)", (status, source, pdb.now()))
     c.commit(); c.close()
     clean_env.setenv("PATCHBAY_WAN_NAME", "Fiber")
     clean_env.setenv("PATCHBAY_WAN_PORT", "sw1:1/0/16")
@@ -1961,3 +1963,23 @@ def test_confignode_links_encode_the_node_name(clean_env, tmp_path, client):
     body = client.get("/configs/fw%20%232").text
     assert 'href="/configs/fw%20%232?v=current"' in body
     assert "/configs/fw%20%232?v=" in body and "/configs/fw #2" not in body
+
+def test_stale_gateway_rows_stay_off_the_cloud_and_overview(clean_env, tmp_path, client):
+    """A gateway nothing has refreshed for DEVICE_STALE_S is gone, not
+    'Offline': it drives neither the internet cloud nor an Overview tile."""
+    seed(str(tmp_path / "test.db"))
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    c.execute("INSERT INTO interfaces (device_id, name, oper_status) "
+              "SELECT id, '1/0/16', 'up' FROM devices WHERE name='sw1'")
+    c.executemany(
+        "INSERT INTO gateways (name, address, status, source, last_seen) "
+        "VALUES (?, ?, ?, 'opnsense', ?)",
+        [("WAN_AAA_OLD", "192.0.2.253", "Offline", pdb.now() - 30 * 86400),
+         ("WAN_GW", "192.0.2.254", "Online", pdb.now())])
+    c.commit(); c.close()
+    clean_env.setenv("PATCHBAY_WAN_NAME", "Fiber")
+    clean_env.setenv("PATCHBAY_WAN_PORT", "sw1:1/0/16")
+    cloud = next(n for n in _graph(client, tmp_path)["nodes"] if n["name"] == "Fiber")
+    assert cloud["status"] == "up"
+    html = client.get("/").text
+    assert "WAN_GW" in html and "WAN_AAA_OLD" not in html

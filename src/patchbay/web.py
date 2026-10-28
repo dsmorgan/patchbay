@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import alerting, db, expected_tunnels, known_cables, silences, transports
 from . import routed
-from .attention import (CATEGORIES, STALE_MIN, attention_items, device_totals, drift_report,
+from .attention import (CATEGORIES, DEVICE_STALE_S, STALE_MIN, attention_items, device_totals, drift_report,
                         gateway_state, human_age, human_speed, ip_sort_key, ipam_link,
                         source_ages, speed_tier, stamp_first_seen)
 from .config import load_settings
@@ -385,7 +385,9 @@ def dashboard(request: Request):
         for it in exceptions:
             it["since"] = _since(it["first_seen"])
         attn_summary = _attention_summary(exceptions)
-        gateways = conn.execute("SELECT * FROM gateways ORDER BY name").fetchall()
+        gateways = conn.execute(
+            "SELECT * FROM gateways WHERE last_seen >= ? ORDER BY name",
+            (db.now() - DEVICE_STALE_S,)).fetchall()
         fabric = conn.execute(
             "SELECT * FROM devices WHERE role IN ('switch','router','firewall') "
             "ORDER BY role, name"
@@ -1183,7 +1185,7 @@ def build_topology_graph(conn: sqlite3.Connection, settings) -> tuple[str, bool]
     # provider delivered over two circuits shows two cables to one cloud.
     gws = conn.execute(
         "SELECT * FROM gateways WHERE name LIKE 'WAN%' AND address NOT LIKE 'fe80%' "
-        "ORDER BY name").fetchall()
+        "AND last_seen >= ? ORDER BY name", (db.now() - DEVICE_STALE_S,)).fetchall()
     fw = next((d for d in devs if d["role"] == "firewall"), None)
     on_map = {d["name"] for d in devs}
     # provider index -> the ports it lands on
