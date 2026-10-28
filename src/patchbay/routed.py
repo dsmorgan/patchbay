@@ -291,7 +291,10 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     for r in conn.execute(
             "SELECT device, interface, "
             "MAX(MAX(COALESCE(in_bps, 0), COALESCE(out_bps, 0))) AS pk "
-            "FROM rate_history WHERE ts > ? GROUP BY device, interface",
+            "FROM rate_history WHERE ts > ? "
+            # a sample with no bit rate (counters only) is not a 0 peak
+            "AND (in_bps IS NOT NULL OR out_bps IS NOT NULL) "
+            "GROUP BY device, interface",
             (db.now() - 86400,)):
         key = (r["device"], r["interface"])
         if key in cap_of:

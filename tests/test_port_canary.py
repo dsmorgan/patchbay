@@ -40,7 +40,7 @@ def _sample(conn, ts, *, dev="sw1", iface="1/0/5", **counters):
 
 
 def _history(conn, value, *, hours=48, step=300, dev="sw1", iface="1/0/5",
-             counter="out_discards"):
+             counter="out_errors"):
     """A steady baseline from `hours` ago up to two hours ago."""
     ts = T0 - hours * H
     while ts < T0 - 2 * H:
@@ -63,11 +63,11 @@ def test_p95_is_a_nearest_rank_sample():
 
 def test_baseline_excludes_the_last_hour_and_the_week_before(conn):
     for i in range(100):                      # 1..100 spread over the past day
-        _sample(conn, T0 - 2 * H - i * 600, out_discards=float(i + 1))
-    _sample(conn, T0 - 8 * 86400, out_discards=1e6)   # outside the week
+        _sample(conn, T0 - 2 * H - i * 600, out_errors=float(i + 1))
+    _sample(conn, T0 - 8 * 86400, out_errors=1e6)     # outside the week
     for m in (5, 20, 50):                     # the flood itself: last hour
-        _sample(conn, T0 - m * 60, out_discards=1e6)
-    assert attention.canary_baseline(conn, "sw1", "1/0/5", "out_discards",
+        _sample(conn, T0 - m * 60, out_errors=1e6)
+    assert attention.canary_baseline(conn, "sw1", "1/0/5", "out_errors",
                                      T0, 24 * H) == 95
     # each counter is its own series
     assert attention.canary_baseline(conn, "sw1", "1/0/5", "in_errors",
@@ -76,9 +76,9 @@ def test_baseline_excludes_the_last_hour_and_the_week_before(conn):
 
 def test_baseline_is_none_while_warming_up(conn):
     _history(conn, 3.0, hours=20)
-    assert attention.canary_baseline(conn, "sw1", "1/0/5", "out_discards",
+    assert attention.canary_baseline(conn, "sw1", "1/0/5", "out_errors",
                                      T0, 24 * H) is None
-    assert attention.canary_baseline(conn, "sw1", "1/0/5", "out_discards",
+    assert attention.canary_baseline(conn, "sw1", "1/0/5", "out_errors",
                                      T0, 12 * H) == 3.0
 
 
@@ -86,51 +86,51 @@ def test_baseline_is_none_while_warming_up(conn):
 
 def test_floor_keeps_a_quiet_port_quiet(conn, settings, clock):
     _history(conn, 0.0)
-    _sample(conn, T0 - 60, out_discards=40.0)     # 0 -> 40: under the floor
+    _sample(conn, T0 - 60, out_errors=40.0)       # 0 -> 40: under the floor
     assert _canaries(conn, settings) == []
-    _sample(conn, T0 - 30, out_discards=60.0)     # newest sample wins
+    _sample(conn, T0 - 30, out_errors=60.0)       # newest sample wins
     [it] = _canaries(conn, settings)
-    assert it["key"] == "port:canary:sw1:1/0/5:out_discards"
+    assert it["key"] == "port:canary:sw1:1/0/5:out_errors"
     assert (it["category"], it["severity"]) == ("port", "warn")
-    assert it["text"] == "sw1 1/0/5 out discards at 60/s (baseline 0/s)"
+    assert it["text"] == "sw1 1/0/5 out errors at 60/s (baseline 0/s)"
     assert it["href"] == "/device/sw1#port-1/0/5"
     assert it["ports"] == [("sw1", "1/0/5")]
 
 
 def test_canary_href_encodes_the_device_name(conn, settings, clock):
     _history(conn, 0.0, dev="sw #1")
-    _sample(conn, T0 - 30, dev="sw #1", out_discards=60.0)
+    _sample(conn, T0 - 30, dev="sw #1", out_errors=60.0)
     [it] = _canaries(conn, settings)
     assert it["href"] == "/device/sw%20%231#port-1/0/5"
 
 
 def test_multiplier_against_the_ports_own_baseline(conn, settings, clock):
-    _history(conn, 20.0)                          # a trunk that always discards
-    _sample(conn, T0 - 60, out_discards=1900.0)   # 95x: its normal chatter
+    _history(conn, 20.0)                          # a port that always errors
+    _sample(conn, T0 - 60, out_errors=1900.0)     # 95x: its normal chatter
     assert _canaries(conn, settings) == []
-    _sample(conn, T0 - 30, out_discards=4200.0)   # 210x
+    _sample(conn, T0 - 30, out_errors=4200.0)     # 210x
     [it] = _canaries(conn, settings)
-    assert it["text"] == "sw1 1/0/5 out discards at 4,200/s (baseline 20/s)"
+    assert it["text"] == "sw1 1/0/5 out errors at 4,200/s (baseline 20/s)"
 
 
 def test_warm_up_judges_against_the_floor_alone(conn, settings, clock):
     _history(conn, 1.0, hours=10)                 # 10 h of history: warming up
-    _sample(conn, T0 - 60, in_errors=0.0, out_discards=60.0)
+    _sample(conn, T0 - 60, in_errors=0.0, out_errors=60.0)
     [it] = _canaries(conn, settings)              # 60x its baseline, above floor
-    assert it["text"] == ("sw1 1/0/5 out discards at 60/s "
+    assert it["text"] == ("sw1 1/0/5 out errors at 60/s "
                           "(no baseline yet, floor 50/s)")
 
 
 def test_hysteresis_holds_until_below_clear_times_baseline(conn, settings, clock):
     _history(conn, 10.0)
-    _sample(conn, T0 - 60, out_discards=200.0)    # 20x: not enough to raise
+    _sample(conn, T0 - 60, out_errors=200.0)      # 20x: not enough to raise
     assert _canaries(conn, settings) == []
     conn.execute("INSERT INTO alerts (key, rule, category, severity, state, "
                  "polls, raised_at) VALUES "
-                 "('port:canary:sw1:1/0/5:out_discards', 'port-canary', 'port', "
+                 "('port:canary:sw1:1/0/5:out_errors', 'port-canary', 'port', "
                  "'warn', 'active', 3, ?)", (T0 - H,))
     assert len(_canaries(conn, settings)) == 1    # ...but enough to hold
-    _sample(conn, T0 - 30, out_discards=90.0)     # under 10x: clears
+    _sample(conn, T0 - 30, out_errors=90.0)       # under 10x: clears
     assert _canaries(conn, settings) == []
 
 
@@ -140,11 +140,11 @@ def test_hysteresis_on_a_zero_baseline_port(conn, settings, clock):
     _history(conn, 0.0)
     conn.execute("INSERT INTO alerts (key, rule, category, severity, state, "
                  "polls, raised_at) VALUES "
-                 "('port:canary:sw1:1/0/5:out_discards', 'port-canary', 'port', "
+                 "('port:canary:sw1:1/0/5:out_errors', 'port-canary', 'port', "
                  "'warn', 'active', 3, ?)", (T0 - H,))
-    _sample(conn, T0 - 60, out_discards=6.0)      # 50 / 100 * 10 = 5
+    _sample(conn, T0 - 60, out_errors=6.0)        # 50 / 100 * 10 = 5
     assert len(_canaries(conn, settings)) == 1
-    _sample(conn, T0 - 30, out_discards=4.0)
+    _sample(conn, T0 - 30, out_errors=4.0)
     assert _canaries(conn, settings) == []
 
 
@@ -165,7 +165,7 @@ def test_params_and_silence(conn, clean_env, clock):
 
 def test_stale_sample_says_nothing(conn, settings, clock):
     _history(conn, 0.0)
-    _sample(conn, T0 - 30 * 60, out_discards=5000.0)   # the poller stopped
+    _sample(conn, T0 - 30 * 60, out_errors=5000.0)     # the poller stopped
     assert _canaries(conn, settings) == []
 
 
@@ -173,7 +173,7 @@ def test_stale_sample_says_nothing(conn, settings, clock):
 
 def _poll(conn, settings, clock, rate, *, at):
     clock["now"] = at
-    _sample(conn, at - 10, out_discards=rate)
+    _sample(conn, at - 10, out_errors=rate)
     return alerting.evaluate(conn, attention.attention_items(conn, settings)[0],
                              now=at)
 
@@ -186,7 +186,7 @@ def _state(conn):
 
 def test_a_flood_raises_after_two_polls_and_clears_with_hysteresis(
         conn, settings, clock):
-    """The issue's done-when: a discard rate that jumps from a quiet baseline
+    """The issue's done-when: an error rate that jumps from a quiet baseline
     to thousands per second raises a warn after two polls, naming the
     baseline."""
     _history(conn, 2.0)
@@ -284,6 +284,44 @@ def test_a_silenced_announced_canary_keeps_its_hysteresis(conn, settings, clock)
     assert note.kind == "raise"           # held: still flooding, never cleared
 
 
+# --- discards are collected, never judged (#83) -------------------------------
+
+def test_a_discard_flood_never_raises(conn, settings, clock):
+    """#83: discard samples land in rate_history, but the canary watches
+    error rates only until #86 decides otherwise. A week of quiet discards
+    and then thousands per second, through the engine: no item, no alert."""
+    _history(conn, 2.0, counter="out_discards")
+    _history(conn, 2.0, counter="in_discards")
+    for i, at in enumerate((T0, T0 + 300, T0 + 600)):
+        clock["now"] = at
+        _sample(conn, at - 10, in_bps=8_000, in_errors=0.0, out_errors=0.0,
+                in_discards=5000.0, out_discards=9000.0 + i)
+        assert _canaries(conn, settings) == []
+        assert alerting.evaluate(conn, attention.attention_items(conn, settings)[0],
+                                 now=at) == []
+    assert conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 0
+
+
+def test_a_discard_only_sample_changes_no_canary_state(conn, settings, clock):
+    """A sample carrying discards and no error reading is not the port's
+    newest sample to the canary: it neither counts as a second look for a
+    pending alert nor clears or holds an active one."""
+    _history(conn, 2.0)
+    assert _poll(conn, settings, clock, 3000.0, at=T0) == []
+    pending = conn.execute("SELECT state, polls, sample_ts FROM alerts").fetchone()[:]
+    assert pending[:2] == ("pending", 1)
+    clock["now"] = T0 + 300
+    _sample(conn, T0 + 290, in_discards=0.0, out_discards=0.0)
+    assert _evaluate(conn, settings, clock, T0 + 300) == []
+    assert conn.execute("SELECT state, polls, sample_ts FROM alerts").fetchone()[:] == pending
+    [note] = _poll(conn, settings, clock, 3100.0, at=T0 + 600)
+    assert note.kind == "raise"
+    # active: a discard-only sample of zero does not clear it either
+    _sample(conn, T0 + 890, out_discards=0.0)
+    assert _evaluate(conn, settings, clock, T0 + 900) == []
+    assert _state(conn) == "active"
+
+
 def test_down_mac_named_device_holds_the_canary(conn, settings, clock):
     # #110: a UniFi device with no name is stored as its MAC; the key's
     # colons must not lose its port, or the canary clears when it dies
@@ -292,7 +330,7 @@ def test_down_mac_named_device_holds_the_canary(conn, settings, clock):
     _history(conn, 2.0, dev=mac, iface="Port 3")
     for at in (T0, T0 + 300):
         clock["now"] = at
-        _sample(conn, at - 10, dev=mac, iface="Port 3", out_discards=3000.0)
+        _sample(conn, at - 10, dev=mac, iface="Port 3", out_errors=3000.0)
         alerting.evaluate(conn, attention.attention_items(conn, settings)[0], now=at)
     assert _state(conn) == "active"
     conn.execute("UPDATE devices SET status = 'down'")
@@ -332,8 +370,8 @@ def test_catalog_row_and_category(conn):
                       "warmup_h": 24}
     assert alerting.RULES["port-canary"].category == "port"
     summary = alerting.RULES["port-canary"].summary
-    assert "error rate (discards: see #86)" in summary
-    assert "discard rate" not in summary
+    assert summary.startswith("A port's error rate is at least")
+    assert "Discard rates are collected but not judged (see #86)" in summary
     assert attention.CATEGORIES["port"] == "ports"
 
 

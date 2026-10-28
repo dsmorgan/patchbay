@@ -134,9 +134,12 @@ other write. It returns `False` and writes nothing when every figure is `None`.
 ### How the canaries read the samples
 
 The `port-canary` rule judges one counter at a time (`in_errors`,
-`out_errors`, `in_discards`, `out_discards`) on each port whose newest sample
-is under 15 minutes old. A port with no sample that recent says nothing about
-now.
+`out_errors`) on each port whose newest sample with an error reading is under
+15 minutes old. A port with no sample that recent says nothing about now. The
+discard columns are collected but never judged: a discard reading can't
+raise, hold, or clear a canary until
+[#86](https://github.com/dsmorgan/patchbay/issues/86) decides from the
+collected samples whether it should.
 
 - **Baseline:** the 95th percentile of that counter over the past 7 days,
   leaving out the last hour so a flood never becomes its own baseline. Only
