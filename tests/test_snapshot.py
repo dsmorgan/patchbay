@@ -425,7 +425,13 @@ def test_fetch_graph_image_unconfigured_is_no_graph_not_an_error(clean_env, tmp_
     assert web.fetch_graph_image(load_settings(), "sw1", "1/0/1", "port_bits") is None
 
 
-def test_snapshot_notes_oxidized_answering_non_json(clean_env, tmp_path, monkeypatch):
+@pytest.mark.parametrize("body, note", [
+    ("<html>Sign in</html>", "Oxidized did not answer with JSON"),
+    ('{"error": "login required"}', "Oxidized answered with an unexpected shape"),
+    ('["a", "b"]', "Oxidized answered with an unexpected shape"),
+])
+def test_snapshot_notes_oxidized_answering_non_json(clean_env, tmp_path, monkeypatch,
+                                                    body, note):
     """#128: a 200 that is not JSON (a proxy or SSO login page) is an
     unreachable source, not a failed snapshot."""
     import patchbay.web as web
@@ -438,9 +444,9 @@ def test_snapshot_notes_oxidized_answering_non_json(clean_env, tmp_path, monkeyp
     clean_env.setenv("PATCHBAY_SNAPSHOT_DIR", str(tmp_path / "snaps"))
     monkeypatch.setattr(web, "_ox_client", lambda settings: httpx.Client(
         transport=httpx.MockTransport(lambda req: httpx.Response(
-            200, text="<html>Sign in</html>", headers={"content-type": "text/html"})),
+            200, text=body, headers={"content-type": "text/html"})),
         base_url="http://ox.invalid"))
     t = write_snapshot(load_settings()).read_text()
     assert 'id="dev-sw1"' in t
-    assert "Oxidized configs unavailable: Oxidized did not answer with JSON" in t
+    assert f"Oxidized configs unavailable: {note}" in t
     assert "<h2>Device configs (redacted)</h2>" not in t

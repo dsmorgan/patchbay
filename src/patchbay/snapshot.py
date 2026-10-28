@@ -218,7 +218,11 @@ def generate(settings: Settings) -> str:
     if settings.oxidized_url:
         try:
             with web._ox_client(settings) as client:
-                for node in web._ox_nodes(client):
+                nodes = web._ox_nodes(client)
+                if not isinstance(nodes, list) or not all(
+                        isinstance(n, dict) for n in nodes):
+                    raise TypeError("unexpected nodes.json shape")
+                for node in nodes:
                     status = (node.get("last") or {}).get("status") or node.get("status")
                     if status != "success":
                         continue
@@ -232,6 +236,8 @@ def generate(settings: Settings) -> str:
                                     "lines": text.count("\n") + 1})
         except httpx.HTTPError:
             configs_error = "Oxidized was unreachable"
+        except (TypeError, AttributeError):
+            configs_error = "Oxidized answered with an unexpected shape"
         except ValueError:
             # 200 with a body that is not JSON: a proxy or SSO login page
             configs_error = "Oxidized did not answer with JSON"
