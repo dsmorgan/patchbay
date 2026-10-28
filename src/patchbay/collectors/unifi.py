@@ -45,23 +45,31 @@ def _bps(entry: dict, key: str, live: bool) -> int | None:
 
 
 ERR_STATE_KEY = "unifi_port_error_counters"
+# the discard counters' own memory (#83), kept apart from the error one so
+# a site upgrading mid-week keeps its error baseline
+DROP_STATE_KEY = "unifi_port_drop_counters"
+# port_table's absolute (rx, tx) counters for each rate_history pair
+ERR_FIELDS = ("rx_errors", "tx_errors")
+DROP_FIELDS = ("rx_dropped", "tx_dropped")
 # 6x the default 300 s poll interval (Settings doesn't know the interval): a
 # longer gap means missed polls, and a delta across it is not a rate
 ERR_MAX_ELAPSED_S = 1800
 
 
-def _error_rates(prev: dict, now_ts: float, key: str, port: dict, live: bool,
-                 seen: dict) -> tuple[float | None, float | None]:
-    """Per-second rx/tx error rates (#70) by delta against the previous
-    poll's absolute `rx_errors`/`tx_errors` counters. Remembers this poll's
-    counters in `seen` and returns (in, out), None for each direction with no
-    rate: first sight of a port, a negative delta (counter wrap or device
-    restart), non-positive elapsed time, or a non-live device (the counters
-    are the controller's cache, and not remembered either, so a device coming
-    back starts fresh instead of averaging over its outage)."""
+def _counter_rates(prev: dict, now_ts: float, key: str, port: dict, live: bool,
+                   seen: dict, fields: tuple[str, str] = ERR_FIELDS
+                   ) -> tuple[float | None, float | None]:
+    """Per-second rx/tx rates by delta against the previous poll's absolute
+    counters named by `fields`: errors (#70) or discards (#83). Remembers
+    this poll's counters in `seen` and returns (in, out), None for each
+    direction with no rate: first sight of a port, a negative delta (counter
+    wrap or device restart), non-positive elapsed time, or a non-live device
+    (the counters are the controller's cache, and not remembered either, so
+    a device coming back starts fresh instead of averaging over its
+    outage)."""
     if not live:
         return None, None
-    cur = [port.get("rx_errors"), port.get("tx_errors")]
+    cur = [port.get(f) for f in fields]
     seen[key] = [now_ts, *cur]
     old = prev.get(key)
     if not old or len(old) != 3:
@@ -105,13 +113,16 @@ def _due(prev: dict, now_ts: float, key: str, seen: dict) -> bool:
 
 def _sample(conn: sqlite3.Connection, device: str, iface: str,
             in_bps: int | None, out_bps: int | None,
-            in_errors: float | None = None,
-            out_errors: float | None = None) -> None:
+            in_errors: float | None = None, out_errors: float | None = None,
+            in_discards: float | None = None,
+            out_discards: float | None = None) -> None:
     """One rate_history row when there is a rate to record: it feeds the
     load view's 24-hour peak, and the normalizer ages the table out. Error
-    rates feed the port canaries; discards are not collected (#86)."""
+    rates feed the port canaries; discard rates are only collected, for #86
+    to judge (#83)."""
     db.record_rates(conn, device, iface, in_bps=in_bps, out_bps=out_bps,
-                    in_errors=in_errors, out_errors=out_errors)
+                    in_errors=in_errors, out_errors=out_errors,
+                    in_discards=in_discards, out_discards=out_discards)
 
 
 def _temperature(d: dict) -> float | None:
@@ -162,6 +173,11 @@ class UnifiCollector:
         except ValueError:
             prev_err = {}
         seen_err: dict[str, list] = {}
+        try:
+            prev_drop = json.loads(db.get_state(conn, DROP_STATE_KEY) or "{}")
+        except ValueError:
+            prev_drop = {}
+        seen_drop: dict[str, list] = {}
         try:
             prev_sampled = json.loads(db.get_state(conn, SAMPLED_STATE_KEY) or "{}")
         except ValueError:
@@ -220,15 +236,20 @@ class UnifiCollector:
                     )
                     key = json.dumps([dev_name, port_name])
                     if live and not _due(prev_sampled, err_ts, key, seen_sampled):
-                        # a repoll inside the gap: no sample, and the error
-                        # counters' baseline stays where it was
-                        if key in prev_err:
-                            seen_err[key] = prev_err[key]
+                        # a repoll inside the gap: no sample, and the
+                        # counters' baselines stay where they were
+                        for was, keep in ((prev_err, seen_err),
+                                          (prev_drop, seen_drop)):
+                            if key in was:
+                                keep[key] = was[key]
                         continue
-                    in_err, out_err = _error_rates(
+                    in_err, out_err = _counter_rates(
                         prev_err, err_ts, key, port, live, seen_err)
+                    in_drop, out_drop = _counter_rates(
+                        prev_drop, err_ts, key, port, live, seen_drop,
+                        DROP_FIELDS)
                     _sample(conn, dev_name, port_name, in_bps, out_bps,
-                            in_err, out_err)
+                            in_err, out_err, in_drop, out_drop)
                 sw_port_names[dev_name] = port_idx_map
                 # Switch-to-switch uplink (same LLDP data as APs). The
                 # remote port name isn't knowable yet — the upstream
@@ -291,6 +312,7 @@ class UnifiCollector:
             n_aps += 1
 
         db.set_state(conn, ERR_STATE_KEY, json.dumps(seen_err))
+        db.set_state(conn, DROP_STATE_KEY, json.dumps(seen_drop))
         db.set_state(conn, SAMPLED_STATE_KEY, json.dumps(seen_sampled))
 
         # uplink_remote_port is a port index; resolve it through the
