@@ -1239,6 +1239,227 @@ def test_librenms_poll_time_refusal_is_only_for_400_and_422(conn, clean_env, mon
         LibreNmsCollector().collect(_lnms_settings(clean_env), conn)
 
 
+# --- LibreNMS: discard rates from per-port statistics (#83) -------------------
+
+class _LnmsStatsClient(_LnmsPollTimeClient):
+    """_LnmsPollTimeClient that also answers the per-port statistics route,
+    nesting the discard rates under the port's `statistics` relation; with
+    `fail` set it answers 500 there."""
+    fail = False
+
+    def get(self, url, **kw):
+        if "?with=statistics" not in url:
+            return super().get(url, **kw)
+        type(self).urls.append(url)
+        outer = self
+
+        class R:
+            status_code = 500 if outer.fail else 200
+            def raise_for_status(self_):
+                if outer.fail:
+                    raise httpx.HTTPStatusError(
+                        "500", request=httpx.Request("GET", url),
+                        response=httpx.Response(500))
+            def json(self_):
+                return {"status": "ok", "port": [{
+                    "port_id": 7, "ifName": "1/0/5",
+                    "statistics": {"port_id": 7, "ifInDiscards_rate": 11,
+                                   "ifOutDiscards_rate": 4200}}]}
+        return R()
+
+
+def _discards_on(clean_env, value="on"):
+    clean_env.setenv("PATCHBAY_LIBRENMS_DISCARDS", value)
+    return _lnms_settings(clean_env)
+
+
+def _stated_cable(conn, peer_role="switch", source="lldp"):
+    """sw1 1/0/5 cabled to sw2 as a previous poll would have left it."""
+    # another source's row: LibreNMS retires its own devices it doesn't list
+    pdb.upsert_device(conn, name="sw2", source="unifi", role=peer_role)
+    pdb.upsert_link(conn, a_device="sw1", a_interface="1/0/5",
+                    b_device="sw2", b_interface="1/0/1", source=source)
+
+
+def _stats_calls():
+    return [u for u in _LnmsStatsClient.urls if "with=statistics" in u]
+
+
+def _poll_stats(conn, settings, monkeypatch, *, poll_time=1_800_000_000, fail=False):
+    from patchbay.collectors.librenms import LibreNmsCollector
+    _LnmsStatsClient.urls, _LnmsStatsClient.strict = [], False
+    _LnmsStatsClient.poll_time, _LnmsStatsClient.fail = poll_time, fail
+    monkeypatch.setattr(httpx, "Client", _LnmsStatsClient)
+    return LibreNmsCollector().collect(settings, conn)
+
+
+def _discard_row(conn):
+    return conn.execute(
+        "SELECT in_errors, out_errors, in_discards, out_discards FROM rate_history "
+        "WHERE interface = '1/0/5' ORDER BY ts DESC, rowid DESC").fetchone()
+
+
+def test_librenms_discards_off_by_default_makes_no_statistics_call(
+        conn, clean_env, monkeypatch):
+    _stated_cable(conn)
+    summary = _poll_stats(conn, _lnms_settings(clean_env), monkeypatch)
+    assert _stats_calls() == []
+    assert tuple(_discard_row(conn)) == (0.0, 3.0, None, None)
+    assert "statistics" not in summary
+
+
+def test_librenms_discards_on_reads_stated_infrastructure_ports(
+        conn, clean_env, monkeypatch):
+    import json
+    from patchbay.collectors.librenms import STATISTICS_STATE_KEY
+    _stated_cable(conn)
+    summary = _poll_stats(conn, _discards_on(clean_env), monkeypatch)
+    assert [u.split("/api/v0/", 1)[1] for u in _stats_calls()] == [
+        "ports/7?with=statistics"]
+    # errors from the listing, discards from the statistics, one sample
+    assert tuple(_discard_row(conn)) == (0.0, 3.0, 11.0, 4200.0)
+    assert conn.execute("SELECT COUNT(*) FROM rate_history").fetchone()[0] == 1
+    assert summary.endswith(", 1 statistics calls")
+    state = json.loads(pdb.get_state(conn, STATISTICS_STATE_KEY))
+    assert (state["on"], state["calls"], state["error"]) == (True, 1, None)
+
+
+@pytest.mark.parametrize("peer_role, source", [
+    ("server", "lldp"),            # a stated cable, but not to infrastructure
+    (None, "declared"),            # role unknown
+    ("switch", "fdb-uplink"),      # infrastructure, but only inferred
+    ("switch", "vsphere-hint"),
+])
+def test_librenms_discards_skip_ports_without_a_stated_infra_cable(
+        conn, clean_env, monkeypatch, peer_role, source):
+    _stated_cable(conn, peer_role=peer_role, source=source)
+    _poll_stats(conn, _discards_on(clean_env), monkeypatch)
+    assert _stats_calls() == []
+    assert _discard_row(conn)["in_discards"] is None
+
+
+@pytest.mark.parametrize("role", ["ap", "firewall", "hypervisor", "Switch"])
+def test_librenms_discards_cover_every_infra_peer_role(conn, clean_env, monkeypatch, role):
+    _stated_cable(conn, peer_role=role, source="unifi")
+    _poll_stats(conn, _discards_on(clean_env), monkeypatch)
+    assert len(_stats_calls()) == 1
+
+
+def test_librenms_discards_match_stored_names_in_canonical_form(
+        conn, clean_env, monkeypatch):
+    """The stored link and device rows are normalized ("sw1"); LibreNMS may
+    report the sysName as an FQDN in any case."""
+    _stated_cable(conn)
+    conn.execute("UPDATE devices SET name = 'SW2.example.net' WHERE name = 'sw2'")
+
+    class Fqdn(_LnmsStatsClient):
+        def get(self, url, **kw):
+            r = super().get(url, **kw)
+            if url.endswith("/devices"):
+                r.json = lambda: {"devices": [{"device_id": 1, "status": 1,
+                                               "sysName": "SW1.example.net",
+                                               "os": "netgear", "disabled": 0}]}
+            return r
+    _LnmsStatsClient.urls = []
+    monkeypatch.setattr(httpx, "Client", Fqdn)
+    from patchbay.collectors.librenms import LibreNmsCollector
+    LibreNmsCollector().collect(_discards_on(clean_env), conn)
+    assert len(_stats_calls()) == 1
+
+
+def test_librenms_discards_reuse_the_poll_time_dedup(conn, clean_env, monkeypatch):
+    """#117's dedup decides the call too: a second poll inside LibreNMS's
+    polling window would store no sample, so it spends no statistics call."""
+    _stated_cable(conn)
+    settings = _discards_on(clean_env)
+    _poll_stats(conn, settings, monkeypatch)
+    summary = _poll_stats(conn, settings, monkeypatch)
+    assert _stats_calls() == [] and summary.endswith(", 0 statistics calls")
+    _poll_stats(conn, settings, monkeypatch, poll_time=1_800_000_300)
+    assert len(_stats_calls()) == 1
+    assert conn.execute("SELECT COUNT(*) FROM rate_history").fetchone()[0] == 2
+
+
+def test_librenms_statistics_failure_keeps_the_collection(conn, clean_env, monkeypatch):
+    """Discards are an extra: a refused statistics call stops the rest for
+    this poll and says so, but the ports, links, and error rates still land."""
+    import json
+    from patchbay.collectors.librenms import STATISTICS_STATE_KEY
+    _stated_cable(conn)
+    summary = _poll_stats(conn, _discards_on(clean_env), monkeypatch, fail=True)
+    assert "1 statistics calls (stopped after HTTPStatusError" in summary
+    assert tuple(_discard_row(conn)) == (0.0, 3.0, None, None)
+    assert json.loads(pdb.get_state(conn, STATISTICS_STATE_KEY))["error"] == (
+        "HTTPStatusError")
+
+
+def test_librenms_statistics_calls_happen_before_the_first_write(
+        conn, clean_env, monkeypatch):
+    from patchbay.collectors.librenms import LibreNmsCollector
+    _stated_cable(conn)
+    conn.commit()
+    _LnmsStatsClient.urls, _LnmsStatsClient.fail = [], False
+    monkeypatch.setattr(httpx, "Client", _no_io_in_transaction(_LnmsStatsClient, conn))
+    LibreNmsCollector().collect(_discards_on(clean_env), conn)
+    assert len(_stats_calls()) == 1 and conn.in_transaction
+
+
+@pytest.mark.parametrize("body, rates", [
+    ({"port": [{"statistics": {"ifInDiscards_rate": 1, "ifOutDiscards_rate": 2}}]},
+     {"ifInDiscards_rate": 1.0, "ifOutDiscards_rate": 2.0}),
+    ({"port": {"ifInDiscards_rate": "3.5"}}, {"ifInDiscards_rate": 3.5}),
+    ({"port": [{"ports_statistics": [{"ifOutDiscards_rate": 0}]}]},
+     {"ifOutDiscards_rate": 0.0}),
+    ({"port": [{"statistics": {"ifInDiscards_rate": None,
+                               "ifOutDiscards_rate": -1}}]}, {}),
+    ({"port": [{"statistics": {"ifInDiscards_rate": "n/a",
+                               "ifOutDiscards_rate": True}}]}, {}),
+    ({"port": []}, {}),
+    ({}, {}),
+    ([], {}),
+])
+def test_librenms_discard_rates_parse_forms(body, rates):
+    from patchbay.collectors.librenms import _discard_rates
+    assert _discard_rates(body) == rates
+
+
+def test_librenms_discards_setting_parses_like_a_flag(clean_env):
+    from patchbay.config import load_settings
+    assert load_settings().librenms_discards is False
+    for word, on in (("on", True), ("YES", True), ("1", True), ("off", False),
+                     ("0", False)):
+        clean_env.setenv("PATCHBAY_LIBRENMS_DISCARDS", word)
+        s = load_settings()
+        assert s.librenms_discards is on, word
+        assert not any(w.startswith("PATCHBAY_LIBRENMS_DISCARDS:")
+                       for w in s.parse_warnings)
+    clean_env.setenv("PATCHBAY_LIBRENMS_DISCARDS", "maybe")
+    s = load_settings()
+    assert s.librenms_discards is False
+    assert any(w.startswith("PATCHBAY_LIBRENMS_DISCARDS: 'maybe'")
+               for w in s.parse_warnings)
+
+
+def test_librenms_discards_setting_is_editable_on_ops(clean_env):
+    """Managed like the other toggles: stored on /ops when the env file
+    doesn't set it, and the env file wins when it does."""
+    from fastapi.testclient import TestClient
+    import patchbay.web as web
+    from patchbay.config import load_settings
+
+    client = TestClient(web.app)
+    r = client.post("/ops/config", json={"var": "PATCHBAY_LIBRENMS_DISCARDS",
+                                         "value": "on"})
+    assert r.status_code == 200 and r.json()["warnings"] == []
+    s = load_settings()
+    assert s.librenms_discards is True
+    assert s.declaration_sources["PATCHBAY_LIBRENMS_DISCARDS"] == "db"
+    clean_env.setenv("PATCHBAY_LIBRENMS_DISCARDS", "off")
+    s = load_settings()
+    assert s.librenms_discards is False
+    assert s.declaration_sources["PATCHBAY_LIBRENMS_DISCARDS"] == "env"
+
+
 def test_librenms_ports_columns_are_a_real_ports_listing():
     """poll_time is requested on top of PORTS_COLUMNS, never inside it."""
     from patchbay.collectors import librenms
