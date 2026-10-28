@@ -1550,6 +1550,9 @@ def reset_positions():
         conn.close()
 
 
+PANEL_FILL_MAX = 512  # most empty positions a patch panel page will list
+
+
 @app.get("/patchpanel", response_class=HTMLResponse)
 def patchpanel(request: Request, panel: str | None = None):
     import re as _re
@@ -1575,8 +1578,11 @@ def patchpanel(request: Request, panel: str | None = None):
         # surface gaps: a panel position no switch port claims is a fact worth
         # seeing (unpatched jack, dead slot, or a run whose description lost
         # its tag). A declared size also surfaces trailing empty positions.
+        # An absurd position number (a typo'd description) must not build a
+        # page-sized table: fill gaps only up to PANEL_FILL_MAX; ports past
+        # it still show, unfilled.
         have = {r["port"] for r in rows}
-        top = max([size, *have]) if (have or size) else 0
+        top = min(max([size, *have]) if (have or size) else 0, PANEL_FILL_MAX)
         rows += [{"port": n, "dev": None, "iface": None, "descr": None,
                   "oper": None, "speed": None}
                  for n in range(1, top + 1) if n not in have]
@@ -1753,6 +1759,8 @@ def _json_state(conn, key: str):
 
 def _config_keep_text(s) -> str:
     """Effective per-device config revision keep, with where it came from."""
+    if s.config_keep is None:
+        return "not trimmed — stored setting unreadable"
     value = "unlimited" if s.config_keep == 0 else str(s.config_keep)
     src = s.declaration_sources.get("PATCHBAY_CONFIG_KEEP") or "default"
     return f"{value} per device · {src}"

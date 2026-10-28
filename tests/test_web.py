@@ -1983,3 +1983,22 @@ def test_stale_gateway_rows_stay_off_the_cloud_and_overview(clean_env, tmp_path,
     assert cloud["status"] == "up"
     html = client.get("/").text
     assert "WAN_GW" in html and "WAN_AAA_OLD" not in html
+
+
+
+def test_patchpanel_caps_gap_fill(clean_env, tmp_path, client):
+    # one description with a huge position must not build a huge page; the
+    # port itself still shows, unfilled
+    import sqlite3
+
+    from patchbay.web import PANEL_FILL_MAX
+    dbp = str(tmp_path / "test.db")
+    seed(dbp)
+    c = sqlite3.connect(dbp)
+    c.execute("UPDATE interfaces SET description = 'uplink [900000000]' "
+              "WHERE description = 'uplink [3]'")
+    c.commit()
+    c.close()
+    body = client.get("/patchpanel").text
+    assert 'id="p900000000"' in body
+    assert body.count("<tr") < PANEL_FILL_MAX + 20
