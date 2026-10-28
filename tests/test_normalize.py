@@ -507,6 +507,22 @@ def test_declared_unmanaged_and_vlan_filter_resolve_device_names(conn):
         "SELECT vid FROM device_vlans WHERE device = 'edge1'")} == {10}
 
 
+def test_declared_link_keeps_a_parallel_cable_between_the_pair(conn):
+    # only the '?' evidence of the declared cable gives way to it; a second
+    # cable between the same two devices, on another port, stays (#126)
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch", status="up")
+    dev(conn, "nas1", "phpipam", last_seen=NOW, role="server", status="up")
+    pdb.upsert_link(conn, a_device="sw1", a_interface="6",
+                    b_device="nas1", b_interface="?", source="lldp")
+    pdb.upsert_link(conn, a_device="sw1", a_interface="5",
+                    b_device="nas1", b_interface="?", source="fdb-uplink")
+    for _ in range(2):
+        normalize(conn, declared_links=[("sw1", "5", "nas1", "eth0")])
+    assert links(conn) == [("nas1", "?", "sw1", "6", "lldp"),
+                           ("nas1", "eth0", "sw1", "5", "declared")]
+    assert _cables(conn) == [("nas1", "?", "sw1", "6"), ("nas1", "eth0", "sw1", "5")]
+
+
 def test_removed_seed_alias_is_retired(conn):
     # removing a PATCHBAY_ALIASES entry stops the rewrite; aliases the
     # identity rule wrote are not the operator's to retire (#126)

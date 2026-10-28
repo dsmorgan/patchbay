@@ -337,6 +337,9 @@ and the old name stops resolving to the old target. An entry removed before
 the release that added this keeps resolving: add the entry again, let one
 poll run, and then remove it.
 
+A declared cable replaces only the half-known (`?`-ended) evidence of the
+same cable, not a second cable between the same two devices.
+
 ### Migrate PATCHBAY_EXPECT to silences
 
 patchbay ignores `PATCHBAY_EXPECT`: its entries silence nothing, and a

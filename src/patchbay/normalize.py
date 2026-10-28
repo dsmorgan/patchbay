@@ -1194,6 +1194,16 @@ def resolve_declarations(
             {(resolve(d), i): v for (d, i), v in (vlan_filters or {}).items()})
 
 
+def _joins(row: sqlite3.Row, ad: str, ai: str, bd: str, bi: str,
+           port_matches: Callable[[str, str], bool]) -> bool:
+    """Whether a links row joins ad:ai to bd:bi in either orientation, each
+    of its ports compared to the stated one by port_matches(row, stated)."""
+    ra, rai, rb, rbi = (row["a_device"], row["a_interface"],
+                        row["b_device"], row["b_interface"])
+    return (((ra, rb) == (ad, bd) and port_matches(rai, ai) and port_matches(rbi, bi))
+            or ((ra, rb) == (bd, ad) and port_matches(rai, bi) and port_matches(rbi, ai)))
+
+
 def _apply_declared_links(conn: sqlite3.Connection,
                           declared: list[tuple[str, str, str, str]],
                           prune: bool = True) -> None:
@@ -1228,9 +1238,16 @@ def _apply_declared_links(conn: sqlite3.Connection,
         db.upsert_link(conn, a_device=ad, a_interface=ai,
                        b_device=bd, b_interface=bi, source="declared")
         pa, pb = sorted([ad, bd])
-        conn.execute(
-            "DELETE FROM links WHERE a_device=? AND b_device=? AND source != 'declared' "
-            "AND (a_interface='?' OR b_interface='?')", (pa, pb))
+        # '?'-ended evidence of this cable is superseded, by the rule
+        # _fuse_links fuses halves with; a second cable between the same
+        # pair, on another port, is not this one and stays (#126)
+        for r in conn.execute(
+                "SELECT * FROM links WHERE a_device=? AND b_device=? "
+                "AND source != 'declared' AND (a_interface='?' OR b_interface='?')",
+                (pa, pb)).fetchall():
+            if _joins(r, ad, ai, bd, bi,
+                      lambda x, y: x == "?" or y == "?" or x == y):
+                conn.execute("DELETE FROM links WHERE id=?", (r["id"],))
         # a declaration and a live report of the SAME cable are one cable, not
         # two parallel edges. Live discovery wins the draw — it confirms the
         # declaration and says more (the map upgrades from "operator says" to
