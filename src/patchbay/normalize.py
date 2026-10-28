@@ -1253,12 +1253,18 @@ def _apply_declared_links(conn: sqlite3.Connection,
         # declaration and says more (the map upgrades from "operator says" to
         # "confirmed" when the host is up). The declaration is re-applied every
         # normalize, so it reappears the moment discovery goes quiet again.
-        a, b = sorted([(ad, ai), (bd, bi)])
-        conn.execute(
-            "DELETE FROM links WHERE a_device=? AND a_interface=? AND b_device=? "
-            "AND b_interface=? AND source='declared' AND EXISTS (SELECT 1 FROM links l "
-            "WHERE l.a_device=? AND l.a_interface=? AND l.b_device=? AND l.b_interface=? "
-            "AND l.source IN ('lldp', 'unifi', 'vsphere-hint'))", (*a, *b, *a, *b))
+        # A declared '?' end matches any port on its device: a name-only
+        # declaration ("edge1:e1/1/24=tv") is the cable LLDP reports from
+        # that port to tv, whatever tv calls its end (#126).
+        live = conn.execute(
+            "SELECT * FROM links WHERE a_device=? AND b_device=? "
+            "AND source IN ('lldp', 'unifi', 'vsphere-hint')", (pa, pb)).fetchall()
+        if any(_joins(r, ad, ai, bd, bi, lambda x, y: y == "?" or x == y)
+               for r in live):
+            a, b = sorted([(ad, ai), (bd, bi)])
+            conn.execute(
+                "DELETE FROM links WHERE a_device=? AND a_interface=? AND b_device=? "
+                "AND b_interface=? AND source='declared'", (*a, *b))
 
 
 def _check_declarations(conn: sqlite3.Connection,

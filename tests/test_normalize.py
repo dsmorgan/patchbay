@@ -523,6 +523,26 @@ def test_declared_link_keeps_a_parallel_cable_between_the_pair(conn):
     assert _cables(conn) == [("nas1", "?", "sw1", "6"), ("nas1", "eth0", "sw1", "5")]
 
 
+def test_name_only_declaration_is_the_cable_lldp_reports(conn):
+    # "edge1:e1/1/24=tv" and LLDP's edge1:e1/1/24 <-> tv:eth0 are one cable:
+    # one edge and one known-cables row, and the declaration returns when
+    # discovery goes quiet (#126)
+    dev(conn, "edge1", "librenms", last_seen=NOW, role="switch", status="up")
+    dev(conn, "tv", "phpipam", last_seen=NOW, role="host", status="up")
+    decl = [("edge1", "e1/1/24", "tv", "?")]
+    normalize(conn, declared_links=decl)
+    assert _cables(conn) == [("edge1", "e1/1/24", "tv", "?")]
+    pdb.upsert_link(conn, a_device="edge1", a_interface="e1/1/24",
+                    b_device="tv", b_interface="eth0", source="lldp")
+    normalize(conn, declared_links=decl)
+    assert links(conn) == [("edge1", "e1/1/24", "tv", "eth0", "lldp")]
+    assert _cables(conn) == [("edge1", "e1/1/24", "tv", "eth0")]
+    assert json.loads(pdb.get_state(conn, "declaration_conflicts")) == []
+    conn.execute("DELETE FROM links WHERE source = 'lldp'")
+    normalize(conn, declared_links=decl)
+    assert links(conn) == [("edge1", "e1/1/24", "tv", "?", "declared")]
+
+
 def test_removed_seed_alias_is_retired(conn):
     # removing a PATCHBAY_ALIASES entry stops the rewrite; aliases the
     # identity rule wrote are not the operator's to retire (#126)
