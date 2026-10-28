@@ -53,6 +53,9 @@ put.
 - Fixed a VM's device page showing no interfaces, MAC, status, or endpoints. (#128)
 - Fixed /configs hiding the stored firewall config history while Oxidized is unreachable. (#128)
 - Fixed the break-glass snapshot failing when Oxidized answers 200 with something other than JSON. The snapshot now notes that Oxidized configs are unavailable. (#128)
+- Fixed OPNsense gateways, vSphere hosts, and Oxidized config VLANs staying in patchbay after you remove them at the source. Each collector now prunes what its source stops reporting, only after a successful fetch. (#127)
+- Fixed the topology internet cloud and the Overview gateway tiles showing a gateway that nothing has refreshed for two hours as "Offline". (#127)
+- Fixed the pfSense gateway delay column showing jitter (`stddev`) instead of latency. (#127)
 
 ## [0.23.0] — 2026-10-22
 
