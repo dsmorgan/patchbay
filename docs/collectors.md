@@ -164,10 +164,21 @@ collected samples whether it should.
   than patchbay polls, record a sample only when the figures are new: the
   same reading stored twice, with two timestamps, counts as two looks.
 
-The built-in collectors report error rates only: LibreNMS from its ports
-listing, UniFi from counter differences. Nobody collects discards yet
-([#86](https://github.com/dsmorgan/patchbay/issues/86)), but the rule judges
-them as soon as a collector records them.
+The built-in collectors report error rates for every port: LibreNMS from
+its ports listing, UniFi from counter differences. They also record discard
+rates ([#83](https://github.com/dsmorgan/patchbay/issues/83)): UniFi from
+`rx_dropped` and `tx_dropped` differences in the same payload, and LibreNMS,
+when `PATCHBAY_LIBRENMS_DISCARDS` is on, from one statistics call per port on
+a stated cable to another switch, AP, firewall, or hypervisor. Record
+discards whenever your source has them; the rule ignores them until
+[#86](https://github.com/dsmorgan/patchbay/issues/86) decides.
+
+## What a poll costs
+
+The poller times each collector's `collect()` and `/ops` shows the last
+figure and the median of recent successful polls per source. A collector
+that spends extra calls on an optional feature should say how many in its
+summary line, as LibreNMS does with its statistics calls.
 
 ## Configuration
 
