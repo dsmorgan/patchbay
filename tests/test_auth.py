@@ -534,3 +534,11 @@ def test_forbid_framing_keeps_an_existing_policy():
     auth.forbid_framing(r)
     assert r.headers["content-security-policy"] == \
         "default-src 'self'; frame-ancestors 'none'"
+
+
+def test_plain_password_with_non_ascii_character(clean_env):
+    c = _client(clean_env, PATCHBAY_AUTH="password", PATCHBAY_PASSWORD="pässword")
+    r = c.post("/login", data={"password": "pässword", "next": "/vlans"})
+    assert r.headers["location"] == "/vlans"
+    r = c.post("/login", data={"password": "passwörd", "next": "/"})
+    assert "error" in r.headers["location"]

@@ -91,7 +91,7 @@ def check_password(settings: Settings, candidate: str) -> bool:
     if settings.password_hash:
         return verify_password(candidate, settings.password_hash)
     if settings.password_plain:
-        return hmac.compare_digest(candidate, settings.password_plain)
+        return hmac.compare_digest(candidate.encode(), settings.password_plain.encode())
     return False
 
 
