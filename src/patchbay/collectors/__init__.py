@@ -74,3 +74,20 @@ def all_collectors() -> dict[str, Collector]:
 
 def available(settings: Settings) -> dict[str, Collector]:
     return {n: c for n, c in all_collectors().items() if c.configured(settings)}
+
+
+def poll_mode(collector: Collector, settings: Settings) -> str | None:
+    """The optional `poll_mode(settings)` a collector may define (#83): a
+    short label for a setting that changes what a poll costs, such as
+    LibreNMS's "discards on". The poll time record keeps recent times per
+    label, so the cost with and without the setting stays readable after
+    a toggle. None when the collector doesn't say, or its answer is
+    unusable: the label is a convenience and never fails a poll."""
+    fn = getattr(collector, "poll_mode", None)
+    if not callable(fn):
+        return None
+    try:
+        mode = fn(settings)
+    except Exception:
+        return None
+    return mode[:40] if isinstance(mode, str) and mode else None

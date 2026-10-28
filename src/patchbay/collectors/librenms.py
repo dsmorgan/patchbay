@@ -234,6 +234,11 @@ class LibreNmsCollector:
     def configured(self, settings: Settings) -> bool:
         return bool(settings.librenms_url and settings.librenms_token)
 
+    def poll_mode(self, settings: Settings) -> str:
+        """The setting that changes what a poll costs (#83): /ops keeps the
+        poll time per mode, so #86 reads it with and without discards."""
+        return "discards on" if settings.librenms_discards else "discards off"
+
     def _get(self, client: httpx.Client, settings: Settings, path: str) -> Any:
         url = f"{settings.librenms_url.rstrip('/')}/api/v0/{path.lstrip('/')}"
         r = client.get(url, headers={"X-Auth-Token": settings.librenms_token})

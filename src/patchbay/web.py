@@ -1782,6 +1782,15 @@ def _poll_cost(conn, sources: list[str]) -> list[dict]:
         if not isinstance(e, dict) or not isinstance(e.get("last"), (int, float)):
             continue
         recent = [x for x in e.get("recent") or [] if isinstance(x, (int, float))]
+        # the median per mode (#83): what a setting costs, read directly
+        by_mode = e.get("by_mode") if isinstance(e.get("by_mode"), dict) else {}
+        modes = []
+        for mode, times in sorted(by_mode.items()):
+            times = [x for x in times or [] if isinstance(x, (int, float))]
+            if times:
+                n = len(times)
+                modes.append(f"{mode}: {_seconds(median(times))} "
+                             f"({n} {'poll' if n == 1 else 'polls'})")
         note = ""
         if src == LIBRENMS and isinstance(stats, dict):
             note = (f"discards on · {stats.get('calls', 0)} statistics calls"
@@ -1791,7 +1800,9 @@ def _poll_cost(conn, sources: list[str]) -> list[dict]:
         out.append({"source": src, "last": _seconds(e["last"]),
                     "failed": e.get("ok") is False,
                     "median": _seconds(median(recent)) if recent else "—",
-                    "n": len(recent), "note": note})
+                    "n": len(recent), "note": note,
+                    "modes": "median by mode · " + ", ".join(modes)
+                             if modes else ""})
     return out
 
 
@@ -2269,7 +2280,7 @@ _ops_lock = threading.Lock()
 
 @app.post("/ops/poll")
 def ops_poll(source: str | None = None):
-    from .collectors import available
+    from .collectors import available, poll_mode
     from .normalize import normalize
 
     settings = load_settings()
@@ -2303,14 +2314,15 @@ def ops_poll(source: str | None = None):
             started = time.monotonic()
             try:
                 lines.append(f"[ok]   {name}: {collector.collect(settings, conn)}")
-                db.record_poll_time(conn, name, time.monotonic() - started)
+                db.record_poll_time(conn, name, time.monotonic() - started,
+                                    mode=poll_mode(collector, settings))
                 conn.commit()
             except Exception as e:  # one failing source must not block the others
                 conn.rollback()
                 # committed at once, as the poller does: the next collector
                 # must not fetch holding this write's lock (#109)
                 db.record_poll_time(conn, name, time.monotonic() - started,
-                                    ok=False)
+                                    ok=False, mode=poll_mode(collector, settings))
                 conn.commit()
                 lines.append(f"[fail] {name}: {hide_userinfo(str(e))}")
         try:
