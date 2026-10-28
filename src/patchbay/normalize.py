@@ -1252,6 +1252,18 @@ def _fill_unknown_port(conn: sqlite3.Connection,
     known = {far_port(*r) for r in conn.execute(
         "SELECT a_device, a_interface, b_device, b_interface FROM known_cables "
         "WHERE a_device=? AND b_device=?", (pa, pb))} - {None, "?"}
+    # a remembered port that live discovery now ties to another near end
+    # (tv moved to edge2, which reports tv:eth0) is that cable's, not this
+    # one's: the declaration falls back to '?' rather than claim it twice
+    for r in conn.execute(
+            "SELECT * FROM links WHERE (a_device=? OR b_device=?) "
+            "AND source IN ('lldp', 'unifi', 'vsphere-hint')", (bd, bd)):
+        if _outlived(r, quiet):
+            continue
+        a, b = (r["a_device"], r["a_interface"]), (r["b_device"], r["b_interface"])
+        for near, far in ((a, b), (b, a)):
+            if far[0] == bd and near != (ad, ai):
+                known.discard(far[1])
     ports = live or known
     return (ad, ai, bd, next(iter(ports))) if len(ports) == 1 else decl
 
