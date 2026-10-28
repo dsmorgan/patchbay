@@ -218,6 +218,27 @@ Each collector activates when its variables are set and is skipped otherwise.
 | pfSense | `PFSENSE_HOST`, `PFSENSE_API_KEY` — requires the [pfSense REST API package](#pfsense-rest-api-package) |
 | vSphere | `VSPHERE_HOST`, `VSPHERE_USER`, `VSPHERE_PASS`, optional `VSPHERE_TLS_VERIFY` (per-source verify override) |
 
+### LibreNMS discard rates
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PATCHBAY_LIBRENMS_DISCARDS` | off | Collect per-port discard rates from LibreNMS (`on`/`off`; also `true`/`false`, `yes`/`no`, `1`/`0`). An unreadable value warns and stays off. Also editable on `/ops` when the env file doesn't set it |
+
+LibreNMS keeps discard rates in its per-port statistics, which its ports
+listing can't return, so each port costs one extra API call
+(`GET /api/v0/ports/{id}?with=statistics`) per poll. With the setting on,
+patchbay makes that call only for ports on a stated cable (LLDP, UniFi, or
+declared) whose far end is a switch, AP, firewall, or hypervisor, and skips
+it when LibreNMS hasn't polled the port again since the last sample. The
+samples land in `rate_history` beside the error rates; no alert judges them
+yet ([#86](https://github.com/dsmorgan/patchbay/issues/86)). UniFi discard
+rates need no setting: they arrive in the payload the collector already
+reads.
+
+`/ops` shows each source's poll time and, for LibreNMS, the number of
+statistics calls the last poll made, so you can compare the cost with the
+setting on and off.
+
 `VSPHERE_TLS_VERIFY` exists because a stock vCenter serves a self-signed VMCA
 certificate that nothing trusts. Set it to `0` only until you fix that, and
 prefer either of the real fixes: install a certificate from a CA you trust, or

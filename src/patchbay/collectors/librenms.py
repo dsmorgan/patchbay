@@ -72,7 +72,8 @@ for _s in (10_000_000_000, 20_000_000_000, 25_000_000_000,
 # the error rates live on the `ports` table; the discard rates are in
 # `ports_statistics`, which the ports listing cannot select (it validates
 # `columns` against `ports` and refuses the whole request on an unknown
-# one). Discards stay NULL here until a source reports them.
+# one). They come from one statistics call per port instead, only when
+# PATCHBAY_LIBRENMS_DISCARDS is on (#83).
 COUNTER_RATES = {"ifInErrors_rate": "in_errors", "ifOutErrors_rate": "out_errors",
                  "ifInDiscards_rate": "in_discards",
                  "ifOutDiscards_rate": "out_discards"}
@@ -88,6 +89,15 @@ POLL_TIME_COLUMN = "poll_time"
 
 
 POLL_TIMES_STATE_KEY = "librenms_port_poll_times"
+
+# The discard rates' per-port route (#83). One call per port, so it is
+# spent only on ports whose discards matter: a stated cable (the link-down
+# rule's sources) to another piece of infrastructure.
+STATISTICS_PATH = "ports/{}?with=statistics"
+DISCARD_RATES = ("ifInDiscards_rate", "ifOutDiscards_rate")
+DISCARD_PEER_ROLES = frozenset({"switch", "ap", "firewall", "hypervisor"})
+# what the last poll spent on statistics calls, for /ops and #86
+STATISTICS_STATE_KEY = "librenms_statistics_calls"
 
 
 def _poll_time(raw: Any) -> float | None:
@@ -114,6 +124,78 @@ def _rate_sample(p: dict) -> tuple | None:
                 for c in db.RATE_COUNTERS]
     vals = (*bits, *counters)
     return vals if any(v is not None for v in vals) else None
+
+
+def _discard_rates(body: Any) -> dict[str, float]:
+    """The discard rates in a statistics answer, keyed like the ports
+    listing's columns so _rate_sample maps them. The port comes back as a
+    one-item list (or a bare object) with the statistics row nested under
+    its relation name; a rate missing or not a number is left out."""
+    port = body.get("port") if isinstance(body, dict) else None
+    if isinstance(port, list):
+        port = port[0] if port else None
+    if not isinstance(port, dict):
+        return {}
+    stats = port.get("statistics") or port.get("ports_statistics")
+    if isinstance(stats, list):
+        stats = stats[0] if stats else None
+    src = stats if isinstance(stats, dict) else port
+    out = {}
+    for k in DISCARD_RATES:
+        v = src.get(k)
+        if isinstance(v, (int, float, str)) and not isinstance(v, bool):
+            try:
+                f = float(v)
+            except ValueError:
+                continue
+            if math.isfinite(f) and f >= 0:
+                out[k] = f
+    return out
+
+
+def _discard_targets(conn: sqlite3.Connection, devices: list, ports: dict,
+                     prev_times: dict) -> list[int]:
+    """port_ids worth a statistics call: a port that is one end of a stated
+    links row whose other end is a switch, AP, firewall, or hypervisor, and
+    whose LibreNMS poll_time has moved since the last stored sample (an
+    unmoved one stores no sample, so its call would be wasted). Reads only:
+    it runs in the fetch phase, before the first write. Names compare in
+    canonical form, since the stored links and devices are normalized."""
+    from ..attention import STATED_LINK_SOURCES
+    from ..normalize import canonical_name
+
+    role = {canonical_name(r["name"]): (r["role"] or "").lower()
+            for r in conn.execute("SELECT name, role FROM devices")}
+    ends: set[tuple[str, str]] = set()
+    for r in conn.execute(
+            "SELECT a_device, a_interface, b_device, b_interface FROM links "
+            f"WHERE source IN ({','.join('?' * len(STATED_LINK_SOURCES))})",
+            STATED_LINK_SOURCES):
+        a, b = canonical_name(r["a_device"]), canonical_name(r["b_device"])
+        if role.get(b) in DISCARD_PEER_ROLES:
+            ends.add((a, r["a_interface"]))
+        if role.get(a) in DISCARD_PEER_ROLES:
+            ends.add((b, r["b_interface"]))
+    out = []
+    for d in devices:
+        name = canonical_name(d.get("sysName") or d.get("hostname") or "")
+        for p in ports.get(d.get("device_id"), []):
+            pid = p.get("port_id")
+            if not pid or (name, p.get("ifName")) not in ends:
+                continue
+            src_ts = _poll_time(p.get("poll_time"))
+            if src_ts is not None and src_ts == prev_times.get(str(pid)):
+                continue
+            out.append(pid)
+    return out
+
+
+def _prev_poll_times(conn: sqlite3.Connection) -> dict:
+    try:
+        prev = json.loads(db.get_state(conn, POLL_TIMES_STATE_KEY) or "{}")
+    except ValueError:
+        return {}
+    return prev if isinstance(prev, dict) else {}
 
 
 def _speed(raw: int | None) -> int | None:
@@ -161,11 +243,32 @@ class LibreNmsCollector:
                     raise
         return self._get(client, settings, path).get("ports", []), False
 
-    def _fetch(self, settings: Settings) -> dict[str, Any]:
+    def _statistics(self, client: httpx.Client, settings: Settings,
+                    targets: list[int]) -> tuple[dict[int, dict], int, str | None]:
+        """Discard rates for each target port (#83): ({port_id: rates},
+        calls made, error or None). A failed call stops the rest for this
+        poll rather than failing the collection: discards are an extra, and
+        a LibreNMS that refuses one port's statistics will refuse them all."""
+        rates: dict[int, dict] = {}
+        calls = 0
+        for pid in targets:
+            calls += 1
+            try:
+                body = self._get(client, settings, STATISTICS_PATH.format(pid))
+            except httpx.HTTPError as e:
+                return rates, calls, type(e).__name__
+            got = _discard_rates(body)
+            if got:
+                rates[pid] = got
+        return rates, calls, None
+
+    def _fetch(self, settings: Settings,
+               conn: sqlite3.Connection | None = None) -> dict[str, Any]:
         """Every API call the collection needs, before anything is written:
         the caller's transaction takes SQLite's write lock at the first
         write, and holding it across one ports request per device locked
-        the UI out for the whole collection (#109)."""
+        the UI out for the whole collection (#109). `conn` is read, never
+        written, to pick the ports worth a statistics call."""
         with httpx.Client(verify=settings.tls_verify, timeout=30) as client:
             devices = self._get(client, settings, "devices").get("devices", [])
             ports = {}
@@ -174,25 +277,30 @@ class LibreNmsCollector:
                 if d.get("sysName") or d.get("hostname"):
                     ports[d["device_id"]], with_poll_time = self._ports(
                         client, settings, d["device_id"], with_poll_time)
+            discards: dict[int, dict] = {}
+            calls, stats_error = 0, None
+            if settings.librenms_discards and conn is not None:
+                targets = _discard_targets(conn, devices, ports,
+                                           _prev_poll_times(conn))
+                discards, calls, stats_error = self._statistics(
+                    client, settings, targets)
             return {
                 "devices": devices, "ports": ports,
+                "discards": discards, "statistics_calls": calls,
+                "statistics_error": stats_error,
                 "links": self._get(client, settings, "resources/links").get("links", []),
                 "vlans": self._get(client, settings, "resources/vlans").get("vlans", []),
                 "fdb": self._get(client, settings, "resources/fdb").get("ports_fdb", []),
             }
 
     def collect(self, settings: Settings, conn: sqlite3.Connection) -> str:
-        fetched = self._fetch(settings)
+        fetched = self._fetch(settings, conn)
         # last poll_time seen per LibreNMS port_id (#117). Keyed by id, not
         # name: names are renamed by canonicalization and aliases. Rebuilt
         # from the ports seen this poll, so it stays bounded.
-        try:
-            prev_times = json.loads(db.get_state(conn, POLL_TIMES_STATE_KEY) or "{}")
-        except ValueError:
-            prev_times = {}
-        if not isinstance(prev_times, dict):
-            prev_times = {}
+        prev_times = _prev_poll_times(conn)
         seen_times: dict[str, float] = {}
+        discards = fetched["discards"]
         n_devices = n_ports = n_links = 0
         # the write phase: no network I/O from here on
         devices = fetched["devices"]
@@ -248,7 +356,7 @@ class LibreNmsCollector:
                     last = None
                 if pkey and (src_ts or last):
                     seen_times[pkey] = src_ts if src_ts is not None else last
-                sample = _rate_sample(p)
+                sample = _rate_sample({**p, **discards.get(p.get("port_id"), {})})
                 if sample is None or (src_ts is not None and src_ts == last):
                     continue
                 db.record_rates(conn, name, p["ifName"],
@@ -256,6 +364,10 @@ class LibreNmsCollector:
                                            sample)))
 
         db.set_state(conn, POLL_TIMES_STATE_KEY, json.dumps(seen_times))
+        db.set_state(conn, STATISTICS_STATE_KEY, json.dumps({
+            "ts": db.now(), "on": settings.librenms_discards,
+            "calls": fetched["statistics_calls"],
+            "error": fetched["statistics_error"]}))
 
         # Retire devices removed from LibreNMS — they stayed on every page
         # with frozen status forever (disabled devices still appear in the
@@ -359,8 +471,14 @@ class LibreNmsCollector:
                 (*where, mac, vlan_num.get(e.get("vlan_id"), 0)),
             )
             n_fdb += 1
-        return (f"{n_devices} devices, {n_ports} ports, {n_links} lldp links, "
-                f"{n_vlans} vlan memberships, {n_fdb} fdb")
+        summary = (f"{n_devices} devices, {n_ports} ports, {n_links} lldp links, "
+                   f"{n_vlans} vlan memberships, {n_fdb} fdb")
+        if settings.librenms_discards:
+            summary += f", {fetched['statistics_calls']} statistics calls"
+            if fetched["statistics_error"]:
+                summary += (f" (stopped after {fetched['statistics_error']}; "
+                            "discards skipped for the rest)")
+        return summary
 
 
 register(LibreNmsCollector())

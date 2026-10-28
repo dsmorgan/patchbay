@@ -26,6 +26,7 @@ DECLARATION_VARS = (
     "PATCHBAY_EXPECT", "PATCHBAY_SNAPSHOT_AT", "PATCHBAY_SNAPSHOT_KEEP",
     "PATCHBAY_CONFIG_KEEP", "PATCHBAY_ALERT_SNAPSHOT",
     "PATCHBAY_ALERT_SNAPSHOT_COOLDOWN", "PATCHBAY_ALERT_SNAPSHOT_KEEP",
+    "PATCHBAY_LIBRENMS_DISCARDS",
 )
 
 # Seconds between polls when PATCHBAY_POLL_INTERVAL is unset.
@@ -186,6 +187,16 @@ DECLARATION_HELP = {
                 "The retention tiers never touch these files.",
         "syntax": "whole number, default 10",
         "example": "20",
+    },
+    "PATCHBAY_LIBRENMS_DISCARDS": {
+        "what": "Collect discard rates from LibreNMS for ports on a stated "
+                "cable (LLDP, UniFi, or declared) to a switch, AP, "
+                "firewall, or hypervisor. Costs one extra API call per such "
+                "port per poll; Poll time on this page shows the cost. "
+                "Off by default. Samples are only recorded: no alert reads "
+                "them yet (#86).",
+        "syntax": "on or off (also true/false, yes/no, 1/0)",
+        "example": "on",
     },
 }
 
@@ -387,6 +398,9 @@ class Settings:
     alert_snapshot_cooldown: int = ALERT_SNAPSHOT_COOLDOWN_DEFAULT
     # None = stored value unreadable this cycle: prune no alert snapshots.
     alert_snapshot_keep: int | None = ALERT_SNAPSHOT_KEEP_DEFAULT
+    # Discard rates from LibreNMS's per-port statistics (#83): one extra API
+    # call per port on a stated cable to infrastructure, so off by default.
+    librenms_discards: bool = False
     # Hostnames the UI answers to (PATCHBAY_ALLOWED_HOSTS, each optionally
     # with :port). None = unset: any Host, the pre-#94 behavior. An empty
     # tuple = set, but no entry was usable: loopback only, never open.
@@ -646,6 +660,12 @@ def load_settings(*, read_db: bool = True) -> Settings:
         warnings.append(f"PATCHBAY_ALERT_SNAPSHOT: {raw_flag!r} is not on or off "
                         "— alert snapshots are off")
 
+    raw_discards = (env("PATCHBAY_LIBRENMS_DISCARDS") or "").strip().lower()
+    librenms_discards = raw_discards in _TRUE
+    if raw_discards and raw_discards not in _TRUE + _FALSE:
+        warnings.append(f"PATCHBAY_LIBRENMS_DISCARDS: {raw_discards!r} is not on "
+                        "or off — discard collection is off")
+
     def whole(var: str, default: int) -> int:
         raw = (env(var) or "").strip()
         if not raw:
@@ -763,6 +783,7 @@ def load_settings(*, read_db: bool = True) -> Settings:
         alert_snapshot=alert_snapshot,
         alert_snapshot_cooldown=alert_snapshot_cooldown,
         alert_snapshot_keep=alert_snapshot_keep,
+        librenms_discards=librenms_discards,
         allowed_hosts=allowed_hosts,
         poll_interval=poll_interval,
     )
