@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -3018,7 +3018,7 @@ def device(request: Request, name: str):
             row = conn.execute("SELECT canonical FROM aliases WHERE alias = ?", (name,)).fetchone()
             if row:
                 from fastapi.responses import RedirectResponse
-                return RedirectResponse(f"/device/{row['canonical']}")
+                return RedirectResponse(f"/device/{quote(row['canonical'], safe='')}")
             raise HTTPException(404, f"unknown device: {name}")
         all_ports = conn.execute(
             "SELECT * FROM interfaces WHERE device_id = ? ORDER BY ifindex, name",

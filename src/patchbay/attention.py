@@ -327,7 +327,7 @@ def attention_items(conn: sqlite3.Connection, settings, *,
                 "severity": "crit" if tier == "vslow" else "warn",
                 "text": f"{l['a_device']} {l['a_interface']} ↔ "
                         f"{l['b_device']} {l['b_interface']} runs at {human_speed(bps)}",
-                "href": f"/topology?focus={l['a_device']}",
+                "href": f"/topology?focus={quote(l['a_device'], safe='')}",
                 "ports": [(l["a_device"], l["a_interface"]),
                           (l["b_device"], l["b_interface"])],
             })
@@ -460,7 +460,7 @@ def _device_down(conn, settings, now: float, checked: list[str]) -> list[dict]:
             "rule": "device-down", "key": f"device:{r['name']}",
             "category": "device", "severity": "crit",
             "text": f"{r['role']} {r['name']} {what}",
-            "href": f"/device/{r['name']}", "devices": [r["name"]],
+            "href": f"/device/{quote(r['name'], safe='')}", "devices": [r["name"]],
         })
     if watched:
         checked.append("every watched device reporting")
@@ -523,7 +523,7 @@ def _link_down(conn, settings, checked: list[str]) -> list[dict]:
             "category": "link", "severity": "warn",
             "text": f"{ad} {ai} ↔ {bd} {bi} is down ("
                     + ", ".join(f"{d} {i}" for d, i in down) + " reports down)",
-            "href": f"/topology?focus={down[0][0]}",
+            "href": f"/topology?focus={quote(down[0][0], safe='')}",
             "ports": list(ends),
             # a declaration is retired by undeclaring it, on /ops
             "retirable": not declared,
@@ -627,7 +627,7 @@ def _config_changed(conn, settings, now: float) -> list[dict]:
             "key": f"config:{r['device']}:{r['id']}:{r['sha'][:12]}",
             "category": "config", "severity": "info",
             "text": f"{r['device']} config changed" + (f": {detail}" if detail else ""),
-            "href": f"/configs/{r['device']}", "at": r["fetched_at"],
+            "href": f"/configs/{quote(r['device'], safe='')}", "at": r["fetched_at"],
             "devices": [r["device"]],
         })
     return out
@@ -813,7 +813,7 @@ def _port_canary(conn, settings, now: float, checked: list[str]) -> list[dict]:
                 "rule": "port-canary", "key": key, "category": "port",
                 "severity": "warn",
                 "text": f"{dev} {iface} {label} at {_rate(rate)}/s ({said})",
-                "href": f"/device/{dev}#port-{quote(iface, safe='/')}",
+                "href": f"/device/{quote(dev, safe='')}#port-{quote(iface, safe='/')}",
                 "ports": [(dev, iface)],
                 # `for` counts distinct samples: a poll that read no new
                 # one (a failed or single-source poll) is not a second look

@@ -601,3 +601,49 @@ def test_rules_tab_shows_never_for_a_damaged_stored_remind(clean_env, tmp_path):
     assert page.status_code == 200
     assert 'name="param_remind"\n             value="0"' in page.text.split(
         'id="rule-device-down"')[1]
+
+
+# --- hrefs carry device names (#128) -----------------------------------------
+
+ODD = "Sw #1 a?b&c"
+ODD_Q = "Sw%20%231%20a%3Fb%26c"
+
+
+def test_item_hrefs_encode_device_names(conn, settings):
+    _dev(conn, ODD, "switch", "down")
+    _dev(conn, "ap1", "ap")
+    _cable(conn, ODD, "1/0/2", "ap1", "eth0", a_oper="down", b_oper="down")
+    _rev(conn, ODD, 7200, "a" * 64)
+    _rev(conn, ODD, 60, "b" * 64)
+    items = attention.attention_items(conn, settings)[0]
+    hrefs = {i["rule"]: i["href"] for i in items}
+    assert hrefs["device-down"] == f"/device/{ODD_Q}"
+    assert hrefs["link-down"] == f"/topology?focus={ODD_Q}"
+    assert hrefs["config-changed"] == f"/configs/{ODD_Q}"
+
+
+def test_slow_link_href_encodes_device_name(conn, settings):
+    _dev(conn, ODD, "switch")
+    _dev(conn, "ap1", "ap")
+    _cable(conn, ODD, "1/0/2", "ap1", "eth0")
+    conn.execute("UPDATE interfaces SET speed_bps = 10000000 WHERE name = '1/0/2'")
+    [it] = _items(conn, settings, "slow-link")
+    assert it["href"] == f"/topology?focus={ODD_Q}"
+
+
+def test_overview_and_alerts_links_for_an_odd_name_resolve(clean_env, tmp_path):
+    from patchbay.web import app
+
+    db_path = str(tmp_path / "test.db")
+    clean_env.setenv("PATCHBAY_DB", db_path)
+    c = sqlite3.connect(db_path)
+    c.row_factory = sqlite3.Row
+    pdb.init(c)
+    _dev(c, ODD, "switch", "down")
+    c.commit()
+    c.close()
+    client = TestClient(app)
+    body = client.get("/").text
+    assert f'href="/device/{ODD_Q}"' in body
+    assert client.get(f"/device/{ODD_Q}").status_code == 200
+    assert f'href="/device/{ODD_Q}"' in client.get("/alerts").text
