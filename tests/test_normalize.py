@@ -193,8 +193,8 @@ def test_rename_rewrites_fdb(conn):
 
 
 def test_alias_chain_resolves_transitively(conn):
-    conn.execute("INSERT INTO aliases VALUES ('oldest', 'mid')")
-    conn.execute("INSERT INTO aliases VALUES ('mid', 'sw1')")
+    conn.execute("INSERT INTO aliases (alias, canonical) VALUES ('oldest', 'mid')")
+    conn.execute("INSERT INTO aliases (alias, canonical) VALUES ('mid', 'sw1')")
     dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
     pdb.upsert_link(conn, a_device="oldest", a_interface="1", b_device="x",
                     b_interface="2", source="lldp")
@@ -394,7 +394,7 @@ def test_alias_rewrite_keeps_the_fresh_timestamp(conn):
     # or the survivor ages out while the link is being reported the whole time
     dev(conn, "edge1", "librenms", last_seen=NOW, role="switch")
     dev(conn, "vmhost2", "vsphere", last_seen=NOW, role="hypervisor", status="up")
-    conn.execute("INSERT INTO aliases VALUES ('vmhost2.example.lan', 'vmhost2')")
+    conn.execute("INSERT INTO aliases (alias, canonical) VALUES ('vmhost2.example.lan', 'vmhost2')")
     stale = NOW - 3600
     conn.execute("INSERT INTO links (a_device, a_interface, b_device, b_interface, "
                  "source, last_seen) VALUES ('edge1', 'p1', 'vmhost2', 'vmnic4', 'lldp', ?)",
@@ -463,6 +463,52 @@ def test_discovery_beats_a_stale_declaration_and_reports_it(conn):
     assert not any(s == "declared" for *_, s in ls), "stale declaration survived"
     notes = json.loads(pdb.get_state(conn, "declaration_conflicts"))
     assert any("vmhost2" in n and "1/0/14" in n for n in notes), notes
+
+
+def test_removed_seed_alias_is_retired(conn):
+    # removing a PATCHBAY_ALIASES entry stops the rewrite; aliases the
+    # identity rule wrote are not the operator's to retire (#126)
+    dev(conn, "sw1", "librenms", last_seen=NOW, role="switch", status="up")
+    dev(conn, "sw1.lan", "unifi", last_seen=NOW, role="switch")
+    dev(conn, "nas2", "vsphere", last_seen=NOW, role="hypervisor", status="up")
+    lldp = dict(a_device="sw1", a_interface="7", b_device="nas1",
+                b_interface="eth0", source="lldp")
+    normalize(conn, {"nas1": "nas2"})
+    assert dict(conn.execute("SELECT alias, seeded FROM aliases")) == \
+        {"nas1": 1, "sw1.lan": 0}
+    # an unreadable declaration set retires nothing
+    normalize(conn, {}, prune_declared=False)
+    assert conn.execute("SELECT 1 FROM aliases WHERE alias = 'nas1'").fetchone()
+    normalize(conn, {})
+    assert dict(conn.execute("SELECT alias, canonical FROM aliases")) == \
+        {"sw1.lan": "sw1"}
+    pdb.upsert_link(conn, **lldp)
+    normalize(conn, {})
+    assert links(conn) == [("nas1", "eth0", "sw1", "7", "lldp")]
+
+
+def test_aliases_gain_the_seeded_marker_on_upgrade(tmp_path):
+    # a database from before #126 keeps its aliases, unmarked; the next
+    # normalize marks the entries still declared, so they retire normally
+    import sqlite3
+    c = sqlite3.connect(str(tmp_path / "old.db"))
+    c.row_factory = sqlite3.Row
+    c.execute("CREATE TABLE aliases (alias TEXT PRIMARY KEY, canonical TEXT NOT NULL)")
+    c.executemany("INSERT INTO aliases VALUES (?, ?)",
+                  [("nas1", "nas2"), ("sw1.lan", "sw1")])
+    pdb.init(c)
+    pdb.init(c)  # idempotent
+    assert [tuple(r) for r in c.execute(
+        "SELECT alias, canonical, seeded FROM aliases ORDER BY alias")] == \
+        [("nas1", "nas2", 0), ("sw1.lan", "sw1", 0)]
+    dev(c, "sw1", "librenms", last_seen=NOW, role="switch")
+    normalize(c, {"nas1": "nas2"})
+    assert dict(c.execute("SELECT alias, seeded FROM aliases")) == \
+        {"nas1": 1, "sw1.lan": 0}
+    normalize(c, {})
+    assert dict(c.execute("SELECT alias, canonical FROM aliases")) == \
+        {"sw1.lan": "sw1"}
+    c.close()
 
 
 def test_port_description_disagreement_is_reported_not_enforced(conn):
@@ -1049,11 +1095,11 @@ def test_synthesized_name_alias_from_the_old_rule_is_retired(conn):
     dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
     decl = [("Rack-Switch", "sw1", "1/0/12")]
     normalize(conn, declared_unmanaged=decl)
-    conn.execute("INSERT INTO aliases VALUES ('Rack-Switch', 'rack-switch')")
+    conn.execute("INSERT INTO aliases (alias, canonical) VALUES ('Rack-Switch', 'rack-switch')")
     conn.execute("INSERT INTO positions (name, x, y) VALUES ('rack-switch', 10, 20)")
     normalize(conn, declared_unmanaged=decl)
     # the lowercase name now resolves to the declared one, never the reverse
-    assert [tuple(r) for r in conn.execute("SELECT * FROM aliases")] == \
+    assert [tuple(r) for r in conn.execute("SELECT alias, canonical FROM aliases")] == \
         [("rack-switch", "Rack-Switch")]
     assert [tuple(r) for r in conn.execute("SELECT * FROM positions")] == \
         [("Rack-Switch", 10, 20)]
@@ -1314,7 +1360,7 @@ def test_orphaned_merge_name_goes_to_its_only_member(conn):
     name merged into it, hands everything to that name."""
     dev(conn, "ubuntu-22.04", "vsphere", last_seen=NOW, role="vm")
     dev(conn, "sw1", "librenms", last_seen=NOW, role="switch")
-    conn.execute("INSERT INTO aliases VALUES ('ubuntu-22.04', 'ubuntu-22')")
+    conn.execute("INSERT INTO aliases (alias, canonical) VALUES ('ubuntu-22.04', 'ubuntu-22')")
     _keyed_rows(conn, "ubuntu-22")
     normalize(conn)
     assert dict(conn.execute("SELECT alias, canonical FROM aliases")) == \
@@ -1341,7 +1387,7 @@ def test_orphaned_merge_name_of_two_members_is_dropped(conn):
 def test_an_alias_never_captures_a_live_device(conn):
     """An heir alias ("ubuntu-22" -> "ubuntu-22.04") must not hijack a VM
     later created under the old name itself."""
-    conn.execute("INSERT INTO aliases VALUES ('ubuntu-22', 'ubuntu-22.04')")
+    conn.execute("INSERT INTO aliases (alias, canonical) VALUES ('ubuntu-22', 'ubuntu-22.04')")
     dev(conn, "ubuntu-22.04", "vsphere", last_seen=NOW, role="vm")
     dev(conn, "ubuntu-22", "vsphere", last_seen=NOW, role="vm")
     pdb.upsert_link(conn, a_device="ubuntu-22", a_interface="eth0",
@@ -1363,7 +1409,7 @@ def test_stored_identity_alias_row_heals(conn):
     # a ('fw1','fw1') row from an earlier version must not delete fw1's rows
     dev(conn, "fw1", "librenms", last_seen=NOW, role="firewall")
     conn.execute("INSERT INTO positions (name, x, y) VALUES ('fw1', 10, 20)")
-    conn.execute("INSERT INTO aliases VALUES ('fw1', 'fw1')")
+    conn.execute("INSERT INTO aliases (alias, canonical) VALUES ('fw1', 'fw1')")
     normalize(conn)
     assert [tuple(r) for r in conn.execute("SELECT name, x, y FROM positions")] == [("fw1", 10, 20)]
     assert conn.execute("SELECT COUNT(*) FROM aliases WHERE alias = 'fw1'").fetchone()[0] == 0

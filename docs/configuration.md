@@ -327,6 +327,11 @@ Facts no protocol can discover. All optional; all use the pattern
 | `PATCHBAY_ROUTED_ORDER` | `name-or-vid,…` | Routed-view rail order override (ADR-0002): named networks (VLAN id or name) pin to the left in the declared order; the rest keep the computed order |
 | `PATCHBAY_PANELS` | `name:size=regex,…` | Patch panels. The regex's first capture group is the panel position claimed by a port description; distinct prefixes keep panels apart; size `0` = sized by the highest position seen. Empty positions are listed only up to 512, for a declared size too; ports numbered past that still appear, without gap rows |
 
+When you remove a `PATCHBAY_ALIASES` entry, the next poll removes its alias,
+and the old name stops resolving to the old target. An entry removed before
+the release that added this keeps resolving: add the entry again, let one
+poll run, and then remove it.
+
 ### Migrate PATCHBAY_EXPECT to silences
 
 patchbay ignores `PATCHBAY_EXPECT`: its entries silence nothing, and a

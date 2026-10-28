@@ -99,7 +99,7 @@ def test_graph_validates_gtype(client):
 def test_device_alias_redirects(clean_env, tmp_path, client):
     seed(str(tmp_path / "test.db"))
     c = sqlite3.connect(str(tmp_path / "test.db"))
-    c.execute("INSERT INTO aliases VALUES ('sw1.example.lan', 'sw1')")
+    c.execute("INSERT INTO aliases (alias, canonical) VALUES ('sw1.example.lan', 'sw1')")
     c.commit(); c.close()
     r = client.get("/device/sw1.example.lan", follow_redirects=False)
     assert r.status_code in (302, 307) and "/device/sw1" in r.headers["location"]
