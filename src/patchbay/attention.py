@@ -653,9 +653,9 @@ def _snapshot_failed(conn, now: float) -> list[dict]:
 
 
 # --- port-counter canaries (#64, ADR-0003 Decision 5) -----------------------
-# A port whose error or discard rate jumps orders of magnitude above its own
-# baseline. Defaults are the ADR's, provisional until a week of real samples
-# exists to tune them against (the counters start collecting with #64).
+# A port whose error rate jumps orders of magnitude above its own baseline.
+# Defaults are the ADR's, provisional until a week of real samples exists to
+# tune them against (the counters start collecting with #64).
 CANARY_FLOOR = 50          # per second: below this nobody notices
 CANARY_MULTIPLIER = 100    # raise at this many times the baseline
 CANARY_CLEAR = 10          # hold until the rate falls below this × baseline
@@ -664,9 +664,14 @@ CANARY_FOR = 2             # polls: one bad sample is not a flood
 CANARY_WINDOW_S = 7 * 86400   # baseline window, rate_history's retention
 CANARY_RECENT_S = 3600        # excluded from the baseline: the flood itself
 
-# rate_history column -> how the item text names it
-CANARY_COUNTERS = {"in_errors": "in errors", "out_errors": "out errors",
-                   "in_discards": "in discards", "out_discards": "out discards"}
+# rate_history column -> how the item text names it. Error rates only: the
+# discard columns are collected (#83) but never judged until #86 decides
+# from those samples whether they should be, so a discard reading can't
+# raise, hold, or clear a canary.
+CANARY_COUNTERS = {"in_errors": "in errors", "out_errors": "out errors"}
+# a sample that carries an error reading: a row holding only rates or
+# discards says nothing about errors, so it is never "the newest sample"
+_HAS_ERRORS = " OR ".join(f"{c} IS NOT NULL" for c in CANARY_COUNTERS)
 
 
 def _p95(values: list[float]) -> float:
@@ -755,7 +760,7 @@ def _port_canary(conn, settings, now: float, checked: list[str]) -> list[dict]:
     newest: dict[tuple[str, str], sqlite3.Row] = {}
     for r in conn.execute(
             f"SELECT device, interface, ts, {cols} FROM rate_history "
-            "WHERE ts >= ?", (now - STALE_MIN * 60,)):
+            f"WHERE ts >= ? AND ({_HAS_ERRORS})", (now - STALE_MIN * 60,)):
         k = (r["device"], r["interface"])
         if k not in newest or r["ts"] > newest[k]["ts"]:
             newest[k] = r
@@ -782,7 +787,8 @@ def _port_canary(conn, settings, now: float, checked: list[str]) -> list[dict]:
     for dev, iface in gone:
         row = conn.execute(
             f"SELECT device, interface, ts, {cols} FROM rate_history "
-            "WHERE device = ? AND interface = ? ORDER BY ts DESC LIMIT 1",
+            f"WHERE device = ? AND interface = ? AND ({_HAS_ERRORS}) "
+            "ORDER BY ts DESC LIMIT 1",
             (dev, iface)).fetchone()
         d = conn.execute("SELECT status, last_seen FROM devices WHERE name = ?",
                          (dev,)).fetchone()

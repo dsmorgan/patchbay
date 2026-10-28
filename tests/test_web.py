@@ -1542,6 +1542,27 @@ def test_load_view_shows_the_busier_end(conn, clean_env):
     assert edge["putil"] == 90.0        # the AP's peak, not the switch's
 
 
+def test_load_peak_ignores_counter_only_samples(conn, clean_env):
+    """#83: a sample carrying only error or discard rates says nothing about
+    traffic, so a port whose history holds nothing else has no 24-hour peak
+    (not a peak of 0)."""
+    import json
+    from patchbay.config import load_settings
+    from patchbay.web import build_topology_graph
+    for name in ("sw1", "sw2"):
+        dev = pdb.upsert_device(conn, name=name, source="librenms", role="switch",
+                                status="up")
+        pdb.upsert_interface(conn, device_id=dev, name="1/0/1", oper_status="up",
+                             speed_bps=1_000_000_000)
+        pdb.record_rates(conn, name, "1/0/1", in_errors=0.0, in_discards=900.0)
+    pdb.upsert_link(conn, a_device="sw1", a_interface="1/0/1",
+                    b_device="sw2", b_interface="1/0/1", source="lldp")
+    graph_json, _ = build_topology_graph(conn, load_settings())
+    edge = next(e for e in json.loads(graph_json)["links"]
+                if {e["source"], e["target"]} == {"sw1", "sw2"})
+    assert edge.get("putil") is None
+
+
 def test_topology_undo_restores_the_saved_state_and_redraws(client, tmp_path):
     """Undo (#55) moves the drawn node, not only its fixed position — the
     renderer draws x/y and a cooled simulation never copies fx into them —

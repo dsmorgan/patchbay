@@ -122,18 +122,20 @@ RULES: dict[str, Rule] = {
         category="source", event=True, params={},
         summary="The daily, a manual, or an alert snapshot failed, or was not "
                 "delivered off-host."),
-    # a port's error or discard rate orders of magnitude above its own
-    # baseline (#64, ADR-0003 Decision 5); `for` 2 so one bad sample is quiet
+    # a port's error rate orders of magnitude above its own baseline (#64,
+    # ADR-0003 Decision 5); `for` 2 so one bad sample is quiet. Discards are
+    # collected but not judged (#83); #86 decides whether they should be
     "port-canary": Rule(
         category="port",
         params={"for": CANARY_FOR, "remind": 0, "floor": CANARY_FLOOR,
                 "multiplier": CANARY_MULTIPLIER, "clear": CANARY_CLEAR,
                 "warmup_h": CANARY_WARMUP_H},
-        summary="A port's error rate (discards: see #86) is at least multiplier × its "
-                "own baseline (p95 of the past week, less the last hour) and "
+        summary="A port's error rate is at least multiplier × its own "
+                "baseline (p95 of the past week, less the last hour) and "
                 "at least floor per second; it clears below clear × baseline. "
                 "A port with under warmup_h hours of samples is judged against "
-                "the floor alone."),
+                "the floor alone. Discard rates are collected but not judged "
+                "(see #86)."),
     # an alert transport that failed three polls running (#61); routed by
     # default like any rule, which reaches the other transports when the
     # default is not the one that is failing

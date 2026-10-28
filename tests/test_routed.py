@@ -866,6 +866,8 @@ def test_router_legs_carry_load(conn):
     iface(conn, fw, "vmx0", in_bps=500_000_000, out_bps=100_000_000)   # 5% of 10G
     conn.execute("INSERT INTO rate_history (device, interface, ts, in_bps, out_bps) "
                  "VALUES ('fw1', 'vmx1', ?, 2000000000, 0)", (pdb.now() - 600,))
+    # a counters-only sample (#83: discards) is not a bit rate, so no peak of 0
+    pdb.record_rates(conn, "fw1", "vmx0", in_discards=40.0, ts=pdb.now() - 300)
     conn.execute("INSERT INTO routes (device, destination, gateway, interface, "
                  "proto, flags, source, last_seen) VALUES ('fw1', '0.0.0.0/0', "
                  "'192.0.2.254', 'vmx0', 'static', 'UGS', 'test', ?)", (pdb.now(),))
