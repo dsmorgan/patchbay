@@ -129,7 +129,7 @@ bundle path) in any OIDC deployment.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PATCHBAY_CONFIG_KEEP` | `50` | Firewall config revisions kept per device; older ones are trimmed when a poll stores a new revision (`0` = keep everything). A value that is not a whole number of 0 or more falls back to `50` with a parse warning. Also editable on `/ops` when the env file doesn't set it; `/configs` shows the effective value and its source |
+| `PATCHBAY_CONFIG_KEEP` | `50` | Firewall config revisions kept per device; older ones are trimmed when a poll stores a new revision (`0` = keep everything). A value that is not a whole number of 0 or more falls back to `50` with a parse warning. When a poll can't read the stored value, it trims nothing that cycle. Also editable on `/ops` when the env file doesn't set it; `/configs` shows the effective value and its source |
 
 ### Snapshots
 
@@ -293,13 +293,13 @@ Facts no protocol can discover. All optional; all use the pattern
 
 | Variable | Format | Meaning |
 |---|---|---|
-| `PATCHBAY_ALIASES` | `alias=canonical,…` | Identity aliases — map a chassis serial or an FQDN some source uses onto the canonical device name. The routed view fuses hostnames through them too: an IPAM or ARP name like `nas1ten24` aliased to `nas1` becomes another leg of nas1 instead of a host of its own |
+| `PATCHBAY_ALIASES` | `alias=canonical,…` | Identity aliases — map a chassis serial or an FQDN some source uses onto the canonical device name. The routed view fuses hostnames through them too: an IPAM or ARP name like `nas1ten24` aliased to `nas1` becomes another leg of nas1 instead of a host of its own. An entry whose alias equals its canonical name is skipped with a parse warning |
 | `PATCHBAY_UNMANAGED` | `dev:iface,…` | Ports the operator knows feed an unmanaged switch, shown even when too few MACs are live to infer one. A named form gives the box a label: `k8s-switch=dev:iface` |
 | `PATCHBAY_LINKS` | `dev:iface=dev:iface,…` | Declared cabling. The far side may be a bare name (`sw:e1/1/24=basement-tv`) when its port is unknowable. Removing an entry removes the link — the env is the source of truth, not a one-way import |
 | `PATCHBAY_WAN_NAME` | `name,…` | Provider names, one cloud node each (default `internet`) |
 | `PATCHBAY_WAN_PORT` | `dev:iface,…` | Where each provider physically lands. With none declared the cloud hangs off the firewall |
 | `PATCHBAY_RELATED` | `component=owner,…` | Out-of-band component ties (a BMC/CIMC/iDRAC and the server it manages) |
-| `PATCHBAY_VLAN_FILTER` | `dev:iface=1+24+73,…` | Trunks with a restricted VLAN list (defaults assume trunks carry every VLAN — allowed-lists aren't readable via SNMP) |
+| `PATCHBAY_VLAN_FILTER` | `dev:iface=1+24+73,…` | Trunks with a restricted VLAN list; a term can be a range such as `10-20` (1-4094), and an entry with any other term is skipped with a parse warning (defaults assume trunks carry every VLAN — allowed-lists aren't readable via SNMP) |
 | `PATCHBAY_CAPACITY` | `dev:iface=3G,…` | Real service capacity below the port speed; load math divides by it and the map shows both: "10G (3G)". `G`/`M` suffixes |
 | `PATCHBAY_EXPECT` | `dev:iface` or `dev`,… | **Ignored.** Its entries silence nothing, and patchbay warns while the variable is set. Silences replace it, on the alerts page (**Alerts > Silences**). To migrate, [import the entries as silences](#migrate-patchbay_expect-to-silences) on **Ops**, then remove the variable |
 | `PATCHBAY_ROUTED_ORDER` | `name-or-vid,…` | Routed-view rail order override (ADR-0002): named networks (VLAN id or name) pin to the left in the declared order; the rest keep the computed order |

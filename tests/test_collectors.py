@@ -3044,3 +3044,11 @@ def test_opnsense_failed_gateway_fetch_prunes_nothing(conn, clean_env, monkeypat
     with pytest.raises(Exception):
         OpnsenseCollector().collect(_ons_settings(clean_env), conn)
     assert [r[0] for r in conn.execute("SELECT name FROM gateways")] == ["WAN_A"]
+
+
+def test_config_keep_none_trims_nothing(conn):
+    from patchbay.collectors import opnsense as ons
+    for i in range(60):
+        ons.save_config_revision(
+            conn, "fw1", _CFG_XML.replace("allow lan", f"rule {i}"), keep=None)
+    assert conn.execute("SELECT COUNT(*) FROM config_revisions").fetchone()[0] == 60

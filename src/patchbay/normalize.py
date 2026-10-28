@@ -1234,13 +1234,16 @@ def normalize(conn: sqlite3.Connection, seed_aliases: dict[str, str] | None = No
               declared_links: list[tuple[str, str, str, str]] | None = None,
               vlan_filters: dict[tuple[str, str], set[int]] | None = None,
               prune_declared: bool = True) -> str:
-    for alias, canonical in (seed_aliases or {}).items():
+    # an identity alias would delete its own device's data; config.py warns
+    # and drops these, this guards other callers
+    seed_aliases = {a: c for a, c in (seed_aliases or {}).items() if a != c}
+    for alias, canonical in seed_aliases.items():
         conn.execute("INSERT OR REPLACE INTO aliases (alias, canonical) VALUES (?, ?)",
                      (alias, canonical))
     before = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
     keys = {r["name"]: _identity_key(r)
             for r in conn.execute("SELECT * FROM devices").fetchall()}
-    _retire_stale_aliases(conn, keys, set(seed_aliases or {}))
+    _retire_stale_aliases(conn, keys, set(seed_aliases))
     _retire_merge_survivors(conn)
     groups: dict[str, list[sqlite3.Row]] = {}
     for r in conn.execute("SELECT * FROM devices").fetchall():

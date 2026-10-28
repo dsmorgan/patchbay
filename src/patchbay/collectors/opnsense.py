@@ -52,9 +52,10 @@ def prepare_config(raw: str, key: bytes | None = None
 
 
 def save_config_revision(conn: sqlite3.Connection, device: str, raw: str,
-                         keep: int = CONFIG_KEEP_DEFAULT) -> bool:
+                         keep: int | None = CONFIG_KEEP_DEFAULT) -> bool:
     """Store a new redacted revision if the config actually changed, then
-    trim the device to its newest `keep` revisions (0 = unlimited).
+    trim the device to its newest `keep` revisions (0 = unlimited,
+    None = trim nothing).
     Returns True when a new revision was written."""
     text, msg, auth = prepare_config(raw, db.redaction_key(conn))
     sha = hashlib.sha256(text.encode()).hexdigest()
@@ -66,7 +67,7 @@ def save_config_revision(conn: sqlite3.Connection, device: str, raw: str,
     conn.execute(
         "INSERT INTO config_revisions (device, fetched_at, sha, message, author, text) "
         "VALUES (?, ?, ?, ?, ?, ?)", (device, db.now(), sha, msg, auth, text))
-    if keep > 0:
+    if keep:
         conn.execute(
             "DELETE FROM config_revisions WHERE device = ? AND id NOT IN "
             "(SELECT id FROM config_revisions WHERE device = ? "
