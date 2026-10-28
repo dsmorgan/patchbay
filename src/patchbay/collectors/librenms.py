@@ -159,26 +159,41 @@ def _discard_targets(conn: sqlite3.Connection, devices: list, ports: dict,
     links row whose other end is a switch, AP, firewall, or hypervisor, and
     whose LibreNMS poll_time has moved since the last stored sample (an
     unmoved one stores no sample, so its call would be wasted). Reads only:
-    it runs in the fetch phase, before the first write. Names compare in
-    canonical form, since the stored links and devices are normalized."""
+    it runs in the fetch phase, before the first write. The stored links
+    and devices carry the normalized name, which for a device merged under
+    another one (a declared alias, a serial, an identity merge with another
+    source) is not its sysName, so every name resolves through the aliases
+    table, chains collapsed as normalize does, before it compares."""
     from ..attention import STATED_LINK_SOURCES
     from ..normalize import canonical_name
 
-    role = {canonical_name(r["name"]): (r["role"] or "").lower()
+    alias_map = dict(conn.execute("SELECT alias, canonical FROM aliases"))
+
+    def resolve(name: str) -> str:
+        seen: set[str] = set()
+        for n in (name, canonical_name(name)):
+            while n in alias_map and n not in seen:
+                seen.add(n)
+                n = alias_map[n]
+            if seen:
+                return canonical_name(n)
+        return canonical_name(name)
+
+    role = {resolve(r["name"]): (r["role"] or "").lower()
             for r in conn.execute("SELECT name, role FROM devices")}
     ends: set[tuple[str, str]] = set()
     for r in conn.execute(
             "SELECT a_device, a_interface, b_device, b_interface FROM links "
             f"WHERE source IN ({','.join('?' * len(STATED_LINK_SOURCES))})",
             STATED_LINK_SOURCES):
-        a, b = canonical_name(r["a_device"]), canonical_name(r["b_device"])
+        a, b = resolve(r["a_device"]), resolve(r["b_device"])
         if role.get(b) in DISCARD_PEER_ROLES:
             ends.add((a, r["a_interface"]))
         if role.get(a) in DISCARD_PEER_ROLES:
             ends.add((b, r["b_interface"]))
     out = []
     for d in devices:
-        name = canonical_name(d.get("sysName") or d.get("hostname") or "")
+        name = resolve(d.get("sysName") or d.get("hostname") or "")
         for p in ports.get(d.get("device_id"), []):
             pid = p.get("port_id")
             if not pid or (name, p.get("ifName")) not in ends:
@@ -248,14 +263,17 @@ class LibreNmsCollector:
         """Discard rates for each target port (#83): ({port_id: rates},
         calls made, error or None). A failed call stops the rest for this
         poll rather than failing the collection: discards are an extra, and
-        a LibreNMS that refuses one port's statistics will refuse them all."""
+        a LibreNMS that refuses one port's statistics will refuse them all.
+        A 200 whose body is not JSON (a login page, a proxy's error page, a
+        PHP notice ahead of the JSON) counts as failed too; JSON of the
+        wrong shape just carries no rates (_discard_rates)."""
         rates: dict[int, dict] = {}
         calls = 0
         for pid in targets:
             calls += 1
             try:
                 body = self._get(client, settings, STATISTICS_PATH.format(pid))
-            except httpx.HTTPError as e:
+            except (httpx.HTTPError, ValueError) as e:
                 return rates, calls, type(e).__name__
             got = _discard_rates(body)
             if got:
