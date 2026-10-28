@@ -1168,6 +1168,40 @@ def test_configs_lists_firewall_history_without_oxidized(clean_env, tmp_path, cl
     assert "rule edited" in r.text          # timeline carries the description
 
 
+def test_configs_shows_firewall_history_while_oxidized_is_down(clean_env, tmp_path,
+                                                               monkeypatch, client):
+    import httpx
+
+    _seed_fw_history(str(tmp_path / "test.db"))
+    clean_env.setenv("OXIDIZED_URL", "http://ox.invalid")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    _ox_mock(monkeypatch, handler)
+    r = client.get("/configs")
+    assert r.status_code == 200
+    assert "unreachable" in r.text.lower()
+    assert "fw1" in r.text and "rule edited" in r.text
+
+
+def test_vm_device_page_lists_its_vnic(clean_env, tmp_path, client):
+    # a VM's only interface is a kernel-kind vNIC, so the Ports block is empty
+    db_path = str(tmp_path / "test.db")
+    seed(db_path)
+    c = sqlite3.connect(db_path)
+    c.row_factory = sqlite3.Row
+    did = pdb.upsert_device(c, name="vm-web1", source="vsphere", role="vm",
+                            status="up")
+    pdb.upsert_interface(c, device_id=did, name="Network adapter 1",
+                         oper_status="up", mac="02:d3:00:00:01:00")
+    c.commit(); c.close()
+    r = client.get("/device/vm-web1")
+    assert r.status_code == 200
+    assert "Kernel interfaces" in r.text
+    assert "Network adapter 1" in r.text and "02:d3:00:00:01:00" in r.text
+
+
 def test_confignode_shows_firewall_revision_and_diff(clean_env, tmp_path, client):
     old_id, new_id = _seed_fw_history(str(tmp_path / "test.db"))
     r = client.get(f"/configs/fw1?v={new_id}")
