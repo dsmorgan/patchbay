@@ -331,6 +331,7 @@ A device in `PATCHBAY_LINKS`, `PATCHBAY_UNMANAGED`, or `PATCHBAY_VLAN_FILTER`
 resolves the way discovered names do: through `PATCHBAY_ALIASES` and the
 merge aliases, then by its canonical name, so `core1.example.internal` and
 `Core1` both reach `core1`. A name that matches no device stays as written.
+Two `PATCHBAY_VLAN_FILTER` entries for one port pass the VLANs of both.
 
 When you remove a `PATCHBAY_ALIASES` entry, the next poll removes its alias,
 and the old name stops resolving to the old target. An entry removed before
