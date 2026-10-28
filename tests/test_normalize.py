@@ -1353,8 +1353,17 @@ def test_an_alias_never_captures_a_live_device(conn):
 
 def test_identity_seed_alias_deletes_nothing(conn):
     dev(conn, "fw1", "librenms", last_seen=NOW, role="firewall")
-    pdb.upsert_link(conn, a_device="fw1", a_interface="1", b_device="x",
-                    b_interface="2", source="lldp")
+    conn.execute("INSERT INTO positions (name, x, y) VALUES ('fw1', 10, 20)")
     normalize(conn, {"fw1": "fw1"})
-    assert ("fw1", "1", "x", "2", "lldp") in links(conn)
+    assert [tuple(r) for r in conn.execute("SELECT name, x, y FROM positions")] == [("fw1", 10, 20)]
+    assert conn.execute("SELECT COUNT(*) FROM aliases WHERE alias = 'fw1'").fetchone()[0] == 0
+
+
+def test_stored_identity_alias_row_heals(conn):
+    # a ('fw1','fw1') row from an earlier version must not delete fw1's rows
+    dev(conn, "fw1", "librenms", last_seen=NOW, role="firewall")
+    conn.execute("INSERT INTO positions (name, x, y) VALUES ('fw1', 10, 20)")
+    conn.execute("INSERT INTO aliases VALUES ('fw1', 'fw1')")
+    normalize(conn)
+    assert [tuple(r) for r in conn.execute("SELECT name, x, y FROM positions")] == [("fw1", 10, 20)]
     assert conn.execute("SELECT COUNT(*) FROM aliases WHERE alias = 'fw1'").fetchone()[0] == 0

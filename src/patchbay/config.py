@@ -385,7 +385,8 @@ class Settings:
     # none), and the alert snapshots' own keep count (0 = unlimited).
     alert_snapshot: bool = False
     alert_snapshot_cooldown: int = ALERT_SNAPSHOT_COOLDOWN_DEFAULT
-    alert_snapshot_keep: int = ALERT_SNAPSHOT_KEEP_DEFAULT
+    # None = stored value unreadable this cycle: prune no alert snapshots.
+    alert_snapshot_keep: int | None = ALERT_SNAPSHOT_KEEP_DEFAULT
     # Hostnames the UI answers to (PATCHBAY_ALLOWED_HOSTS, each optionally
     # with :port). None = unset: any Host, the pre-#94 behavior. An empty
     # tuple = set, but no entry was usable: loopback only, never open.
@@ -691,6 +692,9 @@ def load_settings(*, read_db: bool = True) -> Settings:
                                     ALERT_SNAPSHOT_COOLDOWN_DEFAULT)
     alert_snapshot_keep = whole("PATCHBAY_ALERT_SNAPSHOT_KEEP",
                                 ALERT_SNAPSHOT_KEEP_DEFAULT)
+    if not declarations_readable and _env("PATCHBAY_ALERT_SNAPSHOT_KEEP") is None:
+        # as for config_keep: the stored count may keep more than the default
+        alert_snapshot_keep = None
     return Settings(
         db_path=env("PATCHBAY_DB", "patchbay.db"),
         tls_verify=tls_verify,

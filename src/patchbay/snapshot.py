@@ -478,7 +478,7 @@ def take_alert_snapshot(settings: Settings, notes, *, now: float | None = None) 
     path: Path | None = None
     failure = None
     try:
-        path = write_snapshot(settings, alert_keep=settings.alert_snapshot_keep, stamp=now)
+        path = write_snapshot(settings, alert_keep=settings.alert_snapshot_keep or 0, stamp=now)
         lines.append(f"[ok]   alert snapshot: {path}")
     except DeliveryError as e:
         path = e.path

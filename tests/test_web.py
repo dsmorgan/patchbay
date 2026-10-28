@@ -1995,10 +1995,10 @@ def test_patchpanel_caps_gap_fill(clean_env, tmp_path, client):
     dbp = str(tmp_path / "test.db")
     seed(dbp)
     c = sqlite3.connect(dbp)
-    c.execute("UPDATE interfaces SET description = 'uplink [900000000]' "
+    c.execute("UPDATE interfaces SET description = 'uplink [100000]' "
               "WHERE description = 'uplink [3]'")
     c.commit()
     c.close()
     body = client.get("/patchpanel").text
-    assert 'id="p900000000"' in body
+    assert 'id="p100000"' in body
     assert body.count("<tr") < PANEL_FILL_MAX + 20

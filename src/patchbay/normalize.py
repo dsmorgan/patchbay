@@ -204,7 +204,10 @@ def _retire_stale_aliases(conn: sqlite3.Connection, keys: dict[str, str],
     retired: dict[str, list[str]] = {}
     for r in conn.execute("SELECT alias, canonical FROM aliases").fetchall():
         alias, canon = r["alias"], r["canonical"]
-        if alias in seeds or alias == canon:
+        if alias == canon:  # heal identity rows stored by earlier versions
+            conn.execute("DELETE FROM aliases WHERE alias = ?", (alias,))
+            continue
+        if alias in seeds:
             continue
         stale_rule = (_first_label(alias) == canon
                       and keys.get(alias, canonical_name(alias)) != canon)
@@ -390,6 +393,8 @@ def _rename_refs(conn: sqlite3.Connection) -> None:
 
     alias_map = {a: resolve(c) for a, c in alias_map.items()}
     for alias, canon in alias_map.items():
+        if alias == canon:  # an identity row would delete the device's own rows
+            continue
         for col in ("a_device", "b_device"):
             for r in conn.execute(f"SELECT id FROM links WHERE {col} = ?",
                                   (alias,)).fetchall():

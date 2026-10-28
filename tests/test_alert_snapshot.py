@@ -494,3 +494,15 @@ def test_done_when_unplugged_aps_on_the_demo(clean_env, tmp_path, monkeypatch):
     sent, new, lines = unplug("ap-den")
     assert sent and not new
     assert any("in cooldown" in line for line in lines)
+
+
+def test_alert_snapshot_keep_none_when_declarations_unreadable(clean_env, monkeypatch):
+    from patchbay import config as cfg
+
+    def boom(_):
+        raise cfg.DeclarationReadError("database is locked")
+
+    monkeypatch.setattr(cfg, "_db_declarations", boom)
+    assert cfg.load_settings().alert_snapshot_keep is None
+    clean_env.setenv("PATCHBAY_ALERT_SNAPSHOT_KEEP", "4")
+    assert cfg.load_settings().alert_snapshot_keep == 4
