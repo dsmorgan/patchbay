@@ -327,6 +327,20 @@ class VsphereCollector:
                 f"AND (parent IS NOT NULL OR role = 'vm') "
                 f"AND name NOT IN ({','.join('?' * len(seen))})",
                 (NAME, *seen))
+        # retire hosts vCenter no longer reports, with their interfaces
+        # (cascade) and uplink hints. Same empty-listing guard as the VMs.
+        host_names = [h["name"] for h in inv["hosts"]]
+        if host_names:
+            marks = ",".join("?" * len(host_names))
+            gone = [r["name"] for r in conn.execute(
+                "SELECT name FROM devices WHERE source = ? AND role = 'hypervisor' "
+                f"AND name NOT IN ({marks})", (NAME, *host_names))]
+            for name in gone:
+                conn.execute(
+                    "DELETE FROM links WHERE source = 'vsphere-hint' "
+                    "AND (a_device = ? OR b_device = ?)", (name, name))
+                conn.execute("DELETE FROM devices WHERE name = ? AND source = ?",
+                             (name, NAME))
         return (f"{n_hosts} hosts, {n_vms} vms, {n_hints} uplink hints, "
                 f"{n_tags} vnic vlans")
 
