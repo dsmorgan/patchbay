@@ -8,6 +8,8 @@ put.
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-10-27
+
 ### Added
 - Alerts visibility (#118). The Overview's Attention box lists down devices,
   and the **Alerts** entry in the rail shows the count of open alerts,
