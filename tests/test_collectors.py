@@ -1393,6 +1393,71 @@ def test_librenms_statistics_failure_keeps_the_collection(conn, clean_env, monke
         "HTTPStatusError")
 
 
+@pytest.mark.parametrize("body", [
+    "html",                                  # a login or proxy page: not JSON
+    {"status": "error", "message": "nope"},  # JSON of the wrong shape
+    ["not", "a", "port"],
+])
+def test_librenms_statistics_bad_body_keeps_the_collection(
+        conn, clean_env, monkeypatch, body):
+    """A 200 whose body isn't the statistics answer must not fail the
+    LibreNMS collection: non-JSON stops the statistics calls and says so,
+    and the wrong shape just carries no rates."""
+    import json
+    from patchbay.collectors.librenms import LibreNmsCollector, STATISTICS_STATE_KEY
+
+    class Bad(_LnmsStatsClient):
+        def get(self, url, **kw):
+            r = super().get(url, **kw)
+            if "?with=statistics" in url:
+                def parse():
+                    if body == "html":
+                        return json.loads("<html>sign in</html>")
+                    return body
+                r.json = parse
+            return r
+    _stated_cable(conn)
+    _LnmsStatsClient.urls, _LnmsStatsClient.fail = [], False
+    monkeypatch.setattr(httpx, "Client", Bad)
+    summary = LibreNmsCollector().collect(_discards_on(clean_env), conn)
+    assert tuple(_discard_row(conn)) == (0.0, 3.0, None, None)
+    error = json.loads(pdb.get_state(conn, STATISTICS_STATE_KEY))["error"]
+    if body == "html":
+        assert "stopped after JSONDecodeError" in summary
+        assert error == "JSONDecodeError"
+    else:
+        assert summary.endswith(", 1 statistics calls") and error is None
+
+
+def test_librenms_discards_resolve_a_merged_device_through_aliases(
+        conn, clean_env, monkeypatch):
+    """normalize merged LibreNMS's lnms-sw.lan into sw-core (a declared
+    alias, a serial, another source's identity): the stored cable names
+    sw-core, so the sysName has to resolve through the aliases table, chain
+    collapsed, to qualify."""
+    pdb.upsert_device(conn, name="sw2", source="unifi", role="switch")
+    pdb.upsert_link(conn, a_device="sw-core", a_interface="1/0/5",
+                    b_device="sw2", b_interface="1/0/1", source="lldp")
+    conn.execute("INSERT INTO aliases (alias, canonical) VALUES "
+                 "('lnms-sw.lan', 'sw-mid'), ('sw-mid', 'sw-core')")
+
+    class Merged(_LnmsStatsClient):
+        def get(self, url, **kw):
+            r = super().get(url, **kw)
+            if url.endswith("/devices"):
+                r.json = lambda: {"devices": [{"device_id": 1, "status": 1,
+                                               "sysName": "lnms-sw.lan",
+                                               "os": "netgear", "disabled": 0}]}
+            return r
+    from patchbay.collectors.librenms import LibreNmsCollector, _discard_targets
+    assert _discard_targets(conn, [{"device_id": 1, "sysName": "lnms-sw.lan"}],
+                            {1: [{"port_id": 7, "ifName": "1/0/5"}]}, {}) == [7]
+    _LnmsStatsClient.urls, _LnmsStatsClient.fail = [], False
+    monkeypatch.setattr(httpx, "Client", Merged)
+    LibreNmsCollector().collect(_discards_on(clean_env), conn)
+    assert len(_stats_calls()) == 1
+
+
 def test_librenms_statistics_calls_happen_before_the_first_write(
         conn, clean_env, monkeypatch):
     from patchbay.collectors.librenms import LibreNmsCollector
