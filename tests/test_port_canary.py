@@ -97,6 +97,13 @@ def test_floor_keeps_a_quiet_port_quiet(conn, settings, clock):
     assert it["ports"] == [("sw1", "1/0/5")]
 
 
+def test_canary_href_encodes_the_device_name(conn, settings, clock):
+    _history(conn, 0.0, dev="sw #1")
+    _sample(conn, T0 - 30, dev="sw #1", out_discards=60.0)
+    [it] = _canaries(conn, settings)
+    assert it["href"] == "/device/sw%20%231#port-1/0/5"
+
+
 def test_multiplier_against_the_ports_own_baseline(conn, settings, clock):
     _history(conn, 20.0)                          # a trunk that always discards
     _sample(conn, T0 - 60, out_discards=1900.0)   # 95x: its normal chatter
