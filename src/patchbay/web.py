@@ -1760,7 +1760,7 @@ def _json_state(conn, key: str):
 def _config_keep_text(s) -> str:
     """Effective per-device config revision keep, with where it came from."""
     if s.config_keep is None:
-        return "not trimmed — stored setting unreadable"
+        return "everything this cycle (stored setting unreadable)"
     value = "unlimited" if s.config_keep == 0 else str(s.config_keep)
     src = s.declaration_sources.get("PATCHBAY_CONFIG_KEEP") or "default"
     return f"{value} per device · {src}"
@@ -1772,7 +1772,7 @@ def _alert_snapshot_view(s) -> dict:
     cooldown = (f"at most one per {s.alert_snapshot_cooldown} min"
                 if s.alert_snapshot_cooldown else "no cooldown")
     keep = (f"keeps the newest {s.alert_snapshot_keep}"
-            if s.alert_snapshot_keep else "keeps all")
+            if s.alert_snapshot_keep else "keeps all")  # None: none pruned
     return {"on": s.alert_snapshot, "cooldown": s.alert_snapshot_cooldown,
             "keep": s.alert_snapshot_keep,
             "text": f"on · {cooldown} · {keep}" if s.alert_snapshot else "off"}
