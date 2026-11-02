@@ -925,7 +925,7 @@ function draw() {
     el("ellipse", { cx: C.x, cy: C.y, rx: cloudRx, ry: cloudRy, class: "cloud" }, cloud);
     el("text", { x: C.x, y: C.y - 3, "text-anchor": "middle", class: "rlabel" },
        cloud, rg.wan_names[di] || rg.wan_names[0] || "internet");
-    const gw = rg.gateways[di] || (di === 0 ? rg.gateways[0] : null);
+    const gw = d.gw;   // the gateway the route goes through, matched server-side
     if (gw) el("text", { x: C.x, y: C.y + 12, "text-anchor": "middle",
                          class: "gwlabel" }, cloud, `${gw.name} ${gw.status || ""}`.trim());
     if (wanRail) {
