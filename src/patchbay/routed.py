@@ -261,14 +261,25 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     # the gateway row whose address is the route's next hop. Nothing ties
     # the gateways table to a router or a route otherwise, so pairing by
     # position showed whichever row came first (a WireGuard gateway's
-    # "down" while the WAN was up). No matching row means no label.
-    def _hop(ip: str | None):
-        return _addr(ip.split("%")[0]) if ip else None
+    # "down" while the WAN was up). No matching row means no label, on
+    # purpose: only the OPNsense collector writes routes, and a positional
+    # fallback would bring the mislabel back. A link-local next hop is only
+    # unique with its zone ('fe80::1%igb0'): an exact match wins, and the
+    # zone is ignored only when one side has none and one gateway fits.
+    def _same_hop(a, b) -> bool:
+        if a is None or b is None or a.version != b.version:
+            return False
+        if a.version == 6 and (a.scope_id is None) != (b.scope_id is None):
+            return (ipaddress.IPv6Address(str(a).split("%")[0])
+                    == ipaddress.IPv6Address(str(b).split("%")[0]))
+        return a == b
 
     for d in defaults:
-        hop = _hop(d["gateway"])
-        d["gw"] = next((g for g in gws if hop is not None
-                        and _hop(g["address"]) == hop), None)
+        hop = _addr(d["gateway"]) if d["gateway"] else None
+        addrs = [(g, _addr(g["address"]) if g["address"] else None) for g in gws]
+        exact = [g for g, a in addrs if hop is not None and a == hop]
+        loose = [g for g, a in addrs if a != hop and _same_hop(hop, a)]
+        d["gw"] = exact[0] if exact else (loose[0] if len(loose) == 1 else None)
 
     # which rail a default route leaves on: the exit interface's VLAN
     # membership (untagged first), else the rail holding the next-hop
