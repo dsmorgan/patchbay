@@ -598,6 +598,30 @@ def test_documented_address_never_makes_a_router_route_a_network(conn):
     assert not by["v103"]["routed"]
 
 
+@pytest.mark.parametrize("first", ["vmx0", "vmx2"])
+def test_router_vms_unaddressed_vnic_never_routes_its_port_group(conn, first):
+    """A firewall VM's vNIC on the isolated storage port group, with no
+    address (pfsync, a bridge member, a spare NIC), made that network show
+    as routed. Only an addressed router interface routes a VLAN (#129)."""
+    vlan(conn, 1, "mgmt"); vlan(conn, 103, "iscsi")
+    subnet(conn, "192.0.2.0/24", vlan=1)
+    subnet(conn, "203.0.113.0/24", vlan=103)
+    fw = dev(conn, "fw1", role="firewall")
+    rows = {"vmx0": {"ip": "192.0.2.1", "mac": "02:00:00:00:01:00"},
+            "vmx2": {"mac": "02:00:00:00:01:02"}}
+    for name in sorted(rows, key=lambda n: n != first):
+        iface(conn, fw, name, **rows[name])
+    nas = dev(conn, "nas1")
+    iface(conn, nas, "eth2", ip="203.0.113.40")
+    conn.execute("INSERT INTO vnic_vlans (mac, vid, portgroup, source) VALUES "
+                 "('02:00:00:00:01:02', 103, 'iSCSI', 'vsphere')")
+    g = build_routed_graph(conn, _S())
+    by = {r["key"]: r for r in g["rails"]}
+    assert not by["v103"]["routed"] and by["v103"]["routers"] == []
+    assert by["v1"]["routed"]
+    assert g["routers"][0]["rails"] == ["v1"]
+
+
 def test_second_address_on_a_network_rides_the_leg(conn):
     """One leg per network per host — but a bond and a trunk sub-interface
     both on mgmt are two addresses, and the leg lists both."""

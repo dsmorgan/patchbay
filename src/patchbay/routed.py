@@ -167,10 +167,13 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                 leg.update(iface=r["iface"], ip=ip, speed=speed)
 
     # guests: the hypervisor knows a vNIC's port-group VLAN even when no
-    # address is visible — that's an attachment to the VLAN's rail
+    # address is visible — that's an attachment to the VLAN's rail. Not for
+    # routers: a router routes a network through an interface address in it
+    # (ADR-0002), and a firewall VM's unaddressed vNIC (pfsync, a bridge
+    # member, a spare NIC on the isolated storage port group) routes nothing
     for r in conn.execute("SELECT mac, vid FROM vnic_vlans WHERE vid NOT IN (0, 4095)"):
         dev = mac_owner.get((r["mac"] or "").lower())
-        if not dev:
+        if not dev or dev in router_names:
             continue
         key = f"v{r['vid']}"
         if key in rails.rails and key not in legs.get(dev, {}):
