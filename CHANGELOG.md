@@ -8,6 +8,12 @@ put.
 
 ## [Unreleased]
 
+### Fixed
+- A vmkernel port group's VLAN no longer lands on the host's physical uplink. ESXi gives `vmk0` its uplink's MAC, so the management VLAN made `vmnic0` an access port, and the hypervisor and its guest firewalls carried only that VLAN. (#129)
+- A firewall VM's unaddressed vNIC no longer makes its port group's network show as routed on the routed view. Routers route only networks they hold an interface address in. (#129)
+- Overlapping tunnel routes, such as a supernet on one tunnel and a subnet of it on another, now draw the same way in any database row order. (#129)
+- Each internet cloud on the routed view now shows the gateway its default route goes through, instead of whichever gateway row came first. A route with no matching gateway shows no gateway label. (#129)
+
 ## [0.24.0] — 2026-10-27
 
 ### Added
