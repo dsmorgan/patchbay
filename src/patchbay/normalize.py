@@ -884,17 +884,32 @@ def _apply_vnic_vlans(conn: sqlite3.Connection) -> int:
     Config-derived membership always wins; this only fills silence.
     """
     from .collectors.vsphere import VGT_TRUNK
+    from .ports import port_kind
 
-    have = {(r["device"], r["interface"]) for r in conn.execute(
+    have ={(r["device"], r["interface"]) for r in conn.execute(
         "SELECT device, interface FROM port_vlans WHERE source != 'vsphere'")}
     conn.execute("DELETE FROM port_vlans WHERE source = 'vsphere'")
-    by_mac: dict[str, tuple[str, str]] = {}
+    sharing: dict[str, list[tuple[str, str]]] = {}
     for r in conn.execute(
             "SELECT d.name AS dev, i.name AS iface, i.mac FROM interfaces i "
             "JOIN devices d ON d.id = i.device_id WHERE i.mac IS NOT NULL"):
         m = canon_mac(r["mac"])
-        if m and m not in by_mac:
-            by_mac[m] = (r["dev"], r["iface"])
+        if m:
+            sharing.setdefault(m, []).append((r["dev"], r["iface"]))
+    # Several interfaces can share one MAC. ESXi gives vmk0 its backing
+    # pnic's address, and a port group describes the vmk, never the pnic:
+    # tagging vmnic0 would turn the host's uplink into an access port and
+    # starve the hypervisor (and its guests) of every other VLAN. So a
+    # physical port loses to a non-physical one on the same device (the
+    # inverse of the cable-end preference). What's left is ranked, not
+    # taken in row order: a guest's own name ('vmx1') before vCenter's
+    # label for the same NIC ('Network adapter 2').
+    by_mac: dict[str, tuple[str, str]] = {}
+    for m, cands in sharing.items():
+        virt = {d for d, i in cands if port_kind(i) != "physical"}
+        cands = [(d, i) for d, i in cands
+                 if port_kind(i) != "physical" or d not in virt]
+        by_mac[m] = min(cands, key=lambda c: (port_kind(c[1]) == "kernel", c))
     known = {r["vid"] for r in conn.execute("SELECT vid FROM vlans")}
     n = 0
     for r in conn.execute("SELECT mac, vid FROM vnic_vlans"):

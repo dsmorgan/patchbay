@@ -1,6 +1,7 @@
 """Normalizer invariants — every case here is a bug that actually happened
 (or was caught in review) at least once."""
 
+import itertools
 import json
 import time
 
@@ -713,6 +714,51 @@ def test_stale_portgroup_vlans_do_not_linger(conn):
     normalize(conn)
     assert [tuple(r) for r in conn.execute(
         "SELECT interface, vid FROM port_vlans WHERE device='fw1'")] == [("vmx1", 21)]
+
+
+@pytest.mark.parametrize("order", list(itertools.permutations(range(3))))
+def test_vmkernel_portgroup_vlan_stays_off_the_uplink(conn, order):
+    # ESXi gives vmk0 its backing pnic's MAC. The management port group's
+    # VLAN describes vmk0; written onto vmnic0 it made the uplink an access
+    # port, and the host (and every guest firewall on it) carried only that
+    # VLAN. Interface row order must not matter (#129).
+    sid = dev(conn, "core1", "librenms", last_seen=NOW, role="switch", status="up")
+    hid = dev(conn, "esx1", "vsphere", last_seen=NOW, role="hypervisor", status="up")
+    rows = [(hid, "vmnic0", "02:00:00:00:00:01"),
+            (hid, "vmk0", "02:00:00:00:00:01"),
+            (sid, "1/0/3", None)]
+    for i in order:
+        pdb.upsert_interface(conn, device_id=rows[i][0], name=rows[i][1],
+                             mac=rows[i][2])
+    pdb.upsert_link(conn, a_device="core1", a_interface="1/0/3",
+                    b_device="esx1", b_interface="vmnic0", source="lldp")
+    conn.executemany("INSERT INTO device_vlans (device, vid, source) VALUES (?, ?, ?)",
+                     [("core1", v, "librenms") for v in (10, 20, 30)])
+    conn.execute("INSERT INTO vnic_vlans (mac, vid, portgroup, source) VALUES "
+                 "('02:00:00:00:00:01', 20, 'Management Network', 'vsphere')")
+    normalize(conn)
+    assert [tuple(r) for r in conn.execute(
+        "SELECT device, interface, vid FROM port_vlans")] == [("esx1", "vmk0", 20)]
+    assert {r[0] for r in conn.execute(
+        "SELECT vid FROM device_vlans WHERE device = 'esx1'")} == {10, 20, 30}
+
+
+@pytest.mark.parametrize("order", list(itertools.permutations(range(2))))
+def test_portgroup_vlan_prefers_the_guests_own_interface_name(conn, order):
+    # a firewall VM named differently in vCenter keeps both views of one NIC:
+    # vCenter's label and the guest's own name. The guest's name takes the
+    # VLAN, whichever row came first.
+    fid = dev(conn, "fw1", "opnsense", last_seen=NOW, role="firewall", status="up")
+    vid = dev(conn, "fw1-vm", "vsphere", last_seen=NOW, role="vm", status="up")
+    rows = [(vid, "Network adapter 2"), (fid, "vmx1")]
+    for i in order:
+        pdb.upsert_interface(conn, device_id=rows[i][0], name=rows[i][1],
+                             mac="02:00:00:00:00:02")
+    conn.execute("INSERT INTO vnic_vlans (mac, vid, portgroup, source) VALUES "
+                 "('02:00:00:00:00:02', 299, 'pg', 'vsphere')")
+    normalize(conn)
+    assert [tuple(r) for r in conn.execute(
+        "SELECT device, interface, vid FROM port_vlans")] == [("fw1", "vmx1", 299)]
 
 
 def test_first_poll_of_a_fresh_db_matches_the_second(conn):
