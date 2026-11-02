@@ -1,4 +1,6 @@
 """The routed view's builder and layout engine (ADR-0002, #17)."""
+import itertools
+import json
 import sqlite3
 
 import pytest
@@ -305,6 +307,43 @@ def test_tunnel_of_an_unknown_device_is_not_drawn(conn):
     _wg_peer(conn, "fw1", "wg0 · site-b", None)
     g = build_routed_graph(conn, _S())
     assert [(t["device"], t["name"]) for t in g["tunnels"]] == [("fw1", "wg0 · site-b")]
+
+
+def _fresh():
+    c = sqlite3.connect(":memory:")
+    c.row_factory = sqlite3.Row
+    pdb.init(c)
+    return c
+
+
+def _graph_json(g):
+    return json.dumps(g, sort_keys=True, default=sorted)
+
+
+def test_overlapping_tunnel_routes_classify_the_same_in_any_row_order():
+    """A supernet on one tunnel and a subnet of it on another: drawn in the
+    loop that classifies them, the /24 first turned the /8 into a "local
+    source", and the /8 first swallowed the /24. Each route is judged
+    against the networks that existed before the loop, so every row order
+    gives the same graph (#129)."""
+    rows = [("fw1", "198.18.2.0/24", "wg1"),     # lab's remote subnet
+            ("fw1", "198.18.0.0/15", "wg2"),     # dc's remote supernet
+            ("fw1", "192.0.0.0/16", "wg2")]      # dc's source side (holds v1)
+    graphs = []
+    for order in itertools.permutations(rows):
+        c = _fresh()
+        seed_site(c)
+        _wg_peer(c, "fw1", "lab", None, iface="wg1")
+        _wg_peer(c, "fw1", "dc", None, iface="wg2")
+        for device, dest, wg in order:
+            _route(c, device, dest, iface=wg)
+        g = build_routed_graph(c, _S())
+        by_name = {t["name"]: (t["rails"], t["local_nets"]) for t in g["tunnels"]}
+        assert by_name == {"lab": (["net:198.18.2.0/24"], []),
+                           "dc": (["net:198.18.0.0/15"], ["192.0.0.0/16"])}
+        graphs.append(_graph_json(g))
+        c.close()
+    assert len(set(graphs)) == 1
 
 
 def test_tunnel_route_into_documented_rail_reuses_it(conn):
