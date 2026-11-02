@@ -255,7 +255,20 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     default = defaults[0] if defaults else None
     gws = [dict(r) for r in conn.execute(
         "SELECT name, address, status, loss, delay FROM gateways "
-        "WHERE last_seen >= ?", (db.now() - DEVICE_STALE_S,))]
+        "WHERE last_seen >= ? ORDER BY name", (db.now() - DEVICE_STALE_S,))]
+
+    # each cloud is labeled by the gateway its default route goes through:
+    # the gateway row whose address is the route's next hop. Nothing ties
+    # the gateways table to a router or a route otherwise, so pairing by
+    # position showed whichever row came first (a WireGuard gateway's
+    # "down" while the WAN was up). No matching row means no label.
+    def _hop(ip: str | None):
+        return _addr(ip.split("%")[0]) if ip else None
+
+    for d in defaults:
+        hop = _hop(d["gateway"])
+        d["gw"] = next((g for g in gws if hop is not None
+                        and _hop(g["address"]) == hop), None)
 
     # which rail a default route leaves on: the exit interface's VLAN
     # membership (untagged first), else the rail holding the next-hop

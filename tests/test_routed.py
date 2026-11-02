@@ -1027,3 +1027,38 @@ def test_stale_gateway_rows_are_not_in_the_routed_graph(conn):
                  "VALUES ('WAN_LIVE', '192.0.2.253', 'Online', 'opnsense', ?)", (now,))
     names = [g["name"] for g in build_routed_graph(conn, _S())["gateways"]]
     assert names == ["WAN_LIVE"]
+
+
+def test_cloud_takes_the_default_routes_own_gateway_in_any_row_order():
+    """The cloud label paired default route #i with gateway row #i, so a
+    WireGuard gateway's "down" could label the internet while the WAN was
+    up. Each default now carries the gateway whose address is its next
+    hop, whatever order the rows arrive in; none matching means no label
+    (#129)."""
+    now = pdb.now()
+    gw_rows = [("WG_GW", "198.18.99.1", "down"),
+               ("WAN_DHCP", "192.0.2.254", "Online"),
+               ("WAN2_DHCP", "fe80::1", "Online")]
+    graphs = []
+    for order in itertools.permutations(gw_rows):
+        c = _fresh()
+        seed_site(c)
+        fw2 = dev(c, "fw2", role="firewall")
+        iface(c, fw2, "vmx0", ip="203.0.113.2")
+        fw3 = dev(c, "fw3", role="firewall")
+        iface(c, fw3, "vmx0", ip="198.51.100.3")
+        for name, addr, status in order:
+            c.execute("INSERT INTO gateways (name, address, status, source, "
+                      "last_seen) VALUES (?, ?, ?, 'opnsense', ?)",
+                      (name, addr, status, now))
+        _default_route(c, "fw1", "vmx0", "192.0.2.254")
+        _default_route(c, "fw2", "vmx0", "203.0.113.254")      # no such gateway
+        c.execute("INSERT INTO routes (device, destination, gateway, interface, "
+                  "proto, flags, source, last_seen) VALUES ('fw3', '::/0', "
+                  "'fe80::1%vmx0', 'vmx0', 'static', 'UGS', 'test', ?)", (now,))
+        g = build_routed_graph(c, _S())
+        by = {d["device"]: (d["gw"] or {}).get("name") for d in g["defaults"]}
+        assert by == {"fw1": "WAN_DHCP", "fw2": None, "fw3": "WAN2_DHCP"}
+        graphs.append(_graph_json(g))
+        c.close()
+    assert len(set(graphs)) == 1
