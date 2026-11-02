@@ -80,7 +80,8 @@ how much each source can actually know:
 - **A device's own interfaces** place it: an interface address is a leg on that
   address's network; a firewall's addresses make it *route* those networks. A guest
   VM's NIC seen by ARP with an address, or its port group VLAN, places it too —
-  routers only ever from their own config.
+  routers only ever from their own interface addresses, so a firewall VM's
+  unaddressed vNIC routes nothing.
 - **ARP and the controller** see hosts that aren't devices: a hostname with
   addresses on two networks is one dual-homed host (fused by canonical short name;
   randomized privacy MACs never fuse, four iPads are not one host), a wireless
@@ -99,8 +100,10 @@ how much each source can actually know:
   the tag, so a firewall VM sees untagged frames and reports no 802.1Q. The hypervisor
   knows, and the NIC's MAC joins the two views — vCenter's "Network adapter 1" and the
   firewall's `vmx1` are one NIC. Port group VLANs land in `vnic_vlans` and the
-  normalizer resolves them onto real interfaces. A switch's own config always wins;
-  this only fills silence.
+  normalizer resolves them onto real interfaces. Where a physical port shares its MAC
+  with a virtual one on the same device, the virtual one takes the VLAN: ESXi gives
+  `vmk0` its uplink's MAC, and the management VLAN belongs to `vmk0`, not `vmnic0`.
+  A switch's own config always wins; this only fills silence.
 
 ## The four views
 
@@ -110,9 +113,10 @@ how much each source can actually know:
    AP client counts, WAN state, host/VM placement. State encoded as color + shape.
 3. **Logical L3 / VLAN** — the routed view draws networks as lanes with who routes
    each, the hosts standing in several, one wireless box, one virtualization box, and
-   where the default route and VPN tunnels leave; the VLAN overlay highlights a
-   VLAN/subnet across the fabric, with an IPAM drift report (live ARP/leases vs. IPAM
-   records).
+   where the default route and VPN tunnels leave (each internet cloud is labeled
+   with the gateway whose address is its route's next hop); the VLAN overlay
+   highlights a VLAN/subnet across the fabric, with an IPAM drift report (live
+   ARP/leases vs. IPAM records).
 4. **Config & change history** — one cross-device timeline with in-app diffs, from two
    sources: the Oxidized git log for the devices Oxidized backs up, and patchbay's own
    revisions of an OPNsense firewall's `config.xml` (secret-bearing elements replaced by
