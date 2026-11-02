@@ -346,6 +346,24 @@ def test_overlapping_tunnel_routes_classify_the_same_in_any_row_order():
     assert len(set(graphs)) == 1
 
 
+@pytest.mark.parametrize("order", list(itertools.permutations(range(2))))
+def test_overlapping_ipv6_tunnel_routes_keep_their_own_rails(order):
+    """The same row-order independence for an IPv6 supernet on one tunnel
+    and a subnet of it on another (#129)."""
+    rows = [("fw1", "2001:db8:2::/48", "wg1"), ("fw1", "2001:db8::/32", "wg2")]
+    c = _fresh()
+    seed_site(c)
+    _wg_peer(c, "fw1", "lab", None, iface="wg1")
+    _wg_peer(c, "fw1", "dc", None, iface="wg2")
+    for i in order:
+        _route(c, *rows[i][:2], iface=rows[i][2])
+    g = build_routed_graph(c, _S())
+    by_name = {t["name"]: (t["rails"], t["local_nets"]) for t in g["tunnels"]}
+    assert by_name == {"lab": (["net:2001:db8:2::/48"], []),
+                       "dc": (["net:2001:db8::/32"], [])}
+    c.close()
+
+
 def test_tunnel_route_into_documented_rail_reuses_it(conn):
     """A remote subnet already documented (IPAM) keeps its rail — the
     tunnel attaches to it instead of inventing a net: twin."""
@@ -1062,3 +1080,26 @@ def test_cloud_takes_the_default_routes_own_gateway_in_any_row_order():
         graphs.append(_graph_json(g))
         c.close()
     assert len(set(graphs)) == 1
+
+
+def test_link_local_gateways_are_told_apart_by_zone():
+    """Two WANs whose gateways are both fe80::1, on different interfaces:
+    the zone picks the right one. A zone-less next hop matches a zoned
+    gateway only when exactly one fits (#129)."""
+    now = pdb.now()
+    rows = [("WAN_A", "fe80::1%vmx0", "down"), ("WAN_B", "fe80::1%vmx1", "Online")]
+    for hop, want in (("fe80::1%vmx1", "WAN_B"), ("fe80::1%vmx0", "WAN_A"),
+                      ("fe80::1", None)):
+        for order in itertools.permutations(rows):
+            c = _fresh()
+            seed_site(c)
+            for name, addr, status in order:
+                c.execute("INSERT INTO gateways (name, address, status, source, "
+                          "last_seen) VALUES (?, ?, ?, 'opnsense', ?)",
+                          (name, addr, status, now))
+            c.execute("INSERT INTO routes (device, destination, gateway, interface, "
+                      "proto, flags, source, last_seen) VALUES ('fw1', '::/0', ?, "
+                      "'vmx1', 'static', 'UGS', 'test', ?)", (hop, now))
+            (d,) = build_routed_graph(c, _S())["defaults"]
+            assert (d["gw"] or {}).get("name") == want, (hop, order)
+            c.close()
