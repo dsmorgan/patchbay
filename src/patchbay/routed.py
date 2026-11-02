@@ -97,12 +97,13 @@ class _Rails:
             self._nets.append((net, r["key"]))
         r["sources"].add(source)
 
-    def rail_of_ip(self, ip: str) -> str | None:
+    def rail_of_ip(self, ip: str, nets: list | None = None) -> str | None:
+        """The most specific rail holding `ip`, among `nets` if given."""
         a = _addr(ip)
         if a is None:
             return None
         best = None
-        for net, key in self._nets:
+        for net, key in (self._nets if nets is None else nets):
             if a.version == net.version and a in net:
                 if best is None or net.prefixlen > best[0]:
                     best = (net.prefixlen, key)
@@ -360,14 +361,27 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
                            for a in allowed[i])]
             return fits[0] if len(fits) == 1 else None
 
+        # Classification must not depend on row order or on what this loop
+        # already drew: both rules below read the networks that existed
+        # before it (local ones, documented ones), never a rail another
+        # tunnel route just made. Otherwise a remote /24 drawn first turned
+        # an overlapping /8 on another tunnel into "local source", and a /8
+        # drawn first swallowed the /24. Most specific first keeps the
+        # rails' order stable too.
+        local = list(rails._nets)
+        routes = []
         for r in conn.execute(
                 "SELECT device, destination, interface, flags FROM routes "
                 "WHERE destination NOT IN ('0.0.0.0/0', '::/0')"):
             if any(f in (r["flags"] or "") for f in ("B", "R")):
                 continue
             dest = _net(r["destination"])
-            if dest is None:
-                continue
+            if dest is not None:
+                routes.append((r, dest))
+        routes.sort(key=lambda rd: (rd[1].version, -rd[1].prefixlen,
+                                    rd[1].network_address, rd[0]["device"],
+                                    rd[0]["destination"], rd[0]["interface"] or ""))
+        for r, dest in routes:
             iface = r["interface"] or ""
             cands = by_iface.get((r["device"], iface), []) if iface else []
             if not cands and iface:
@@ -383,13 +397,14 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
             # say: who may ride the tunnel, not somewhere it leads. Named
             # on hover, never drawn as a network of its own.
             if any(n.version == dest.version and n != dest and n.subnet_of(dest)
-                   for n, _ in rails._nets):
+                   for n, _ in local):
                 tunnels[idx]["local_nets"].append(r["destination"])
                 continue
             # an existing rail containing the destination wins (the remote
             # subnet may be documented in IPAM); else the route itself is
-            # the rail's reason to exist
-            key = rails.rail_of_ip(str(dest.network_address))
+            # the rail's reason to exist, shared only by routes to the
+            # same destination
+            key = rails.rail_of_ip(str(dest.network_address), local)
             if key is None:
                 rails.add_subnet(r["destination"], None, None, "route")
                 key = f"net:{r['destination']}"
