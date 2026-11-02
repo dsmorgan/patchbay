@@ -886,7 +886,7 @@ def _apply_vnic_vlans(conn: sqlite3.Connection) -> int:
     from .collectors.vsphere import VGT_TRUNK
     from .ports import port_kind
 
-    have ={(r["device"], r["interface"]) for r in conn.execute(
+    have = {(r["device"], r["interface"]) for r in conn.execute(
         "SELECT device, interface FROM port_vlans WHERE source != 'vsphere'")}
     conn.execute("DELETE FROM port_vlans WHERE source = 'vsphere'")
     sharing: dict[str, list[tuple[str, str]]] = {}
@@ -900,16 +900,20 @@ def _apply_vnic_vlans(conn: sqlite3.Connection) -> int:
     # pnic's address, and a port group describes the vmk, never the pnic:
     # tagging vmnic0 would turn the host's uplink into an access port and
     # starve the hypervisor (and its guests) of every other VLAN. So a
-    # physical port loses to a non-physical one on the same device (the
-    # inverse of the cable-end preference). What's left is ranked, not
-    # taken in row order: a guest's own name ('vmx1') before vCenter's
-    # label for the same NIC ('Network adapter 2').
+    # physical port loses to a kernel port on the same device (the inverse
+    # of the cable-end preference). Only a kernel port: a guest firewall's
+    # VLAN sub-interfaces ('vlan01', 'vmx1.20') share their parent's MAC
+    # too, and a trunk port group describes the parent. What's left is
+    # ranked, not taken in row order: a guest's own NIC name ('vmx1')
+    # first, then vCenter's label for the same NIC ('Network adapter 2'),
+    # then sub-interfaces and the rest.
+    rank = {"physical": 0, "kernel": 1}
     by_mac: dict[str, tuple[str, str]] = {}
     for m, cands in sharing.items():
-        virt = {d for d, i in cands if port_kind(i) != "physical"}
+        kern = {d for d, i in cands if port_kind(i) == "kernel"}
         cands = [(d, i) for d, i in cands
-                 if port_kind(i) != "physical" or d not in virt]
-        by_mac[m] = min(cands, key=lambda c: (port_kind(c[1]) == "kernel", c))
+                 if port_kind(i) != "physical" or d not in kern]
+        by_mac[m] = min(cands, key=lambda c: (rank.get(port_kind(c[1]), 2), c))
     known = {r["vid"] for r in conn.execute("SELECT vid FROM vlans")}
     n = 0
     for r in conn.execute("SELECT mac, vid FROM vnic_vlans"):

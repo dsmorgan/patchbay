@@ -761,6 +761,30 @@ def test_portgroup_vlan_prefers_the_guests_own_interface_name(conn, order):
         "SELECT device, interface, vid FROM port_vlans")] == [("fw1", "vmx1", 299)]
 
 
+@pytest.mark.parametrize("order", list(itertools.permutations(range(3))))
+@pytest.mark.parametrize("subs", [("vlan01", "vlan02"), ("vmx1.20", "vmx1.30")])
+def test_trunk_portgroup_vlans_stay_on_the_parent_nic(conn, order, subs):
+    # a guest firewall on a trunk port group (VGT) tags its own VLANs on
+    # sub-interfaces that share the parent NIC's MAC. The trunk describes
+    # the parent: it carries every VLAN, whichever row came first. The
+    # sub-interfaces keep their config-derived rows.
+    fid = dev(conn, "fw1", "opnsense", last_seen=NOW, role="firewall", status="up")
+    for i in order:
+        pdb.upsert_interface(conn, device_id=fid, name=("vmx1", *subs)[i],
+                             mac="02:00:00:00:00:03")
+    conn.executemany("INSERT INTO port_vlans (device, interface, vid, tagged, source) "
+                     "VALUES ('fw1', ?, ?, 1, 'opnsense')",
+                     [(subs[0], 20), (subs[1], 30)])
+    conn.execute("INSERT INTO vlans (vid, source) VALUES (20, 'x'), (30, 'x')")
+    conn.execute("INSERT INTO vnic_vlans (mac, vid, portgroup, source) VALUES "
+                 "('02:00:00:00:00:03', 4095, 'Trunk', 'vsphere')")
+    normalize(conn)
+    assert sorted(tuple(r) for r in conn.execute(
+        "SELECT interface, vid, tagged, source FROM port_vlans")) == sorted(
+        [("vmx1", 20, 1, "vsphere"), ("vmx1", 30, 1, "vsphere"),
+         (subs[0], 20, 1, "opnsense"), (subs[1], 30, 1, "opnsense")])
+
+
 def test_first_poll_of_a_fresh_db_matches_the_second(conn):
     # A declaration and an fdb-uplink can describe the same cable. Inference
     # used to be superseded BEFORE declarations were applied, so on a fresh

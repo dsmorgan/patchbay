@@ -101,8 +101,10 @@ how much each source can actually know:
   knows, and the NIC's MAC joins the two views — vCenter's "Network adapter 1" and the
   firewall's `vmx1` are one NIC. Port group VLANs land in `vnic_vlans` and the
   normalizer resolves them onto real interfaces. Where a physical port shares its MAC
-  with a virtual one on the same device, the virtual one takes the VLAN: ESXi gives
-  `vmk0` its uplink's MAC, and the management VLAN belongs to `vmk0`, not `vmnic0`.
+  with a kernel port (`vmk0`) on the same device, the kernel port takes the VLAN: ESXi
+  gives `vmk0` its uplink's MAC, and the management VLAN belongs to `vmk0`, not
+  `vmnic0`. A guest's VLAN sub-interfaces share their parent's MAC too; the parent
+  keeps the port group's VLANs.
   A switch's own config always wins; this only fills silence.
 
 ## The four views
