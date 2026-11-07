@@ -8,6 +8,11 @@ put.
 
 ## [Unreleased]
 
+## [0.24.1] — 2026-11-07
+
+### Changed
+- Updated dependencies: FastAPI 0.162.0, `opentelemetry-api` 1.45.1 (clears a moderate advisory in a library patchbay doesn't call), and the uv build image 0.13.6. The release workflow actions are also updated.
+
 ### Fixed
 - A vmkernel port group's VLAN no longer lands on the host's physical uplink. ESXi gives `vmk0` its uplink's MAC, so the management VLAN made `vmnic0` an access port, and the hypervisor and its guest firewalls carried only that VLAN. (#129)
 - A firewall VM's unaddressed vNIC no longer makes its port group's network show as routed on the routed view. Routers route only networks they hold an interface address in. (#129)
