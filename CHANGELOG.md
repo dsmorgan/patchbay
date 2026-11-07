@@ -13,6 +13,7 @@ put.
 - A firewall VM's unaddressed vNIC no longer makes its port group's network show as routed on the routed view. Routers route only networks they hold an interface address in. (#129)
 - Overlapping tunnel routes, such as a supernet on one tunnel and a subnet of it on another, now draw the same way in any database row order. (#129)
 - Each internet cloud on the routed view now shows the gateway its default route goes through, instead of whichever gateway row came first. A route with no matching gateway shows no gateway label. (#129)
+- Fixed `/ops` answering 500 once a source had per-mode poll times, as LibreNMS does from 0.24.0: the "Poll time per source" table reused a loop variable, so the next source crashed the page. (#142)
 
 ## [0.24.0] — 2026-10-27
 
