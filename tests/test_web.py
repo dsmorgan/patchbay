@@ -2211,3 +2211,22 @@ def test_patchpanel_caps_gap_fill(clean_env, tmp_path, client):
     body = client.get("/patchpanel").text
     assert 'id="p100000"' in body
     assert body.count("<tr") < PANEL_FILL_MAX + 20
+
+
+def test_ops_renders_every_source_after_one_with_per_mode_times(
+        client, tmp_path, monkeypatch):
+    """The per-mode loop once reused the name of the whole record, so the
+    source after one with per-mode times crashed /ops with a 500."""
+    import patchbay.collectors as collectors
+
+    client.get("/ops")                       # creates the schema
+    with pdb.connect(str(tmp_path / "test.db")) as c:
+        for secs in (2.0, 4.0):
+            pdb.record_poll_time(c, "librenms", secs, mode="discards off")
+        pdb.record_poll_time(c, "unifi", 1.5)
+    monkeypatch.setattr(collectors, "available", lambda s: {
+        "librenms": _TimedSource("librenms"), "unifi": _TimedSource("unifi")})
+    r = client.get("/ops")
+    assert r.status_code == 200
+    assert "discards off: 3.0 s (2 polls)" in r.text
+    assert "unifi" in r.text and "1.5 s" in r.text

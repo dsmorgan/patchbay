@@ -1792,11 +1792,11 @@ def _poll_cost(conn, sources: list[str]) -> list[dict]:
         # the median per mode (#83): what a setting costs, read directly
         by_mode = e.get("by_mode") if isinstance(e.get("by_mode"), dict) else {}
         modes = []
-        for mode, times in sorted(by_mode.items()):
-            times = [x for x in times or [] if isinstance(x, (int, float))]
-            if times:
-                n = len(times)
-                modes.append(f"{mode}: {_seconds(median(times))} "
+        for mode, mode_times in sorted(by_mode.items()):
+            mode_times = [x for x in mode_times or [] if isinstance(x, (int, float))]
+            if mode_times:
+                n = len(mode_times)
+                modes.append(f"{mode}: {_seconds(median(mode_times))} "
                              f"({n} {'poll' if n == 1 else 'polls'})")
         note = ""
         if src == LIBRENMS and isinstance(stats, dict):
