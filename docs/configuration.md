@@ -230,8 +230,9 @@ listing can't return, so each port costs one extra API call
 patchbay makes that call only for ports on a stated cable (LLDP, UniFi, or
 declared) whose far end is a switch, AP, firewall, or hypervisor, and skips
 it when LibreNMS hasn't polled the port again since the last sample. The
-samples land in `rate_history` beside the error rates; no alert judges them
-yet ([#86](https://github.com/dsmorgan/patchbay/issues/86)). UniFi discard
+samples land in `rate_history` beside the error rates, for diagnosing a
+suspect link; no alert judges them
+([#86](https://github.com/dsmorgan/patchbay/issues/86)). UniFi discard
 rates need no setting: they arrive in the payload the collector already
 reads.
 

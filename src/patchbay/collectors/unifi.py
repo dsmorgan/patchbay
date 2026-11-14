@@ -118,8 +118,8 @@ def _sample(conn: sqlite3.Connection, device: str, iface: str,
             out_discards: float | None = None) -> None:
     """One rate_history row when there is a rate to record: it feeds the
     load view's 24-hour peak, and the normalizer ages the table out. Error
-    rates feed the port canaries; discard rates are only collected, for #86
-    to judge (#83)."""
+    rates feed the port canaries; discard rates are only collected (#83,
+    #86)."""
     db.record_rates(conn, device, iface, in_bps=in_bps, out_bps=out_bps,
                     in_errors=in_errors, out_errors=out_errors,
                     in_discards=in_discards, out_discards=out_discards)

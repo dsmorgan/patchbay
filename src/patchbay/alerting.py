@@ -124,7 +124,7 @@ RULES: dict[str, Rule] = {
                 "delivered off-host."),
     # a port's error rate orders of magnitude above its own baseline (#64,
     # ADR-0003 Decision 5); `for` 2 so one bad sample is quiet. Discards are
-    # collected but not judged (#83); #86 decides whether they should be
+    # collected but not judged (#83, #86)
     "port-canary": Rule(
         category="port",
         params={"for": CANARY_FOR, "remind": 0, "floor": CANARY_FLOOR,
@@ -135,7 +135,7 @@ RULES: dict[str, Rule] = {
                 "at least floor per second; it clears below clear × baseline. "
                 "A port with under warmup_h hours of samples is judged against "
                 "the floor alone. Discard rates are collected but not judged "
-                "(see #86)."),
+                "(#86)."),
     # an alert transport that failed three polls running (#61); routed by
     # default like any rule, which reaches the other transports when the
     # default is not the one that is failing

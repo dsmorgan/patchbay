@@ -137,9 +137,9 @@ The `port-canary` rule judges one counter at a time (`in_errors`,
 `out_errors`) on each port whose newest sample with an error reading is under
 15 minutes old. A port with no sample that recent says nothing about now. The
 discard columns are collected but never judged: a discard reading can't
-raise, hold, or clear a canary until
-[#86](https://github.com/dsmorgan/patchbay/issues/86) decides from the
-collected samples whether it should.
+raise, hold, or clear a canary. A week of live samples showed no signal to
+tune against, only single-poll blips that `for` 2 filters at any floor
+([#86](https://github.com/dsmorgan/patchbay/issues/86)).
 
 - **Baseline:** the 95th percentile of that counter over the past 7 days,
   leaving out the last hour so a flood never becomes its own baseline. Only
@@ -170,8 +170,8 @@ rates ([#83](https://github.com/dsmorgan/patchbay/issues/83)): UniFi from
 `rx_dropped` and `tx_dropped` differences in the same payload, and LibreNMS,
 when `PATCHBAY_LIBRENMS_DISCARDS` is on, from one statistics call per port on
 a stated cable to another switch, AP, firewall, or hypervisor. Record
-discards whenever your source has them; the rule ignores them until
-[#86](https://github.com/dsmorgan/patchbay/issues/86) decides.
+discards whenever your source has them, for diagnosis; the rule ignores
+them ([#86](https://github.com/dsmorgan/patchbay/issues/86)).
 
 ## What a poll costs
 

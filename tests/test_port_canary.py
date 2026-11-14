@@ -371,7 +371,7 @@ def test_catalog_row_and_category(conn):
     assert alerting.RULES["port-canary"].category == "port"
     summary = alerting.RULES["port-canary"].summary
     assert summary.startswith("A port's error rate is at least")
-    assert "Discard rates are collected but not judged (see #86)" in summary
+    assert "Discard rates are collected but not judged (#86)" in summary
     assert attention.CATEGORIES["port"] == "ports"
 
 

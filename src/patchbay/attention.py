@@ -665,9 +665,10 @@ CANARY_WINDOW_S = 7 * 86400   # baseline window, rate_history's retention
 CANARY_RECENT_S = 3600        # excluded from the baseline: the flood itself
 
 # rate_history column -> how the item text names it. Error rates only: the
-# discard columns are collected (#83) but never judged until #86 decides
-# from those samples whether they should be, so a discard reading can't
-# raise, hold, or clear a canary.
+# discard columns are collected (#83) but never judged, so a discard reading
+# can't raise, hold, or clear a canary. A week of live samples showed no
+# signal to tune against, only single-poll blips that `for` 2 filters at
+# any floor (#86).
 CANARY_COUNTERS = {"in_errors": "in errors", "out_errors": "out errors"}
 # a sample that carries an error reading: a row holding only rates or
 # discards says nothing about errors, so it is never "the newest sample"

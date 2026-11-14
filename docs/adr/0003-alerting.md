@@ -463,6 +463,8 @@ collector now stores error rates for switch ports from the change in
 delta) or a gap of more than 30 minutes since the previous poll stores no
 rate, so a canary never reads a delta across missed polls. Errors only:
 discards stay uncollected, tracked in #83 (collect) and #86 (decide).
+#83 later collected them; #86 decided from a week of live samples that
+they are not judged.
 
 **Summary strip.** Decision 8 promised /alerts a summary strip with active
 counts by severity and each transport's delivery state. It did not ship in
