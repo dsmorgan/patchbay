@@ -8,8 +8,16 @@ put.
 
 ## [Unreleased]
 
+## [0.24.2] — 2026-11-15
+
+### Changed
+- Discard rates stay out of the port canary. A week of live samples showed no signal to tune against, only single-poll blips that the canary's two-poll rule filters at any threshold. `PATCHBAY_LIBRENMS_DISCARDS` still collects them into the database; no page or alert reads them. (#86)
+
 ### Fixed
 - On a device's config history page, **view** and **diff vs previous** now jump to the config or diff. It rendered below the versions table, off-screen on a full page, so the links looked like they did nothing. The open version's row is highlighted. (#146)
+
+### Security
+- Updated `opentelemetry-api` to 1.45.2, which fixes a moderate denial-of-service advisory in `traceparent` parsing. patchbay doesn't call the library directly. The uv build image (0.13.7) and the release workflow's login action are also updated.
 
 ## [0.24.1] — 2026-11-07
 
