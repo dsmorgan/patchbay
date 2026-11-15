@@ -4,7 +4,7 @@
 {% block page_title %}{{ label or node }}{% endblock %}
 {% block breadcrumb %}<nav class="breadcrumb"><a href="/configs">Configs</a> / {{ label or node }}</nav>{% endblock %}
 {% block purpose %}configuration versions{% endblock %}
-{% block controls %}<a href="/configs/{{ node | urlencode }}?v=current">view running config</a>{% endblock %}
+{% block controls %}<a href="/configs/{{ node | urlencode }}?v=current#cfg">view running config</a>{% endblock %}
 {% block main %}
 
 <style>
@@ -12,6 +12,10 @@
             padding: 0.8rem 1rem; overflow-x: auto; font-size: 0.78rem; line-height: 1.45; }
   .dl-add { color: var(--ok); } .dl-del { color: var(--crit); }
   .dl-hunk { color: var(--accent); } .dl-ctx { color: var(--muted); }
+  tr.sel td { background: var(--card); }
+  /* the view and diff links jump here (#146): below a full page of
+     versions the result is otherwise off-screen */
+  #cfg { scroll-margin-top: 1rem; }
 </style>
 
 <h2>Versions</h2>
@@ -23,12 +27,12 @@
   <tr><th>when</th><th>commit</th><th>message</th><th></th><th></th>{% if db_held %}<th></th>{% endif %}</tr>
   {% set pg = "&page=" ~ pager.page if pager.page > 1 else "" %}
   {% for v in versions %}
-  <tr>
+  <tr{% if v.oid == want %} class="sel" aria-current="true"{% endif %}>
     <td class="muted">{{ v.date or "" }}</td>
     <td class="mono">{{ v.oid[:10] }}</td>
     <td class="muted">{{ v.message }}</td>
-    <td><a href="/configs/{{ node | urlencode }}?v={{ v.oid }}{{ pg }}">view</a></td>
-    <td>{% if v.prev %}<a href="/configs/{{ node | urlencode }}?v={{ v.oid }}&prev={{ v.prev }}{{ pg }}">diff vs previous</a>{% else %}<span class="muted">first version</span>{% endif %}</td>
+    <td><a href="/configs/{{ node | urlencode }}?v={{ v.oid }}{{ pg }}#cfg">view</a></td>
+    <td>{% if v.prev %}<a href="/configs/{{ node | urlencode }}?v={{ v.oid }}&prev={{ v.prev }}{{ pg }}#cfg">diff vs previous</a>{% else %}<span class="muted">first version</span>{% endif %}</td>
     {% if db_held %}<td><form method="post" action="/configs/{{ node | urlencode }}/delete"
       onsubmit="return confirm('Delete revision {{ v.oid }}?')" style="display: inline">
       <input type="hidden" name="v" value="{{ v.oid }}">
@@ -49,7 +53,7 @@
 {% endif %}
 
 {% if diff_lines is not none %}
-<h2>Diff <span class="mono" style="text-transform: none">{{ prev[:10] }} → {{ want[:10] }}</span></h2>
+<h2 id="cfg">Diff <span class="mono" style="text-transform: none">{{ prev[:10] }} → {{ want[:10] }}</span></h2>
 {% if diff_lines %}
 <pre class="cfg">{% for cls, ln in diff_lines %}<span class="dl-{{ cls }}">{{ ln }}</span>
 {% endfor %}</pre>
@@ -57,7 +61,7 @@
 <p class="muted">No differences between these two versions.</p>
 {% endif %}
 {% elif text is not none %}
-<h2>{{ "Running config (live fetch)" if want == "current" else "Config @ " + want[:10] }}</h2>
+<h2 id="cfg">{{ "Running config (live fetch)" if want == "current" else "Config @ " + want[:10] }}</h2>
 <pre class="cfg">{{ text }}</pre>
 {% endif %}
 

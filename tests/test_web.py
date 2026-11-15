@@ -1237,6 +1237,22 @@ def test_confignode_shows_firewall_revision_and_diff(clean_env, tmp_path, client
     assert "allow lan and dmz" in d.text    # the diff shows the real change
 
 
+def test_confignode_links_jump_to_the_result(clean_env, tmp_path, client):
+    # #146: the result renders below the versions table, off-screen on a
+    # full page, so every link that opens one carries the #cfg fragment
+    old_id, new_id = _seed_fw_history(str(tmp_path / "test.db"))
+    body = client.get("/configs/fw1").text
+    assert f'?v={new_id}#cfg">view' in body
+    assert f'?v={new_id}&prev={old_id}#cfg">diff vs previous' in body
+    assert '?v=current#cfg">view running config' in body
+    assert '<tr class="sel"' not in body
+    for q in (f"v={new_id}", f"v={new_id}&prev={old_id}"):
+        r = client.get(f"/configs/fw1?{q}").text
+        assert '<h2 id="cfg">' in r
+        assert r.count('<tr class="sel" aria-current="true">') == 1   # the open version's row
+    assert "#cfg" in client.get("/configs").text   # the timeline's links too
+
+
 # --- /routed (#17) -----------------------------------------------------------
 
 def test_routed_page_renders_graph(clean_env, tmp_path, client):
@@ -1717,7 +1733,7 @@ def test_confignode_row_links_keep_page(clean_env, tmp_path, client):
     c.commit(); c.close()
     p3 = client.get("/configs/fw1?page=3").text
     assert "&amp;page=3" in p3 or "&page=3" in p3
-    assert 'page=3">view' in p3
+    assert 'page=3#cfg">view' in p3
     assert "page=" not in client.get("/configs/fw1").text.split("Versions")[1].split("</table>")[0]
 
 
@@ -2170,7 +2186,7 @@ def test_confignode_links_encode_the_node_name(clean_env, tmp_path, client):
                   " VALUES (?,?,?,?,?)", ("fw #2", 1000 + i, f"cfg {i}", f"h{i}", f"rev-{i}"))
     c.commit(); c.close()
     body = client.get("/configs/fw%20%232").text
-    assert 'href="/configs/fw%20%232?v=current"' in body
+    assert 'href="/configs/fw%20%232?v=current#cfg"' in body
     assert "/configs/fw%20%232?v=" in body and "/configs/fw #2" not in body
 
 def test_stale_gateway_rows_stay_off_the_cloud_and_overview(clean_env, tmp_path, client):

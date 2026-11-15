@@ -2662,6 +2662,7 @@ def _ox_timeline(client: httpx.Client, nodes: list[dict]) -> tuple[list[dict], l
             href = f"/configs/{quote(name, safe='')}?v={quote(oid, safe='')}"
             if prev:
                 href += f"&prev={quote(prev, safe='')}"
+            href += "#cfg"
             ts = _ox_ts(date)
             entries.append({
                 "node": name, "oid": oid, "prev": prev,
@@ -2755,6 +2756,7 @@ def _db_config_timeline(conn: sqlite3.Connection) -> list[dict]:
             href = f"/configs/{quote(device, safe='')}?v={v['oid']}"
             if v["prev"]:
                 href += f"&prev={v['prev']}"
+            href += "#cfg"
             entries.append({"node": device, "label": device,
                             "oid": v["oid"], "prev": v["prev"],
                             "date": v["date"], "ts": v["ts"],
