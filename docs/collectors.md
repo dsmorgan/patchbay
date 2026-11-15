@@ -170,7 +170,7 @@ rates ([#83](https://github.com/dsmorgan/patchbay/issues/83)): UniFi from
 `rx_dropped` and `tx_dropped` differences in the same payload, and LibreNMS,
 when `PATCHBAY_LIBRENMS_DISCARDS` is on, from one statistics call per port on
 a stated cable to another switch, AP, firewall, or hypervisor. Record
-discards whenever your source has them, for diagnosis; the rule ignores
+discards whenever your source has them; no page or alert reads
 them ([#86](https://github.com/dsmorgan/patchbay/issues/86)).
 
 ## What a poll costs

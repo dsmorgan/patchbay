@@ -8,6 +8,9 @@ put.
 
 ## [Unreleased]
 
+### Fixed
+- On a device's config history page, **view** and **diff vs previous** now jump to the config or diff. It rendered below the versions table, off-screen on a full page, so the links looked like they did nothing. The open version's row is highlighted. (#146)
+
 ## [0.24.1] — 2026-11-07
 
 ### Changed

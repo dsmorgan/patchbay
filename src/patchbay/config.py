@@ -193,8 +193,8 @@ DECLARATION_HELP = {
                 "cable (LLDP, UniFi, or declared) to a switch, AP, "
                 "firewall, or hypervisor. Costs one extra API call per such "
                 "port per poll; Poll time on this page shows the cost. "
-                "Off by default. Samples are only recorded, for diagnosing "
-                "a suspect link: no alert reads them (#86).",
+                "Off by default. Samples are only stored in the database: "
+                "no page or alert reads them (#86).",
         "syntax": "on or off (also true/false, yes/no, 1/0)",
         "example": "on",
     },
