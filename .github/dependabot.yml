@@ -29,3 +29,9 @@ updates:
     groups:
       images:
         patterns: ["*"]
+    # A new Python minor needs wheels for every compiled dependency first
+    # (3.15 had none for pydantic-core, and the slim image can't build
+    # one: #148), so the base image moves deliberately, not weekly.
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
