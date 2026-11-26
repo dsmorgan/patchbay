@@ -318,10 +318,17 @@ class HTTPEndpoint:
 
     The SDK's session manager runs once per instance, so `run()` builds a
     fresh server for each app lifespan (a test client starts one per
-    `with` block)."""
+    `with` block). The endpoint is a module singleton that web.app routes
+    to, so lifespans can overlap (two test clients at once): each keeps
+    its own manager on a stack, requests go to the newest one still
+    running, and stateless managers are interchangeable."""
 
     def __init__(self) -> None:
-        self._manager = None
+        self._managers: list = []
+
+    @property
+    def _manager(self):
+        return self._managers[-1] if self._managers else None
 
     @contextlib.asynccontextmanager
     async def run(self) -> AsyncIterator[None]:
@@ -330,11 +337,11 @@ class HTTPEndpoint:
                                    transport_security=transport_security(None))
         manager = server.session_manager
         async with manager.run():
-            self._manager = manager
+            self._managers.append(manager)
             try:
                 yield
             finally:
-                self._manager = None
+                self._managers.remove(manager)
 
     async def __call__(self, scope, receive, send) -> None:
         from starlette.concurrency import run_in_threadpool
