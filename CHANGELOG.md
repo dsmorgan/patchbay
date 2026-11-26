@@ -12,7 +12,7 @@ put.
 - On the **Alerts** → **Active** tab, a one-shot event's row now says it's an event and how long until it leaves the tab, for example "18h · event · leaves in 6h". A config change or a failed snapshot has no condition to clear it, so it stays for 24 hours and then drops off; before, its age read like an alert that was stuck. The **Rules** tab summaries for `config-changed` and `snapshot-failed` mention the 24-hour window. (#154)
 
 ### Fixed
-- The **Alerts** badge on the rail now changes as soon as you add or delete a silence, or one expires: the same moment the **Active** tab does. It used to wait for the next poll. This covers open alerts and one-shot events such as a config change. An event silenced when it fired also leaves the badge when its 24-hour window on the tab ends, not up to a poll later. (#153)
+- The **Alerts** badge on the rail now changes as soon as you add or delete a silence, or one expires: the same moment the **Active** tab does. It used to wait for the next poll. This covers open alerts and one-shot events such as a config change. An event silenced when it fired also leaves the badge when its 24-hour window on the tab ends. The badge used to time that window from the poll that stored the event, not from the change itself, so it kept the event for as long as the change took to reach a poll. (#153)
 
 ## [0.24.2] — 2026-11-15
 
