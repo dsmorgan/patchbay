@@ -240,6 +240,20 @@ def test_an_event_silenced_when_it_fired_returns_when_unsilenced(net):
     assert _badge(net.client.get("/").text)[1] == _active_rows(net.client) == 1
 
 
+def test_an_event_silenced_when_it_fired_keeps_its_own_time(net):
+    # the tab's 24-hour window runs from when the change happened; the row
+    # the badge reads must too, or an unsilenced event outstays the tab
+    now = pdb.now()
+    _silence(net, "sw1")
+    _config_change(net, now)
+    net.poll()
+    c = sqlite3.connect(net.db)
+    [(raised,)] = c.execute("SELECT raised_at FROM alerts WHERE rule = 'config-changed'")
+    [(fetched,)] = c.execute("SELECT MAX(fetched_at) FROM config_revisions")
+    c.close()
+    assert raised == fetched < now - 3000
+
+
 def test_held_items_are_tagged_so_the_two_counts_differ_visibly(net):
     net.sql("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
     net.sql("UPDATE interfaces SET oper_status = 'down' WHERE name = 'vmnic0'")
