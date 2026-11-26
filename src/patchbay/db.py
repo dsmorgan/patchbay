@@ -264,8 +264,10 @@ CREATE TABLE IF NOT EXISTS alerts (
     last_notified_at REAL,
     text TEXT,
     href TEXT,
-    sample_ts REAL             -- the sample the last counted poll judged, for
-);                             -- rules whose items carry one (port canary)
+    sample_ts REAL,            -- the sample the last counted poll judged, for
+                               -- rules whose items carry one (port canary)
+    about TEXT                 -- JSON {devices, ports}: what the item is about,
+);                             -- so the rail badge can match silences (#153)
 -- one open alert per key; a cleared one is history, and the same condition
 -- returning raises a new row
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_open ON alerts (key)
@@ -430,6 +432,8 @@ def init(conn: sqlite3.Connection) -> None:
     alcols = {r[1] for r in conn.execute("PRAGMA table_info(alerts)")}
     if "sample_ts" not in alcols:  # #110: `for` counts distinct samples
         conn.execute("ALTER TABLE alerts ADD COLUMN sample_ts REAL")
+    if "about" not in alcols:  # #153: the badge applies silences at read time
+        conn.execute("ALTER TABLE alerts ADD COLUMN about TEXT")
     rucols = {r[1] for r in conn.execute("PRAGMA table_info(alert_rules)")}
     if "enabled_at" not in rucols:  # #110: re-enabling replays no events
         conn.execute("ALTER TABLE alert_rules ADD COLUMN enabled_at REAL")

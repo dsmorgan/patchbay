@@ -398,6 +398,20 @@ def held_text(item: dict, down: set[str]) -> str:
     return f"held: {devs[0]} is down" if len(devs) == 1 else f"held: {', '.join(devs)} are down"
 
 
+def _about(item: dict) -> str:
+    """What an item is about, as stored in `alerts.about`: the `devices` and
+    `ports` a silence matches on (silences.covers). The row keeps them so
+    the rail badge can apply a silence saved between polls (#153)."""
+    return json.dumps({"devices": sorted(set(item.get("devices") or ())),
+                       "ports": [list(p) for p in item.get("ports") or ()]})
+
+
+def _keep_about(conn, row_id: int, about: str) -> None:
+    """Refresh a fired event's `about`, a no-op write when it is current."""
+    conn.execute("UPDATE alerts SET about = ? WHERE id = ? AND about IS NOT ?",
+                 (about, row_id, about))
+
+
 def _event(conn, alert_id, ts, event, a, detail=None):
     conn.execute(
         "INSERT INTO alert_events (alert_id, ts, event, key, rule, category, "
@@ -467,6 +481,7 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             fired = conn.execute("SELECT id, active_at FROM alerts WHERE key = ?",
                                  (key,)).fetchone()
             if fired:
+                _keep_about(conn, fired["id"], _about(it))
                 if fired["active_at"] is None:
                     # silenced when it fired, since unsilenced: visible again,
                     # and never replayed as news. `active_at` is what marks it
@@ -478,10 +493,10 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             at = it.get("at") or now
             cur = conn.execute(
                 "INSERT INTO alerts (key, rule, category, severity, state, polls, "
-                "raised_at, active_at, cleared_at, last_notified_at, text, href) "
-                "VALUES (?,?,?,?, 'cleared', 1, ?,?,?,?,?,?)",
+                "raised_at, active_at, cleared_at, last_notified_at, text, href, about) "
+                "VALUES (?,?,?,?, 'cleared', 1, ?,?,?,?,?,?,?)",
                 (key, name, a["category"], a["severity"], at, now, now, now,
-                 a["text"], a["href"]))
+                 a["text"], a["href"], _about(it)))
             for ev in ("raised", "active", "cleared"):
                 _event(conn, cur.lastrowid, now, ev, a)
             notes.append(_note("event", a, at, rule["route"], now))
@@ -497,11 +512,12 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             state = "active" if rule["for"] <= 1 else "pending"
             conn.execute(
                 "UPDATE alerts SET severity=?, text=?, href=?, polls=1, state=?, "
-                "raised_at=?, active_at=?, last_notified_at=?, sample_ts=? WHERE id=?",
+                "raised_at=?, active_at=?, last_notified_at=?, sample_ts=?, about=? "
+                "WHERE id=?",
                 (a["severity"], a["text"], a["href"], state, now,
                  now if state == "active" else None,
                  now if state == "active" else row["last_notified_at"],
-                 it.get("sample_ts"), row["id"]))
+                 it.get("sample_ts"), _about(it), row["id"]))
             _event(conn, row["id"], now, "raised", a, "silence ended")
             if state == "active":
                 _event(conn, row["id"], now, "active", a)
@@ -512,12 +528,12 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             state = "active" if rule["for"] <= 1 else "pending"
             cur = conn.execute(
                 "INSERT INTO alerts (key, rule, category, severity, state, polls, "
-                "raised_at, active_at, last_notified_at, text, href, sample_ts) "
-                "VALUES (?,?,?,?,?, 1, ?,?,?,?,?,?)",
+                "raised_at, active_at, last_notified_at, text, href, sample_ts, about) "
+                "VALUES (?,?,?,?,?, 1, ?,?,?,?,?,?,?)",
                 (key, name, a["category"], a["severity"], state, raised,
                  now if state == "active" else None,
                  now if state == "active" else None, a["text"], a["href"],
-                 it.get("sample_ts")))
+                 it.get("sample_ts"), _about(it)))
             _event(conn, cur.lastrowid, now, "raised", a)
             if state == "active":
                 _event(conn, cur.lastrowid, now, "active", a)
@@ -551,9 +567,9 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             notes.append(_note("remind", a, row["raised_at"], rule["route"], now))
         conn.execute(
             "UPDATE alerts SET severity=?, text=?, href=?, polls=?, state=?, "
-            "active_at=?, last_notified_at=?, sample_ts=? WHERE id=?",
+            "active_at=?, last_notified_at=?, sample_ts=?, about=? WHERE id=?",
             (a["severity"], a["text"], a["href"], polls, state, active_at,
-             notified, sample, row["id"]))
+             notified, sample, _about(it), row["id"]))
 
     for key, row in open_.items():
         if key in seen or key in held:
@@ -595,27 +611,32 @@ def _silenced(conn, it: dict, name: str, rule: dict, row, silence: dict,
         fired = conn.execute("SELECT id, active_at FROM alerts WHERE key = ?",
                              (it["key"],)).fetchone()
         if fired:
+            _keep_about(conn, fired["id"], _about(it))
             if fired["active_at"] is not None:   # silenced after it fired
                 conn.execute("UPDATE alerts SET active_at = NULL WHERE id = ?",
                              (fired["id"],))
             return
         cur = conn.execute(
             "INSERT INTO alerts (key, rule, category, severity, state, polls, "
-            "raised_at, cleared_at, text, href) VALUES (?,?,?,?, 'cleared', 1, ?,?,?,?)",
-            (it["key"], name, a["category"], a["severity"], now, now, a["text"], a["href"]))
+            "raised_at, cleared_at, text, href, about) "
+            "VALUES (?,?,?,?, 'cleared', 1, ?,?,?,?,?)",
+            (it["key"], name, a["category"], a["severity"], now, now, a["text"],
+             a["href"], _about(it)))
         _event(conn, cur.lastrowid, now, "silenced", a, why)
         _event(conn, cur.lastrowid, now, "cleared", a, "silenced")
         return
     if row is None:
         cur = conn.execute(
             "INSERT INTO alerts (key, rule, category, severity, state, polls, "
-            "raised_at, text, href) VALUES (?,?,?,?, 'silenced', 1, ?,?,?)",
-            (it["key"], name, a["category"], a["severity"], now, a["text"], a["href"]))
+            "raised_at, text, href, about) VALUES (?,?,?,?, 'silenced', 1, ?,?,?,?)",
+            (it["key"], name, a["category"], a["severity"], now, a["text"], a["href"],
+             _about(it)))
         _event(conn, cur.lastrowid, now, "silenced", a, why)
         return
-    conn.execute("UPDATE alerts SET severity=?, text=?, href=?, polls=?, state='silenced' "
-                 "WHERE id=?", (a["severity"], a["text"], a["href"], row["polls"] + 1,
-                                row["id"]))
+    conn.execute("UPDATE alerts SET severity=?, text=?, href=?, polls=?, "
+                 "state='silenced', about=? WHERE id=?",
+                 (a["severity"], a["text"], a["href"], row["polls"] + 1, _about(it),
+                  row["id"]))
     if row["state"] != "silenced":
         _event(conn, row["id"], now, "silenced", a, why)
 
