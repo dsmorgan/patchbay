@@ -41,6 +41,10 @@ READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False,
                             idempotent_hint=True, open_world_hint=False)
 
 
+# Seconds a tool waits for a poll's write lock before saying "busy"
+DB_TIMEOUT = 5.0
+
+
 @contextlib.contextmanager
 def _read_only(settings):
     """The database opened `mode=ro`, as /healthz does: no tool can write,
@@ -50,10 +54,16 @@ def _read_only(settings):
         raise ToolError("patchbay has no database yet: start the poller "
                         "and wait for its first poll")
     conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True,
-                           timeout=5)
+                           timeout=DB_TIMEOUT)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
+    except sqlite3.OperationalError as e:
+        # a poll's commit held the lock past the timeout: the pages answer
+        # 503 with this text, and the assistant should likewise retry
+        if db.is_busy(e):
+            raise ToolError(db.BUSY_TEXT) from e
+        raise
     finally:
         conn.close()
 

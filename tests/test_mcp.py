@@ -443,3 +443,19 @@ def test_the_tool_connection_refuses_writes(clean_env, demo_db, monkeypatch):
     mcp_server.alerts(history=True)
     mcp_server.find("nas1")
     assert not called
+
+
+def test_a_busy_database_says_retry(mcp_client, monkeypatch):
+    # a poll holding the write lock: rollback-journal readers wait, then fail
+    monkeypatch.setattr(mcp_server, "DB_TIMEOUT", 0.1)
+    holder = sqlite3.connect(os.environ["PATCHBAY_DB"])
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        r = mcp_client.post("/mcp", headers=HEADERS, json=_rpc(
+            "tools/call", {"name": "freshness", "arguments": {}}))
+    finally:
+        holder.rollback()
+        holder.close()
+    result = r.json()["result"]
+    assert result["isError"]
+    assert db.BUSY_TEXT in result["content"][0]["text"]

@@ -314,6 +314,15 @@ CREATE TABLE IF NOT EXISTS alert_silences (
 """
 
 
+# What a page or a tool says when a poll's write lock outlasted the busy
+# timeout: a retry, not a crash (#109)
+BUSY_TEXT = "the database is busy (a poll is writing) — try again"
+
+
+def is_busy(exc: sqlite3.OperationalError) -> bool:
+    return "locked" in str(exc) or "busy" in str(exc)
+
+
 @contextmanager
 def connect(path: str) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(path)
