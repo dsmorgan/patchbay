@@ -244,6 +244,15 @@ def test_only_post_is_served(mcp_client):
     assert mcp_client.get("/mcp").status_code == 401
 
 
+def test_overlapping_lifespans_both_serve(mcp_client):
+    from patchbay import web
+    with TestClient(web.app) as second:
+        assert second.post("/mcp", headers=HEADERS, json=INIT).status_code == 200
+        assert mcp_client.post("/mcp", headers=HEADERS, json=INIT).status_code == 200
+    # the second one ended; the first still answers
+    assert mcp_client.post("/mcp", headers=HEADERS, json=INIT).status_code == 200
+
+
 def test_ops_says_whether_mcp_is_on_never_the_token(mcp_client):
     body = mcp_client.get("/ops").text
     assert "PATCHBAY_MCP_TOKEN" in body and "/mcp answers" in body
