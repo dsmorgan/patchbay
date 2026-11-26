@@ -36,7 +36,18 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 from .ports import port_kind
 from .redact import hide_userinfo
 
-app = FastAPI(title="patchbay")
+from . import mcp_server
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    # the MCP endpoint's session manager (ADR-0004) lives as long as the app
+    async with mcp_server.http_endpoint.run():
+        yield
+
+
+app = FastAPI(title="patchbay", lifespan=_lifespan)
 
 
 BUSY_TEXT = "the database is busy (a poll is writing) — try again"
@@ -313,6 +324,9 @@ async def auth_gate(request: Request, call_next):
 
 
 app.include_router(auth.build_router(templates, load_settings))
+# the MCP endpoint: auth.gate answers 404/401 before a request gets here
+app.router.add_route(auth.MCP_PATH, mcp_server.http_endpoint,
+                     include_in_schema=False)
 
 
 def _conn() -> sqlite3.Connection:
@@ -1816,6 +1830,8 @@ def _effective_config(s) -> list[tuple[str, list[tuple[str, str]]]]:
              (f" · session {s.session_hours:g}h" if s.auth_mode != "none" else "")),
             ("PATCHBAY_ALLOWED_HOSTS", "any host" if s.allowed_hosts is None
              else ", ".join(s.allowed_hosts) or "loopback only (no usable entry)"),
+            # whether the endpoint is on, never the token
+            ("PATCHBAY_MCP_TOKEN", "set · /mcp answers" if s.mcp_token else "— · /mcp off"),
         ]),
         ("sources", [
             (name, (hide_userinfo(url) or "—")
