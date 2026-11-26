@@ -254,6 +254,23 @@ def test_in_process_client_gets_structured_results(clean_env, demo_db):
     assert out["devices"][0]["role"] == "ap"
 
 
+def test_stdio_serves_the_same_tools(clean_env, demo_db):
+    from mcp import Client, StdioServerParameters
+
+    params = StdioServerParameters(command=sys.executable, args=["-m", "patchbay", "mcp"],
+                                   env=dict(os.environ))
+
+    async def run():
+        async with Client(params) as client:
+            names = [t.name for t in (await client.list_tools()).tools]
+            r = await client.call_tool("find", {"query": "192.0.2.21"})
+            return names, r.structured_content
+
+    names, out = asyncio.run(run())
+    assert names == ["freshness", "find", "alerts"]
+    assert out["devices"][0]["name"] == "nas1"
+
+
 # --- what never leaves the host -------------------------------------------------
 
 SECRETS = {
