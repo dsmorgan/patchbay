@@ -1,6 +1,6 @@
 # ADR-0004 — Read-only MCP server
 
-*Status: proposed (2026-11-26) · Issue: [#155](https://github.com/dsmorgan/patchbay/issues/155)*
+*Status: accepted (2026-11-26) · Issue: [#155](https://github.com/dsmorgan/patchbay/issues/155)*
 
 ## Context
 
