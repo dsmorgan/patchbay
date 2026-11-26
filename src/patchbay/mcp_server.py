@@ -340,6 +340,12 @@ class HTTPEndpoint:
             await Response("authentication required", status_code=401, headers={
                 "WWW-Authenticate": 'Bearer realm="patchbay"'})(scope, receive, send)
             return
+        # stateless JSON has no server-sent stream to open (GET) and no
+        # session to end (DELETE): the spec lets a server refuse both
+        if scope["method"] != "POST":
+            await Response("Method Not Allowed", status_code=405,
+                           headers={"Allow": "POST"})(scope, receive, send)
+            return
         manager.security_settings = transport_security(settings.allowed_hosts)
         # the gate checked the token; the SDK has no use for it
         scope = {**scope, "headers": [(k, v) for k, v in scope["headers"]
