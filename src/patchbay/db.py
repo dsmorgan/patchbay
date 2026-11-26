@@ -264,10 +264,12 @@ CREATE TABLE IF NOT EXISTS alerts (
     last_notified_at REAL,
     text TEXT,
     href TEXT,
-    sample_ts REAL,            -- the sample the last counted poll judged, for
-                               -- rules whose items carry one (port canary)
-    about TEXT                 -- JSON {devices, ports}: what the item is about,
-);                             -- so the rail badge can match silences (#153)
+    -- sample_ts: the sample the last counted poll judged, for rules whose
+    -- items carry one (port canary). No comment after its comma: SQLite
+    -- 3.50 then fails `DROP COLUMN about` ("incomplete input").
+    sample_ts REAL,
+    about TEXT                 -- JSON {devices, ports}: what the item is
+);                             -- about, so the rail badge can match silences
 -- one open alert per key; a cleared one is history, and the same condition
 -- returning raises a new row
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_open ON alerts (key)
