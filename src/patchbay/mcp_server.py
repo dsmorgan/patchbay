@@ -301,6 +301,14 @@ def transport_security(allowed_hosts: tuple[str, ...] | None) -> TransportSecuri
                                      allowed_hosts=hosts, allowed_origins=origins)
 
 
+def _normal_host(value: bytes) -> bytes:
+    from .auth import _split_host
+
+    host, port = _split_host(value.decode("latin-1"))
+    h = f"[{host}]" if ":" in host else host
+    return (f"{h}:{port}" if port else h).encode("latin-1")
+
+
 class HTTPEndpoint:
     """The ASGI app web.py routes `/mcp` to, after `auth.mcp_gate` checked
     the token. Stateless JSON: each POST is one request and one answer, so
@@ -357,9 +365,12 @@ class HTTPEndpoint:
                            headers={"Allow": "POST"})(scope, receive, send)
             return
         manager.security_settings = transport_security(settings.allowed_hosts)
-        # the gate checked the token; the SDK has no use for it
-        scope = {**scope, "headers": [(k, v) for k, v in scope["headers"]
-                                      if k != b"authorization"]}
+        # the gate checked the token; the SDK has no use for it. Host goes
+        # in as the gate read it (lowercase, no trailing dot): the SDK
+        # compares the raw header, and would refuse a host the gate let in
+        headers = [(k, _normal_host(v) if k == b"host" else v)
+                   for k, v in scope["headers"] if k != b"authorization"]
+        scope = {**scope, "headers": headers}
         await manager.handle_request(scope, receive, send)
 
 

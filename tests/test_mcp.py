@@ -208,6 +208,11 @@ def test_mcp_keeps_the_host_allowlist_and_origin_check(clean_env, demo_db):
         r = c.post("/mcp", headers={**HEADERS, "Origin": "http://attacker.example"},
                    json=INIT)
         assert r.status_code == 403
+        # the gate's reading of Host wins: case and a trailing dot don't
+        # turn a host the gate let in into the SDK's 421
+        for host in ("PATCHBAY.Example.NET:8080", "patchbay.example.net.:8080"):
+            r = c.post("/mcp", headers={**HEADERS, "Host": host}, json=INIT)
+            assert r.status_code == 200, host
         # the SDK's own DNS-rebinding check got the same list
         sdk = mcp_server.http_endpoint._manager.security_settings
         assert sdk.enable_dns_rebinding_protection
