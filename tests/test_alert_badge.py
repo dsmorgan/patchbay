@@ -306,9 +306,29 @@ def test_cables_held_by_a_down_device_are_the_other_difference(net):
 
 # --- #153: the badge applies silences at read time, with no poll between ---
 
-def _count(net):
+def _rail(net, monkeypatch):
+    """The badge as (severity, n), or None. Read from /ops, a page that
+    builds no attention list, with every route to the engine and the
+    attention rules made to fail for that request: the number is the
+    badge's own read, and nothing can have polled to produce it."""
+    import patchbay.web as web
+    from patchbay import attention
+
+    def boom(*a, **k):
+        raise AssertionError("the badge ran the engine")
+    with monkeypatch.context() as m:
+        for mod in (alerting, attention, web):
+            m.setattr(mod, "attention_items", boom)
+        for name in ("evaluate", "run"):
+            m.setattr(alerting, name, boom)
+        html = net.client.get("/ops").text
+    b = _badge(html)
+    return b[:2] if b else None
+
+
+def _count(net, monkeypatch):
     """The badge's number, 0 when it is hidden."""
-    b = _badge(net.client.get("/").text)
+    b = _rail(net, monkeypatch)
     return b[1] if b else 0
 
 
@@ -319,13 +339,22 @@ def _silence_ids(net):
     return ids
 
 
-def _no_poll(net, monkeypatch):
-    """Fail the test if anything runs the lifecycle or the attention rules
-    for the badge: the point is that it moves with no poll in between."""
-    def boom(*a, **k):
-        raise AssertionError("the badge ran the engine")
-    monkeypatch.setattr(alerting, "evaluate", boom)
-    monkeypatch.setattr(alerting, "attention_items", boom)
+def _post_silence(net, kind, scope):
+    r = net.client.post("/alerts/silences", data={"kind": kind, "scope": scope, "hours": "24"})
+    assert r.status_code == 200
+
+
+def _upgrade(net):
+    """The alerts table as an upgrade finds it: rows with no `about`."""
+    net.sql("UPDATE alerts SET about = NULL")
+
+
+def _about_everywhere(net):
+    c = sqlite3.connect(net.db)
+    missing = [k for (k,) in c.execute("SELECT key FROM alerts WHERE about IS NULL")]
+    total = c.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+    c.close()
+    assert total and not missing, missing
 
 
 @pytest.mark.parametrize("form", [
@@ -338,31 +367,29 @@ def test_silencing_an_open_alert_moves_the_badge_at_once(net, monkeypatch, form)
     net.sql("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
     _slow_links(net)
     net.poll()
-    before = _count(net)
+    _about_everywhere(net)
+    before = _count(net, monkeypatch)
     assert before == _active_rows(net.client) >= 2
-    _no_poll(net, monkeypatch)
 
-    r = net.client.post("/alerts/silences", data={**form, "hours": "24"})
-    assert r.status_code == 200
-    assert _count(net) == _active_rows(net.client) == before - 1
+    _post_silence(net, form["kind"], form["scope"])
+    assert _count(net, monkeypatch) == _active_rows(net.client) == before - 1
 
     [sid] = _silence_ids(net)
     net.client.post(f"/alerts/silences/{sid}/delete")
-    assert _count(net) == _active_rows(net.client) == before
+    assert _count(net, monkeypatch) == _active_rows(net.client) == before
 
 
 def test_silencing_a_one_shot_event_moves_the_badge_at_once(net, monkeypatch):
     _config_change(net, pdb.now())
     net.poll()
-    assert _badge(net.client.get("/").text)[:2] == ("info", 1) == ("info", _active_rows(net.client))
-    _no_poll(net, monkeypatch)
+    assert _rail(net, monkeypatch) == ("info", 1) == ("info", _active_rows(net.client))
 
-    net.client.post("/alerts/silences", data={"kind": "device", "scope": "sw1"})
-    assert _count(net) == _active_rows(net.client) == 0
+    _post_silence(net, "device", "sw1")
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 0
 
     [sid] = _silence_ids(net)
     net.client.post(f"/alerts/silences/{sid}/delete")
-    assert _badge(net.client.get("/").text)[:2] == ("info", 1) == ("info", _active_rows(net.client))
+    assert _rail(net, monkeypatch) == ("info", 1) == ("info", _active_rows(net.client))
 
 
 def test_deleting_the_silence_an_alert_was_raised_under(net, monkeypatch):
@@ -371,13 +398,12 @@ def test_deleting_the_silence_an_alert_was_raised_under(net, monkeypatch):
     net.sql("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
     _config_change(net, pdb.now())
     net.poll()
-    assert _count(net) == _active_rows(net.client) == 0
-    _no_poll(net, monkeypatch)
+    _about_everywhere(net)
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 0
 
     [sid] = _silence_ids(net)
     net.client.post(f"/alerts/silences/{sid}/delete")
-    sev, n, _ = _badge(net.client.get("/").text)
-    assert (sev, n) == ("crit", 2) and n == _active_rows(net.client)
+    assert _rail(net, monkeypatch) == ("crit", 2) == ("crit", _active_rows(net.client))
 
 
 def test_an_expired_silence_returns_the_alert_at_once(net, monkeypatch):
@@ -385,13 +411,12 @@ def test_an_expired_silence_returns_the_alert_at_once(net, monkeypatch):
     net.sql("INSERT INTO alert_silences (kind, scope, until, created_by, created_at) "
             "VALUES ('device', 'sw1', ?, 't', 0)", pdb.now() + 3600)
     net.poll()
-    assert _count(net) == _active_rows(net.client) == 0
-    _no_poll(net, monkeypatch)
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 0
     net.sql("UPDATE alert_silences SET until = ?", pdb.now() - 1)
-    assert _count(net) == _active_rows(net.client) == 1
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 1
 
 
-def test_an_unsilenced_alert_a_down_device_holds_stays_off_the_badge(net):
+def test_an_unsilenced_alert_a_down_device_holds_stays_off_the_badge(net, monkeypatch):
     # the cable is silenced while sw1 is down; deleting that silence puts it
     # on the tab, tagged held, and the engine holds it rather than raise it
     net.sql("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
@@ -399,28 +424,101 @@ def test_an_unsilenced_alert_a_down_device_holds_stays_off_the_badge(net):
     net.sql("INSERT INTO alert_silences (kind, scope, until, created_by, created_at) "
             "VALUES ('port', 'hyp1:vmnic0', NULL, 't', 0)")
     net.poll()
-    assert _count(net) == _active_rows(net.client) == 1
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 1
     net.sql("DELETE FROM alert_silences")
     assert "held: sw1 is down" in net.client.get("/alerts").text
-    assert _count(net) == _active_rows(net.client) - 1 == 1
+    assert _count(net, monkeypatch) == _active_rows(net.client) - 1 == 1
     net.poll()                                       # the engine agrees
-    assert _count(net) == 1
+    assert _count(net, monkeypatch) == 1
 
 
-def test_a_row_stored_before_about_keeps_the_polls_answer(net):
+# Upgrade path: rows stored before `about` existed. Each test strips `about`,
+# polls once, and checks that a device or port silence then moves the badge
+# at once. Without the poll's write, a row with no `about` keeps the last
+# poll's answer and the badge disagrees with the tab.
+
+def test_a_row_stored_before_about_keeps_the_polls_answer(net, monkeypatch):
     net.sql("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
     _silence(net, "sw1")
     net.poll()
-    net.sql("UPDATE alerts SET about = NULL")           # as an upgrade finds it
+    _upgrade(net)
     net.sql("DELETE FROM alert_silences")
-    assert _count(net) == 0                             # the last poll said silenced
-    net.poll()                                          # which stores `about`
-    assert _count(net) == _active_rows(net.client) == 1
+    assert _count(net, monkeypatch) == 0              # the last poll said silenced
     # a key or category silence needs no `about`, so it applies at once
-    net.sql("UPDATE alerts SET about = NULL")
     net.sql("INSERT INTO alert_silences (kind, scope, until, created_by, created_at) "
             "VALUES ('category', 'device', NULL, 't', 0)")
-    assert _count(net) == _active_rows(net.client) == 0
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 0
+
+
+def test_upgrade_an_open_alert_still_firing(net, monkeypatch):
+    net.sql("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
+    net.poll()
+    _upgrade(net)
+    net.poll()                                        # the still-firing update
+    _about_everywhere(net)
+    _post_silence(net, "device", "sw1")
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 0
+
+
+def test_upgrade_a_silenced_alert_still_silenced(net, monkeypatch):
+    net.sql("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
+    _silence(net, "sw1")
+    net.poll()
+    _upgrade(net)
+    net.poll()                                        # the silenced-row update
+    _about_everywhere(net)
+    net.sql("DELETE FROM alert_silences")
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 1
+
+
+def test_upgrade_a_silenced_alert_whose_silence_ended(net, monkeypatch):
+    net.sql("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
+    _silence(net, "sw1")
+    net.poll()
+    _upgrade(net)
+    net.sql("DELETE FROM alert_silences")
+    net.poll()                                        # the re-raise update
+    _about_everywhere(net)
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 1
+    _post_silence(net, "device", "sw1")
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 0
+
+
+def test_upgrade_an_event_that_fired(net, monkeypatch):
+    _config_change(net, pdb.now())
+    net.poll()
+    _upgrade(net)
+    net.poll()                                        # the fired-event refresh
+    _about_everywhere(net)
+    _post_silence(net, "device", "sw1")
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 0
+
+
+def test_upgrade_an_event_silenced_after_it_fired(net, monkeypatch):
+    _config_change(net, pdb.now())
+    net.poll()
+    _upgrade(net)
+    _silence(net, "sw1")
+    net.poll()                                        # the silenced-event refresh
+    _about_everywhere(net)
+    net.sql("DELETE FROM alert_silences")
+    assert _rail(net, monkeypatch) == ("info", 1) == ("info", _active_rows(net.client))
+
+
+def test_upgrade_an_alert_a_down_device_holds(net, monkeypatch):
+    # the cable alert was open before sw1 went down, so the engine keeps it
+    # active and the tab lists it, tagged held
+    net.sql("UPDATE interfaces SET oper_status = 'down' WHERE name = 'vmnic0'")
+    net.poll()
+    net.sql("UPDATE devices SET status = 'down' WHERE name = 'sw1'")
+    net.poll()
+    assert "held: sw1 is down" in net.client.get("/alerts").text
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 2
+    _upgrade(net)
+    net.poll()                                        # the held row's refresh
+    _about_everywhere(net)
+    _post_silence(net, "port", "hyp1:vmnic0")
+    assert _count(net, monkeypatch) == _active_rows(net.client) == 1
 
 
 def test_the_engine_stores_what_each_alert_is_about(net):
@@ -428,11 +526,12 @@ def test_the_engine_stores_what_each_alert_is_about(net):
     _slow_links(net)
     _config_change(net, pdb.now())
     net.poll()
+    _about_everywhere(net)
     c = sqlite3.connect(net.db)
     about = {k: json.loads(a) for k, a in c.execute("SELECT key, about FROM alerts")}
     c.close()
     assert sorted(about["link:hyp1:vmnic0:sw1:1/0/1"]["ports"]) == [["hyp1", "vmnic0"],
                                                                      ["sw1", "1/0/1"]]
     assert about["device:sw1"] == {"devices": ["sw1"], "ports": []}
-    assert all(a is not None and "sw1" in a["devices"] + [d for d, _ in a["ports"]]
+    assert all("sw1" in a["devices"] + [d for d, _ in a["ports"]]
                for a in about.values())
