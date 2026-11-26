@@ -79,6 +79,14 @@ def all_silences(conn: sqlite3.Connection) -> list[dict]:
         "SELECT * FROM alert_silences ORDER BY created_at DESC, id DESC")]
 
 
+def live_silences(conn: sqlite3.Connection, now: float) -> list[dict]:
+    """The silences in force at `now`, newest first: `is_live` in SQL, so a
+    read on every page skips the expired ones the table keeps for history."""
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM alert_silences WHERE until IS NULL OR until > ? "
+        "ORDER BY created_at DESC, id DESC", (now,))]
+
+
 def _permanent(rows: list[dict]) -> set[tuple[str, str]]:
     return {(r["kind"], r["scope"]) for r in rows if r["until"] is None}
 
@@ -178,7 +186,7 @@ def apply(conn: sqlite3.Connection, items: list[dict], now: float) -> None:
     """Mark each item `silenced` with the live silence that covers it, or
     None. When several cover one item, the longest-lasting one is shown,
     because that is the one that decides when the item returns."""
-    live = [s for s in all_silences(conn) if is_live(s, now)]
+    live = live_silences(conn, now)
     for it in items:
         hits = [s for s in live if covers(s, it)]
         it["silenced"] = max(hits, key=_lasting) if hits else None
