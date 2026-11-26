@@ -50,11 +50,8 @@ async def _lifespan(_app):
 app = FastAPI(title="patchbay", lifespan=_lifespan)
 
 
-BUSY_TEXT = "the database is busy (a poll is writing) — try again"
-
-
-def _is_busy(exc: sqlite3.OperationalError) -> bool:
-    return "locked" in str(exc) or "busy" in str(exc)
+BUSY_TEXT = db.BUSY_TEXT
+_is_busy = db.is_busy
 
 
 def _busy_response(request: Request) -> Response:
