@@ -175,6 +175,28 @@ def test_a_parent_mount_never_skips_the_gate(clean_env, demo_db):
         assert c.post("/pb/mcp", headers=HEADERS, json=INIT).status_code == 200
 
 
+def test_the_endpoint_checks_the_token_without_the_gate(clean_env, demo_db):
+    # defense in depth: routed to with no middleware at all, the endpoint
+    # still refuses a request without the token
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        async with mcp_server.http_endpoint.run():
+            yield
+
+    app = Starlette(routes=[Route("/mcp", mcp_server.http_endpoint)], lifespan=lifespan)
+    with TestClient(app) as c:
+        assert c.post("/mcp", headers=HEADERS, json=INIT).status_code == 404  # no token set
+        clean_env.setenv("PATCHBAY_MCP_TOKEN", TOKEN)
+        r = c.post("/mcp", headers={"Accept": HEADERS["Accept"]}, json=INIT)
+        assert r.status_code == 401
+        r = c.post("/mcp", headers={**HEADERS, "Authorization": "Bearer wrong"}, json=INIT)
+        assert r.status_code == 401
+        assert c.post("/mcp", headers=HEADERS, json=INIT).status_code == 200
+
+
 def test_mcp_keeps_the_host_allowlist_and_origin_check(clean_env, demo_db):
     clean_env.setenv("PATCHBAY_MCP_TOKEN", TOKEN)
     clean_env.setenv("PATCHBAY_ALLOWED_HOSTS", "patchbay.example.net:8080")
