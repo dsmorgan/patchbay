@@ -771,6 +771,25 @@ def build_routed_graph(conn: sqlite3.Connection, settings) -> dict:
     }
 
 
+def drawn_names(graph: dict) -> set[str]:
+    """Every label the routed view draws for a device or host, from
+    `build_routed_graph`'s result: routers, host boxes, the ×N chips on
+    each rail, the hypervisor and AP boxes, and their guests and clients.
+    A chip or client label is what the page prints (a hostname, else an
+    address), so callers match against names and addresses alike."""
+    names: set[str] = set()
+    names.update(r["name"] for r in graph.get("routers", ()))
+    names.update(h["name"] for h in graph.get("hosts", ()))
+    for rail in graph.get("rails", ()):
+        names.update(rail.get("host_names", ()))
+    for box in [*graph.get("hypervisors", ()), *graph.get("aps", ())]:
+        names.add(box["name"])
+        names.update(h["name"] for h in box.get("guests", ()))
+        for group in box.get("groups", {}).values():
+            names.update(group)
+    return names
+
+
 def _add_leg(by_rail: dict[str, dict], key: str, iface: str,
              ip: str | None) -> None:
     """Record a sighting on a rail. One leg per network per host, but a
