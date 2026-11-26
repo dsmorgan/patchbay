@@ -347,12 +347,15 @@ def _since(ts: float | None) -> str:
 
 def _span(mins: float) -> str:
     """A compact duration for the attention lists: minutes, then hours,
-    then days."""
-    if mins < 60:
-        return f"{mins:.0f}m"
-    if mins < 60 * 48:
-        return f"{mins / 60:.0f}h"
-    return f"{mins / 1440:.0f}d"
+    then days. Each unit rounds before its boundary check, so 59.6 minutes
+    reads as 1h, not 60m, and 47.9 hours as 2d, not 48h."""
+    m = round(mins)
+    if m < 60:
+        return f"{m}m"
+    h = round(mins / 60)
+    if h < 48:
+        return f"{h}h"
+    return f"{round(mins / 1440)}d"
 
 
 def _event_leaves(it: dict) -> str | None:

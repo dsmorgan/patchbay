@@ -334,6 +334,7 @@ def test_event_row_says_when_it_leaves_the_active_tab(clean_env, tmp_path, monke
     event = _active_row(page, "fw1 config changed: opened 443 — admin")
     assert event is not None and "18h" in event
     assert " · event · leaves in 6h</span>" in event
+    assert "stays on this tab for 24 hours after it happens" in event
     condition = _active_row(page, "switch sw1 is down")
     assert condition is not None and "leaves in" not in condition
 
@@ -342,10 +343,25 @@ def test_event_row_says_when_it_leaves_the_active_tab(clean_env, tmp_path, monke
                         "fw1 config changed: opened 443 — admin")
     assert event is not None and "leaves in 30m" in event
 
-    t["now"] += 30 * 60 + 1                              # past 24 hours: gone
+    t["now"] += 30 * 60 - 20                             # 20 seconds left
+    event = _active_row(client.get("/alerts").text,
+                        "fw1 config changed: opened 443 — admin")
+    assert event is not None and "leaves in 1m" in event
+
+    t["now"] += 21                                       # past 24 hours: gone
     page = client.get("/alerts").text
     assert _active_row(page, "fw1 config changed: opened 443 — admin") is None
     assert "leaves in" not in page
+
+
+@pytest.mark.parametrize("mins, text", [
+    (0, "0m"), (59.4, "59m"), (59.6, "1h"), (90, "2h"),
+    (47.4 * 60, "47h"), (47.6 * 60, "2d"), (3 * 1440, "3d")])
+def test_span_rounds_before_it_picks_the_unit(mins, text):
+    # #154 review: 59.6 minutes is 1h, not 60m; 47.6 hours is 2d, not 48h
+    from patchbay.web import _span
+
+    assert _span(mins) == text
 
 
 def test_event_rule_summaries_name_the_window(clean_env):
