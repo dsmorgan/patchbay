@@ -8,6 +8,9 @@ put.
 
 ## [Unreleased]
 
+### Changed
+- On the **Alerts** → **Active** tab, a one-shot event's row now says it's an event and how long until it leaves the tab, for example "18h · event · leaves in 6h". A config change or a failed snapshot has no condition to clear it, so it stays for 24 hours and then drops off; before, its age read like an alert that was stuck. The **Rules** tab summaries for `config-changed` and `snapshot-failed` mention the 24-hour window. (#154)
+
 ## [0.24.2] — 2026-11-15
 
 ### Changed
