@@ -125,6 +125,82 @@ so **don't set `PATCHBAY_TLS_VERIFY=0` while using OIDC**: a disabled verify
 lets a MITM on the token endpoint forge identities. Keep it `1` (or a CA
 bundle path) in any OIDC deployment.
 
+### MCP endpoint
+
+patchbay can answer an AI assistant's questions over the
+[Model Context Protocol](https://modelcontextprotocol.io) (MCP): where a
+MAC address or host is, which alerts are open and since when, and how fresh
+the data is. The tools are read-only: they open the database read-only and
+can't change settings, silences, or devices.
+[ADR-0004](adr/0004-mcp-server.md) records the design.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PATCHBAY_MCP_TOKEN` | — | Bearer token for `/mcp`. Unset, `/mcp` answers `404`. Treat it like a password: patchbay never shows, logs, or returns it, and `/ops` says only whether it's set |
+
+To turn the endpoint on, generate a long random token, set it in the env
+file, and restart the web UI:
+
+```sh
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+```sh
+PATCHBAY_MCP_TOKEN=<token>
+```
+
+The endpoint is Streamable HTTP at `/mcp` on the web UI's port. Each request
+needs the header `Authorization: Bearer <token>`; a missing or wrong token
+gets `401`. The token replaces the session cookie on `/mcp` in every
+`PATCHBAY_AUTH` mode, and opens nothing else: the cookie never opens `/mcp`,
+and the token never opens a page. `PATCHBAY_ALLOWED_HOSTS` and the
+cross-origin check still apply, so list the name your assistant uses.
+
+To add patchbay to Claude Code:
+
+```sh
+claude mcp add --transport http patchbay http://patchbay.example.net:8080/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+For a client that reads a JSON configuration file, the entry looks like
+this:
+
+```json
+{
+  "mcpServers": {
+    "patchbay": {
+      "type": "http",
+      "url": "http://patchbay.example.net:8080/mcp",
+      "headers": {"Authorization": "Bearer <token>"}
+    }
+  }
+}
+```
+
+patchbay doesn't require TLS for `/mcp`. On a LAN-only install the token
+crosses the same network as the UI's session cookie; for TLS, use
+`PATCHBAY_TLS=direct` or a reverse proxy.
+
+`patchbay mcp` serves the same tools over stdio, for a client on the
+container host or a local demo database. It needs no token: whoever can
+launch it can already read the database file.
+
+```sh
+claude mcp add patchbay -e PATCHBAY_DB=/path/to/demo.db -- patchbay mcp
+```
+
+| Tool | Answers |
+|---|---|
+| `freshness` | When the last poll finished, and each source's age |
+| `find(query)` | Where a MAC address (any common format), IP address, hostname, or alias is: the device, the port the normalizer placed it on, every switch port that learned the MAC, the cables at it, its IPAM record, and whether the topology and routed maps draw it |
+| `alerts(history)` | Open alerts with severity, first seen, and whether the engine holds them; silenced alerts apart; with `history`, the engine's recent events |
+
+Hostnames and descriptions come from the network itself, such as DHCP and
+LLDP, so a hostile device can name itself with text aimed at the assistant.
+The tools can't change anything, but tell your assistant to treat those
+fields as data.
+
 ### Config history
 
 | Variable | Default | Meaning |

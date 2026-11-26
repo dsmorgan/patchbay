@@ -8,6 +8,9 @@ put.
 
 ## [Unreleased]
 
+### Added
+- A read-only MCP endpoint lets an AI assistant ask patchbay about the network. Set `PATCHBAY_MCP_TOKEN` and point the client at `/mcp` with the header `Authorization: Bearer <token>`; unset, `/mcp` answers `404`. Three tools: `freshness` (the last poll and each source's age), `find` (where a MAC, IP address, hostname, or alias is: port, cables, IPAM record, and whether each map draws it), and `alerts` (open and silenced alerts, optionally with recent events). The tools read the database read-only and never return secrets, setting values, or raw payloads. `patchbay mcp` serves the same tools over stdio. See [docs/configuration.md](docs/configuration.md#mcp-endpoint). (#155)
+
 ### Changed
 - On the **Alerts** → **Active** tab, a one-shot event's row now says it's an event and how long until it leaves the tab, for example "18h · event · leaves in 6h". A config change or a failed snapshot has no condition to clear it, so it stays for 24 hours and then drops off; before, its age read like an alert that was stuck. The **Rules** tab summaries for `config-changed` and `snapshot-failed` mention the 24-hour window. (#154)
 
