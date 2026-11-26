@@ -23,12 +23,15 @@ from .normalize import canon_mac, canonical_name
 # Each list in a result stops at this many entries; `truncated` says so.
 FIND_LIMIT = 50
 
-# The MAC spellings people paste: colons or hyphens between octets
-# (02:00:5e:10:00:01, 02-00-5E-10-00-01), Cisco dotted (0200.5e10.0001),
-# HP hyphenated (02005e-100001, 0200-5e10-0001), or bare hex.
+# The MAC spellings people paste: colons or hyphens between six octets
+# (02:00:5e:10:00:01, 02-00-5E-10-00-01), with leading zeros dropped as
+# macOS `arp -a` prints them (2:0:5e:10:0:1), Cisco dotted (0200.5e10.0001),
+# HP hyphenated (02005e-100001, 0200-5e10-0001), or 12 bare hex digits.
+# Six colon groups can't be an IPv6 address: that takes eight, or a "::",
+# and an empty group never matches here.
+_OCTETS_RE = re.compile(r"^[0-9a-f]{1,2}([:-])(?:[0-9a-f]{1,2}\1){4}[0-9a-f]{1,2}$", re.I)
 _MAC_RE = re.compile(
-    r"^(?:[0-9a-f]{2}([:-])(?:[0-9a-f]{2}\1){4}[0-9a-f]{2}"
-    r"|[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}"
+    r"^(?:[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}"
     r"|[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}"
     r"|[0-9a-f]{6}-[0-9a-f]{6}"
     r"|[0-9a-f]{12})$", re.I)
@@ -38,6 +41,8 @@ def classify(query: str) -> tuple[str, str]:
     """(kind, normalized query): "mac" with the colon form, "ip" with the
     compressed address, or "name" with the canonical name."""
     q = (query or "").strip()
+    if _OCTETS_RE.match(q):
+        return "mac", ":".join(o.zfill(2) for o in re.split("[:-]", q.lower()))
     if _MAC_RE.match(q):
         h = canon_mac(q)
         return "mac", ":".join(h[i:i + 2] for i in range(0, 12, 2))

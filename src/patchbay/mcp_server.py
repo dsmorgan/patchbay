@@ -178,10 +178,12 @@ class FindResult(BaseModel):
 
 
 def find(query: str) -> FindResult:
-    """Where a MAC address (any common format), IP address, hostname, or
-    alias is: the device it names, where the normalizer placed it, every
-    switch port that learned its MAC, the cables at it, its IPAM record,
-    and which maps draw it."""
+    """Where a MAC address, IP address, hostname, or alias is. A MAC can
+    be in any common format, leading zeros dropped or not (2:d3:0:0:2:c7);
+    a bare 12-hex-digit string reads as a MAC. The answer gives the device
+    it names, where the normalizer placed it, every switch port that
+    learned its MAC, the cables at it, its IPAM record, and which maps
+    draw it."""
     settings = load_settings()
     with _read_only(settings) as conn:
         return FindResult.model_validate(find_mod.find(conn, settings, query))
