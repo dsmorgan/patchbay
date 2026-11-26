@@ -49,7 +49,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from . import db
+from . import db, silences
 from .attention import (CABLE_RETAIN_DAYS, CANARY_CLEAR, CANARY_FLOOR, CANARY_FOR,
                         CANARY_MULTIPLIER, CANARY_WARMUP_H, DEVICE_DOWN_ROLES,
                         DEVICE_STALE_S, DOWN_STATES, EVENT_WINDOW_S,
@@ -698,48 +698,105 @@ def dispatch(notes: list[Notification], dispatcher: Dispatcher | None = None) ->
 
 
 def open_count(conn: sqlite3.Connection, now: float | None = None) -> dict[str, int]:
-    """The rail badge's number (#118): the engine's own rows, one cheap read
-    of the `alerts` table — never an `attention_items` run, since the rail
-    renders on every page. Returns {severity: n}, empty when nothing counts.
-    It counts what the engine would page about, and lists what the Active
-    tab does:
+    """The rail badge's number (#118): the engine's own rows with the
+    operator's current settings applied, cheap reads of small tables — never
+    an `attention_items` run, since the rail renders on every page. Returns
+    {severity: n}, empty when nothing counts. It counts what the engine
+    pages about, and lists what the Active tab does:
 
     - open alerts, pending and active;
     - one-shot events (config-changed, snapshot-failed) inside the tab's
-      window, which the engine stores as already cleared. `evaluate` keeps
-      `active_at` current with the silence state (NULL while silenced), and
-      an event older than its rule's last switch-on is hidden, as
-      `_apply_rule_settings` hides it.
+      window, which the engine stores as already cleared. An event older
+      than its rule's last switch-on is hidden, as `_apply_rule_settings`
+      hides it.
 
-    Silenced rows and rows of a rule switched off since the last poll are
-    left out at once, and the severity override applies, as on the tab.
+    Three settings apply at read time, so the badge moves with the tab when
+    you change one between polls:
 
-    What remains different, by design or by timing: items the engine holds
-    back while their device is down (`held_by`) are on the tab, tagged
-    "held", and never in the table; the table is as of the last poll, so a
-    new item, a clear, or a silence shows on the tab first (and an event's
-    silence state follows on the next poll); and an event whose source row
-    was deleted stays counted until its 24-hour window ends.
+    - silences (#153): each row is matched against the live silences by
+      `silences.apply`, the code the Active tab uses, on the key, category,
+      and the devices and ports the poll stored in `about`. A silence you
+      add, delete, or that expires counts at once, for open alerts and
+      events alike. A silenced row that no silence covers any more counts
+      again unless a down device holds it, because that is what the next
+      poll does with it (`evaluate` re-raises it, or holds it);
+    - a rule switched off leaves the count at once;
+    - the severity override applies, as on the tab.
+
+    What remains different, by design or by timing:
+
+    - an item the engine holds while its device is down (`held_by`) is on
+      the tab, tagged "held", and not in the count. An alert that was
+      already open when its device went down is in both, because the
+      engine keeps it as it was;
+    - anything only the attention rules can decide waits for the next
+      poll: a new item, a condition that ends, a rule switched on, and a
+      rule parameter changed show on the tab first;
+    - an event whose source row was deleted stays counted until its
+      24-hour window ends;
+    - a row stored before `about` existed keeps the last poll's answer,
+      except that a key or category silence added since applies at once.
+      The first poll after the upgrade stores `about` on every row whose
+      item is still listed.
 
     Two selects joined by UNION ALL: open rows come through the partial
     index on `state != 'cleared'`, events through the index on `raised_at`,
-    so cleared history never costs a scan."""
+    so cleared history never costs a scan. The silences read happens only
+    when a row is in either."""
     now = db.now() if now is None else now
     events = tuple(n for n, r in RULES.items() if r.event)
     marks = ",".join("?" * len(events))
-    sev = "COALESCE(NULLIF(r.severity, ''), a.severity)"
-    join = "FROM alerts a LEFT JOIN alert_rules r ON r.name = a.rule "
-    return {r["sev"]: r["n"] for r in conn.execute(
-        "SELECT sev, SUM(n) AS n FROM ("
-        f" SELECT {sev} AS sev, COUNT(*) AS n {join}"
-        "  WHERE a.state != 'cleared' AND a.state IN ('pending', 'active')"
-        "  AND COALESCE(r.enabled, 1) = 1 GROUP BY sev"
+    cols = ("COALESCE(NULLIF(r.severity, ''), a.severity) AS sev, a.key, a.rule, "
+            "a.category, a.state, a.active_at, a.about "
+            "FROM alerts a LEFT JOIN alert_rules r ON r.name = a.rule ")
+    rows = conn.execute(
+        f"SELECT {cols}"
+        " WHERE a.state != 'cleared' AND COALESCE(r.enabled, 1) = 1"
         " UNION ALL"
-        f" SELECT {sev} AS sev, COUNT(*) AS n {join}"
-        f"  WHERE a.state = 'cleared' AND a.raised_at >= ? AND a.rule IN ({marks})"
-        "  AND a.active_at IS NOT NULL AND a.raised_at >= COALESCE(r.enabled_at, 0)"
-        "  AND COALESCE(r.enabled, 1) = 1 GROUP BY sev"
-        ") GROUP BY sev", (now - EVENT_WINDOW_S, *events))}
+        f" SELECT {cols}"
+        f" WHERE a.state = 'cleared' AND a.raised_at >= ? AND a.rule IN ({marks})"
+        "  AND a.raised_at >= COALESCE(r.enabled_at, 0)"
+        "  AND COALESCE(r.enabled, 1) = 1",
+        (now - EVENT_WINDOW_S, *events)).fetchall()
+    if not rows:
+        return {}
+    items = [_badge_item(r) for r in rows]
+    silences.apply(conn, items, now)
+    down: set[str] | None = None
+    out: dict[str, int] = {}
+    for r, it in zip(rows, items):
+        if it["about"] is None:
+            # stored before #153: device and port silences are the poll's
+            counts = (not it["silenced"]
+                      and (r["state"] in ("pending", "active")
+                           or (r["state"] == "cleared" and r["active_at"] is not None)))
+        elif it["silenced"]:
+            counts = False
+        elif r["state"] == "silenced":
+            if down is None:
+                down = down_devices(conn, now)
+            counts = not held_by(it, down)
+        else:
+            counts = True
+        if counts:
+            out[r["sev"]] = out.get(r["sev"], 0) + 1
+    return out
+
+
+def _badge_item(row) -> dict:
+    """An alert row as the item fields a silence matches on (silences.covers)
+    and inhibition reads (held_by)."""
+    try:
+        about = json.loads(row["about"]) if row["about"] else None
+    except ValueError:
+        about = None
+    if not isinstance(about, dict):
+        about = None
+    return {"key": row["key"], "rule": row["rule"], "category": row["category"],
+            "about": about,
+            "devices": (about or {}).get("devices") or [],
+            "ports": [p for p in (about or {}).get("ports") or ()
+                      if isinstance(p, list) and len(p) == 2]}
 
 
 def prune_history(conn: sqlite3.Connection, now: float | None = None) -> None:

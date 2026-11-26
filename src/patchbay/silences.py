@@ -17,7 +17,10 @@ the stale-source summary, matches only a category or key silence.
 `apply()` marks items once, at the end of `attention_items()`, so every
 surface reads the same answer: the Overview hides a silenced item, the
 alert engine stores it as `silenced` and dispatches nothing for it, and
-the /alerts page lists it on its own tab rather than not at all.
+the /alerts page lists it on its own tab rather than not at all. The rail
+badge, which reads stored alert rows rather than items, runs the same
+`apply()` over each row's key, category, and stored devices and ports, so
+a silence moves it between polls too (#153).
 
 `PATCHBAY_EXPECT` is ignored (#69): its entries silence nothing. While the
 variable is set, `import_expect()` turns each entry into an ordinary
