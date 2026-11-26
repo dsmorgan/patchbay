@@ -107,7 +107,9 @@ RULES: dict[str, Rule] = {
         summary="A link runs at 100M or slower."),
     "config-changed": Rule(
         category="config", event=True, params={}, route="none",
-        summary="A device's stored configuration changed."),
+        summary="A device's stored configuration changed. Each change stays "
+                f"on the Active tab for {EVENT_WINDOW_S // 3600} hours, then "
+                "leaves on its own."),
     "ipam-drift": Rule(
         category="ipam", summary="IPAM records and the network disagree."),
     "expected-tunnel-missing": Rule(
@@ -121,7 +123,8 @@ RULES: dict[str, Rule] = {
     "snapshot-failed": Rule(
         category="source", event=True, params={},
         summary="The daily, a manual, or an alert snapshot failed, or was not "
-                "delivered off-host."),
+                "delivered off-host. Each failure stays on the Active tab for "
+                f"{EVENT_WINDOW_S // 3600} hours, then leaves on its own."),
     # a port's error rate orders of magnitude above its own baseline (#64,
     # ADR-0003 Decision 5); `for` 2 so one bad sample is quiet. Discards are
     # collected but not judged (#83, #86)

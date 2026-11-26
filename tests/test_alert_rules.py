@@ -348,6 +348,17 @@ def test_event_row_says_when_it_leaves_the_active_tab(clean_env, tmp_path, monke
     assert "leaves in" not in page
 
 
+def test_event_rule_summaries_name_the_window(clean_env):
+    import patchbay.web as web
+
+    page = TestClient(web.app).get("/alerts?tab=rules").text
+    for rule in ("config-changed", "snapshot-failed"):
+        form = page[page.index(f'id="rule-{rule}"'):]
+        summary = form[:form.index("</form>")]
+        assert "stays on the Active tab for 24 hours, then leaves on its own" in summary
+    form = page[page.index('id="rule-device-down"'):]
+    assert "Active tab for" not in form[:form.index("</form>")]
+
 
 # --- snapshot failed (event) --------------------------------------------------
 
