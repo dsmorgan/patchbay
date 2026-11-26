@@ -39,8 +39,9 @@ Cookie sessions don't fit an MCP client, so `/mcp` has its own gate:
   the same host list.
 - Nothing logs the token.
 
-The token crosses the LAN, so `/ops` warns when `/mcp` is on without TLS,
-like its unset-allowlist warning.
+patchbay doesn't require TLS for `/mcp`: on a LAN-only install the token
+crosses the same network as the UI's session cookie, and TLS belongs to
+the reverse proxy when there is one.
 
 A static token skips the spec's OAuth 2.1 flow; most clients accept a custom
 `Authorization` header. OAuth through the configured OIDC provider waits
@@ -128,7 +129,7 @@ None.
 1. Mount `/mcp` with the token gate and `freshness`, `find`, and `alerts`,
    against the `patchbay demo` database. Test that `/mcp` answers `404`
    without `PATCHBAY_MCP_TOKEN` and `401` with a wrong token.
-2. Document a client config: the URL `https://patchbay.example.net/mcp` and
+2. Document a client config: the URL `http://patchbay.example.net:8080/mcp` and
    the header `Authorization: Bearer <token>`.
 3. Extract the device builder; add `device`, `links`, `drift`, and `routed`.
 4. Add the config tools, with tests that `config_diff` is absent unless
