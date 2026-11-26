@@ -9,35 +9,40 @@ it knows, through the Model Context Protocol (MCP). MCP revision 2026-07-28
 defines two transports: stdio, where the client launches the server, and
 Streamable HTTP.
 
-patchbay runs as two containers, web UI and poller, sharing a SQLite
-database. The UI is LAN-only, gated by `PATCHBAY_AUTH` session cookies and
-the `PATCHBAY_ALLOWED_HOSTS` allowlist. Most pages build their data in
-framework-free functions such as `attention_items` and `drift_report`; the
-device, alerts, and config pages build theirs inside the route handler.
-patchbay stays read-only until 1.0 (#24).
+patchbay runs as web UI and poller containers sharing a SQLite database.
+The UI is LAN-only, gated by session cookies and the
+`PATCHBAY_ALLOWED_HOSTS` allowlist. Most pages build their data in
+framework-free functions; the device, alerts, and config pages build theirs
+inside the route handler. patchbay stays read-only until 1.0 (#24).
 
-## Decision 1 — stdio first, through `patchbay mcp`
+The primary user is an assistant on a laptop that reaches the web UI over
+the LAN but can't SSH to the container host.
 
-`patchbay mcp` serves MCP over stdio. The client runs it inside the web
-container with `docker compose exec -T patchbay patchbay mcp`, prefixed with
-`ssh nas.example.net` from a laptop. Nothing new listens or runs between
-sessions, and the process shares the container's network, so it reaches
-oxidized-web.
+## Decision 1 — HTTP first, at `/mcp`
 
-Streamable HTTP at `/mcp` on the existing app comes second, off by default:
-for clients that can't launch a subprocess, and hosts where only root can
-use Docker. Both transports serve one tool module.
+Streamable HTTP, mounted at `/mcp` on the existing FastAPI app, is the
+primary transport: the assistant reaches it the way the browser does.
 
-## Decision 2 — authentication follows the transport
+`patchbay mcp` serves the same tools over stdio, for a client on the host
+or a local demo database. stdio needs no gate: whoever can launch it can
+already read the database.
 
-The spec says stdio servers take credentials from the environment and skip
-MCP authorization. Whoever can `docker compose exec` can already read the
-database, so SSH and Docker access are the gate.
+## Decision 2 — a static bearer token
 
-Cookie sessions don't fit an MCP client, so `/mcp` answers only when
-`PATCHBAY_MCP_TOKEN` is set. It bypasses the cookie gate, checks that bearer
-token through the SDK's `TokenVerifier`, and keeps the Host allowlist. A
-static token skips the spec's OAuth 2.1 flow; most clients accept a custom
+Cookie sessions don't fit an MCP client, so `/mcp` has its own gate:
+
+- Unless `PATCHBAY_MCP_TOKEN` is set, `/mcp` answers `404`.
+- patchbay's gate checks the `Authorization: Bearer` header in constant
+  time, as `check_password` does, before the SDK sees the request. A
+  missing or wrong token gets `401`.
+- The Host allowlist still applies, and the SDK's DNS-rebinding check gets
+  the same host list.
+- Nothing logs the token.
+
+The token crosses the LAN, so `/ops` warns when `/mcp` is on without TLS,
+like its unset-allowlist warning.
+
+A static token skips the spec's OAuth 2.1 flow; most clients accept a custom
 `Authorization` header. OAuth through the configured OIDC provider waits
 until homelab identity providers support what MCP requires: resource
 indicators, and client ID metadata documents or dynamic registration.
@@ -61,41 +66,43 @@ and `build_topology_graph` returns a dict before the page serializes it.
 | `config_changes(device, since)` | Which configs changed, when, by how many lines | `/configs` |
 | `config_diff(device, revision)` | One change as a scrubbed diff | `/configs` |
 
-`find` is the only new query; a UI search box can share it later.
+`find` is the only new query.
 
 ## Decision 4 — what leaves the host
 
-Treat every result as leaving the host, as a snapshot does: the assistant's
-provider sees it. Tools build results from named fields, never whole rows,
-so a new column never leaks by accident. No tool returns the session secret
-or redaction key, a transport URL, `raw_payloads`, a setting's value, or the
-password hash.
+Every result leaves the host, as a snapshot does. Tools build results from
+named fields, never whole rows, so a new column never leaks. No tool
+returns the session secret or redaction key, a transport URL,
+`raw_payloads`, a setting's value, or a token or password hash.
 
-Config content appears only as diffs, never whole files. Every diff passes
-through `scrub_config`, the snapshot's stricter scrubber, including Oxidized
-text, which the UI shows unredacted.
+Config content is opt-in. `config_changes` returns metadata only.
+`config_diff` is registered only with `PATCHBAY_MCP_CONFIG_DIFFS=on`, so the
+assistant never plans around a tool it can't call; `config_changes` says
+when diffs are off and names the variable. Diffs never carry whole files and
+pass through `scrub_config`, the snapshot's stricter scrubber, Oxidized text
+included.
 
 ## Decision 5 — read-only by construction
 
-The server opens the database `mode=ro`, as `/healthz` does, and never runs
+Tools open the database `mode=ro`, as `/healthz` does, and never run
 `db.init` or `stamp_first_seen`. Every tool carries `readOnlyHint`. Until
 1.0, no tool changes settings, silences, or devices; adding one takes a new
 ADR.
 
 ## Decision 6 — the dependency
 
-Use the official SDK, `mcp` 2.3.0 (October 2026), pinned `>=2.3,<3` in a
-new `mcp` extra that the default image installs (open question 3). It
-reuses FastAPI's Starlette, Pydantic, and AnyIO, and adds 16 packages to
-today's 21, including compiled `cryptography` and `rpds-py` and a second
-HTTP client, `httpx2`. Version 2 (July 2026) renamed `FastMCP` to
-`MCPServer` and broke 1.x code, so the upper bound makes the next major
-version deliberate.
+Use the official SDK, `mcp` 2.3.0 (October 2026), pinned `>=2.3,<3`. The
+default image installs it, and the endpoint stays off until the token is
+set. It adds 16 packages to today's 21, including compiled `cryptography` and
+`rpds-py` and a second HTTP client, `httpx2`. Version 2 (July 2026) broke
+1.x code, so the upper bound makes the next major version deliberate.
 
 ## Alternatives considered
 
-- **HTTP only.** Reaches any LAN client, but opens a network surface and
-  needs tokens before the first tool works.
+- **stdio first, through `docker compose exec` over SSH.** No new network
+  surface, but the assistant can't SSH to the host, and Docker on a typical
+  NAS needs root.
+- **OAuth now.** Needs identity-provider features homelabs rarely have.
 - **A JSON API behind an OpenAPI-to-MCP bridge.** Two surfaces, and
   generated tool descriptions explain less.
 - **A generic SQLite MCP server.** No redaction, sees `app_state` secrets,
@@ -104,27 +111,26 @@ version deliberate.
 
 ## Consequences
 
+- The web app gains a surface outside the cookie gate, with its own tests.
 - Extracting the device, alerts, and config builders refactors the UI with
   no visible change; page tests guard it.
-- Names come from the network, so a hostile DHCP hostname can carry text
-  aimed at the assistant. Read-only tools limit what it can make patchbay
-  do, not what the assistant does with other tools.
+- A hostile DHCP hostname can carry text aimed at the assistant. Read-only
+  tools limit what it can make patchbay do, not what the assistant does
+  elsewhere.
 - The image grows, and Dependabot tracks the new packages through `uv.lock`.
 
 ## Open questions
 
-1. Are config diffs on by default, or opt-in through an environment
-   variable?
-2. Does HTTP ship with stdio, or wait for a client that needs it?
-3. Does the MCP extra ship in the default image or a separate tag?
-4. Is a static bearer token acceptable, or does HTTP wait for OAuth?
+None.
 
 ## Prototype plan
 
-1. Add the `mcp` extra and `patchbay mcp` with `freshness`, `find`, and
-   `alerts`, against the `patchbay demo` database.
-2. Extract the device builder; add `device`, `links`, `drift`, and `routed`.
-3. Add the config tools, with a test that seeds a secret and checks that no
-   tool returns it.
-4. Connect a client through `docker compose exec`, answer the example
-   questions from #155, and post the transcripts there.
+1. Mount `/mcp` with the token gate and `freshness`, `find`, and `alerts`,
+   against the `patchbay demo` database. Test that `/mcp` answers `404`
+   without `PATCHBAY_MCP_TOKEN` and `401` with a wrong token.
+2. Document a client config: the URL `https://patchbay.example.net/mcp` and
+   the header `Authorization: Bearer <token>`.
+3. Extract the device builder; add `device`, `links`, `drift`, and `routed`.
+4. Add the config tools, with tests that `config_diff` is absent unless
+   enabled and that no tool returns a seeded secret.
+5. Answer the example questions from #155 and post the transcripts there.
