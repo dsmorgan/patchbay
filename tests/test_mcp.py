@@ -229,6 +229,16 @@ def test_transport_security_mirrors_the_allowlist():
     assert "http://patchbay.example.net:*" in s.allowed_origins
 
 
+def test_only_post_is_served(mcp_client):
+    # stateless JSON opens no SSE stream: a GET must not hang open
+    for method in ("get", "delete"):
+        r = getattr(mcp_client, method)("/mcp", headers=HEADERS)
+        assert r.status_code == 405, method
+        assert r.headers["allow"] == "POST"
+    # and the token still comes first: no hint of the method to a stranger
+    assert mcp_client.get("/mcp").status_code == 401
+
+
 def test_ops_says_whether_mcp_is_on_never_the_token(mcp_client):
     body = mcp_client.get("/ops").text
     assert "PATCHBAY_MCP_TOKEN" in body and "/mcp answers" in body
