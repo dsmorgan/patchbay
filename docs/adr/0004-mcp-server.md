@@ -135,3 +135,10 @@ None.
 4. Add the config tools, with tests that `config_diff` is absent unless
    enabled and that no tool returns a seeded secret.
 5. Answer the example questions from #155 and post the transcripts there.
+
+## Follow-up (2026-11-26): `stamp_first_seen`, PR #160
+
+The `alerts` tool calls `stamp_first_seen`, which Decision 5 rules out.
+The function only reads: it joins each item to its open alert's
+`raised_at`, which is the "since when" the Active tab shows. The tool's
+`mode=ro` connection would fail the call if it ever wrote.
