@@ -303,6 +303,52 @@ def test_event_items_show_their_own_age(conn, settings):
     assert items[0]["first_seen"] == pytest.approx(pdb.now() - 3600, abs=5)
 
 
+def _active_row(page, text):
+    """The Active-tab row that links `text`, or None when it is not shown."""
+    for row in page.split("<tr>")[1:]:
+        if f">{text}</a>" in row:
+            return row.split("</tr>")[0]
+    return None
+
+
+def test_event_row_says_when_it_leaves_the_active_tab(clean_env, tmp_path, monkeypatch):
+    # #154: an event has nothing to clear it, so its row says it is an event
+    # and how long it has left; a condition's row carries no such label, and
+    # the event still drops off at 24 hours
+    from tests.test_web import seed
+
+    import patchbay.web as web
+
+    t = {"now": 1_800_000_000.0}
+    monkeypatch.setattr(pdb, "now", lambda: t["now"])
+    seed(str(tmp_path / "test.db"))
+    c = sqlite3.connect(str(tmp_path / "test.db"))
+    c.execute("UPDATE devices SET status = 'down', last_seen = ? WHERE name = 'sw1'",
+              (t["now"],))
+    _rev(c, "fw1", 30 * 3600, "a" * 64)                  # the baseline
+    _rev(c, "fw1", 18 * 3600, "b" * 64, "opened 443")    # the change, 18 h ago
+    c.commit(); c.close()
+    client = TestClient(web.app)
+
+    page = client.get("/alerts").text
+    event = _active_row(page, "fw1 config changed: opened 443 — admin")
+    assert event is not None and "18h" in event
+    assert " · event · leaves in 6h</span>" in event
+    condition = _active_row(page, "switch sw1 is down")
+    assert condition is not None and "leaves in" not in condition
+
+    t["now"] += 6 * 3600 - 30 * 60                       # 30 minutes left
+    event = _active_row(client.get("/alerts").text,
+                        "fw1 config changed: opened 443 — admin")
+    assert event is not None and "leaves in 30m" in event
+
+    t["now"] += 30 * 60 + 1                              # past 24 hours: gone
+    page = client.get("/alerts").text
+    assert _active_row(page, "fw1 config changed: opened 443 — admin") is None
+    assert "leaves in" not in page
+
+
+
 # --- snapshot failed (event) --------------------------------------------------
 
 def test_snapshot_failure_record_fires_one_event_each(conn, settings):

@@ -80,7 +80,9 @@ clears; history is kept for 90 days.</p>
     <td class="muted">{{ categories[it.category] }}</td>
     <td><a href="{{ it.href }}">{{ it.text }}</a>
       {% if it.held %}<span class="muted" style="font-size: 0.78rem; font-style: italic; margin-left: 0.4rem" title="{{ HELD_WHY }}">{{ it.held }}</span>{% endif %}</td>
-    <td class="muted mono" title="how long this has been firing (recorded at poll time)">{{ it.since }}{% if it.alert_state == 'pending' %} · pending{% endif %}</td>
+    <td class="muted mono" title="how long this has been firing (recorded at poll time)">{{ it.since }}{% if it.alert_state == 'pending' %} · pending{% endif %}
+      {%- if it.leaves %}{#- a one-shot event has nothing to clear it (#154) -#}
+      <span title="a one-shot event: it stays on this tab for {{ EVENT_WINDOW_H }} hours after it happens, then leaves on its own. Silence it to remove it sooner."> · event · leaves in {{ it.leaves }}</span>{% endif %}</td>
     <td>{% include "_silence_button.html" %}
       {% if it.retirable %}{# a pulled cable's way out (#79): the operator says it is gone #}
       <form method="post" action="/alerts/cables/retire" class="retire-form"

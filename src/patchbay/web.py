@@ -24,7 +24,8 @@ from fastapi.templating import Jinja2Templates
 
 from . import alerting, db, expected_tunnels, known_cables, silences, transports
 from . import routed
-from .attention import (CATEGORIES, DEVICE_STALE_S, STALE_MIN, attention_items, device_totals, drift_report,
+from .attention import (CATEGORIES, DEVICE_STALE_S, EVENT_WINDOW_S, STALE_MIN,
+                        attention_items, device_totals, drift_report,
                         gateway_state, human_age, human_speed, ip_sort_key, ipam_link,
                         source_ages, speed_tier, stamp_first_seen)
 from .config import load_settings
@@ -331,6 +332,7 @@ templates.env.globals["HELD_WHY"] = (
     "The alert engine holds this while the device is down: the device being "
     "down explains it, and the Alerts count on the rail does not include it.")
 templates.env.globals["STALE_MIN"] = STALE_MIN   # the top bar uses the same threshold
+templates.env.globals["EVENT_WINDOW_H"] = EVENT_WINDOW_S // 3600
 
 
 
@@ -340,12 +342,28 @@ def _since(ts: float | None) -> str:
     first-seen. None means the poll hasn't recorded it yet — just noticed."""
     if ts is None:
         return "new"
-    mins = max(0, (db.now() - ts) / 60)
+    return _span(max(0, (db.now() - ts) / 60))
+
+
+def _span(mins: float) -> str:
+    """A compact duration for the attention lists: minutes, then hours,
+    then days."""
     if mins < 60:
         return f"{mins:.0f}m"
     if mins < 60 * 48:
         return f"{mins / 60:.0f}h"
     return f"{mins / 1440:.0f}d"
+
+
+def _event_leaves(it: dict) -> str | None:
+    """How long until a one-shot event leaves the Active tab (#154), or
+    None for an item that is not an event. An event has no condition to
+    end, so it stays EVENT_WINDOW_S after it happened and then drops off.
+    The remaining time never reads as 0m while the row is still shown."""
+    rule = alerting.RULES.get(it.get("rule"))
+    if rule is None or not rule.event or it.get("at") is None:
+        return None
+    return _span(max(1, (it["at"] + EVENT_WINDOW_S - db.now()) / 60))
 
 
 def _mark_held(conn, items: list[dict]) -> None:
@@ -501,6 +519,7 @@ def alerts(request: Request, category: str | None = None,
         _mark_held(conn, every)
         for it in every:
             it["since"] = _since(it["first_seen"])
+            it["leaves"] = _event_leaves(it)
             it["scopes"] = silences.scopes_for(it)
         items = [it for it in every if not it["silenced"]]
         silenced = [it for it in every if it["silenced"]]
