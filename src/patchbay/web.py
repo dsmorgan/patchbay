@@ -22,7 +22,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from . import alerting, db, expected_tunnels, known_cables, silences, transports
+from . import alert_view, alerting, db, expected_tunnels, known_cables, silences, transports
 from . import routed
 from .attention import (CATEGORIES, DEVICE_STALE_S, EVENT_WINDOW_S, STALE_MIN,
                         attention_items, device_totals, drift_report,
@@ -337,45 +337,9 @@ templates.env.globals["EVENT_WINDOW_H"] = EVENT_WINDOW_S // 3600
 
 
 
-def _since(ts: float | None) -> str:
-    """How long an attention item has been firing, from its poll-recorded
-    first-seen. None means the poll hasn't recorded it yet — just noticed."""
-    if ts is None:
-        return "new"
-    return _span(max(0, (db.now() - ts) / 60))
-
-
-def _span(mins: float) -> str:
-    """A compact duration for the attention lists: minutes, then hours,
-    then days. Each unit rounds before its boundary check, so 59.6 minutes
-    reads as 1h, not 60m, and 47.9 hours as 2d, not 48h."""
-    m = round(mins)
-    if m < 60:
-        return f"{m}m"
-    h = round(mins / 60)
-    if h < 48:
-        return f"{h}h"
-    return f"{round(mins / 1440)}d"
-
-
-def _event_leaves(it: dict) -> str | None:
-    """How long until a one-shot event leaves the Active tab (#154), or
-    None for an item that is not an event. An event has no condition to
-    end, so it stays EVENT_WINDOW_S after it happened and then drops off.
-    The remaining time never reads as 0m while the row is still shown."""
-    rule = alerting.RULES.get(it.get("rule"))
-    if rule is None or not rule.event or it.get("at") is None:
-        return None
-    return _span(max(1, (it["at"] + EVENT_WINDOW_S - db.now()) / 60))
-
-
-def _mark_held(conn, items: list[dict]) -> None:
-    """Tag each item the alert engine holds while its device is down (#118),
-    "held: sw1 is down": the rail badge counts what the engine pages about,
-    so the two numbers differ by exactly these, and the tag says why."""
-    down = alerting.down_devices(conn, db.now())
-    for it in items:
-        it["held"] = alerting.held_text(it, down) if down else ""
+# the attention lists' durations and annotations live in alert_view, shared
+# with the MCP alerts tool; the short names stay for the handlers here
+_span, _since, _mark_held = alert_view.span, alert_view.since, alert_view.mark_held
 
 
 def _attention_summary(items: list[dict]) -> list[dict]:
@@ -495,11 +459,6 @@ def dashboard(request: Request):
         conn.close()
 
 
-# History shows the newest events; the table holds up to
-# alerting.EVENT_KEEP_MAX, which is an archive, not a page
-ALERT_HISTORY_ROWS = 200
-
-
 @app.get("/alerts", response_class=HTMLResponse)
 def alerts(request: Request, category: str | None = None,
            severity: str | None = None, tab: str = "active"):
@@ -517,36 +476,13 @@ def alerts(request: Request, category: str | None = None,
     try:
         db.init(conn)
         settings = load_settings()
-        every, checked = attention_items(conn, settings)
-        stamp_first_seen(conn, every)
-        _mark_held(conn, every)
-        for it in every:
-            it["since"] = _since(it["first_seen"])
-            it["leaves"] = _event_leaves(it)
-            it["scopes"] = silences.scopes_for(it)
-        items = [it for it in every if not it["silenced"]]
-        silenced = [it for it in every if it["silenced"]]
-        for it in silenced:
-            it["silence_what"] = silences.describe(it["silenced"])
-            it["silence_until"] = silences.until_text(it["silenced"])
+        items, silenced, checked = alert_view.alert_lists(conn, settings)
         shown = [it for it in items
                  if (not category or it["category"] == category)
                  and (not severity or it["severity"] == severity)]
-        history = []
-        if tab == "history":
-            where, args = [], []
-            if category:
-                where.append("category = ?"); args.append(category)
-            if severity:
-                where.append("severity = ?"); args.append(severity)
-            history = [
-                {**dict(r), "when": time.strftime("%Y-%m-%d %H:%M",
-                                                  time.localtime(r["ts"]))}
-                for r in conn.execute(
-                    "SELECT * FROM alert_events"
-                    + (" WHERE " + " AND ".join(where) if where else "")
-                    + " ORDER BY ts DESC, id DESC LIMIT ?",
-                    (*args, ALERT_HISTORY_ROWS))]
+        history = (alert_view.alert_history(conn, category=category,
+                                            severity=severity)
+                   if tab == "history" else [])
         rules = alerting.rule_settings(conn) if tab == "rules" else []
         alert_snap = _alert_snapshot_view(settings) if tab == "rules" else None
         for r in rules:   # "default (kuma, warn+)" rather than the stored "1:warn"
@@ -557,7 +493,7 @@ def alerts(request: Request, category: str | None = None,
             "items": shown, "total": len(items), "checked": checked,
             "attn_summary": _attention_summary(items),
             "category": category, "severity": severity, "tab": tab,
-            "history": history, "history_cap": ALERT_HISTORY_ROWS,
+            "history": history, "history_cap": alert_view.ALERT_HISTORY_ROWS,
             "categories": CATEGORIES, "ages": source_ages(conn),
             **({"expected": expected_tunnels.load(conn),
                 "tunnel_types": expected_tunnels.TYPES}
