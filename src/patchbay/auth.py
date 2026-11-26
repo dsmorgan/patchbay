@@ -274,6 +274,41 @@ def forbid_framing(response: Response) -> None:
         response.headers["Content-Security-Policy"] = f"{csp}; frame-ancestors 'none'"
 
 
+# The MCP endpoint (ADR-0004): its own gate, a static bearer token instead
+# of the session cookie. The cookie never opens it, and the token opens
+# nothing else.
+MCP_PATH = "/mcp"
+
+
+def is_mcp(path: str) -> bool:
+    return path == MCP_PATH or path.startswith(MCP_PATH + "/")
+
+
+def bearer_ok(settings: Settings, header: str | None) -> bool:
+    """Whether an Authorization header carries PATCHBAY_MCP_TOKEN, compared
+    in constant time like check_password. False when no token is set."""
+    if not settings.mcp_token or not header:
+        return False
+    scheme, _, candidate = header.strip().partition(" ")
+    if scheme.lower() != "bearer":
+        return False
+    return hmac.compare_digest(candidate.strip().encode(),
+                               settings.mcp_token.encode())
+
+
+def mcp_gate(request: Request, settings: Settings) -> Response | None:
+    """404 while PATCHBAY_MCP_TOKEN is unset, so an install that never
+    turned the endpoint on shows no sign of it; 401 for a missing or wrong
+    token. Never logs the header."""
+    if not settings.mcp_token:
+        return Response("Not Found", status_code=404)
+    if not bearer_ok(settings, request.headers.get("authorization")):
+        return Response("authentication required", status_code=401,
+                        headers={"WWW-Authenticate": 'Bearer realm="patchbay"'})
+    request.state.auth = "mcp"
+    return None
+
+
 def gate(request: Request, settings: Settings) -> Response | None:
     """Middleware body: None = let the request through (request.state.auth is
     set for templates), a Response = intercept with it."""
@@ -297,6 +332,9 @@ def gate(request: Request, settings: Settings) -> Response | None:
         host = request.headers.get("x-forwarded-host") or request.headers.get("host")
         if origin and host and urlsplit(origin).netloc != host:
             return Response("cross-origin request rejected", status_code=403)
+    # /mcp answers to its token in every auth mode, never to the cookie
+    if is_mcp(request.url.path):
+        return mcp_gate(request, settings)
     if settings.auth_mode == "none" or is_public(request.url.path):
         request.state.auth = None
         return None

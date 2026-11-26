@@ -410,6 +410,9 @@ class Settings:
     # Seconds between poller cycles (PATCHBAY_POLL_INTERVAL, #111). The poller
     # sleeps it; /healthz reads it to know how old a poll may be.
     poll_interval: float = POLL_INTERVAL_DEFAULT
+    # Bearer token for the MCP endpoint (PATCHBAY_MCP_TOKEN, ADR-0004). None
+    # = unset: /mcp answers 404. A secret: never shown, logged, or returned.
+    mcp_token: str | None = None
 
     @property
     def snapshot_keep_unknown(self) -> bool:
@@ -786,4 +789,5 @@ def load_settings(*, read_db: bool = True) -> Settings:
         librenms_discards=librenms_discards,
         allowed_hosts=allowed_hosts,
         poll_interval=poll_interval,
+        mcp_token=(env("PATCHBAY_MCP_TOKEN") or "").strip() or None,
     )
