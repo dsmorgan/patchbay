@@ -857,8 +857,9 @@ def silence_add(request: Request, f: dict[str, str] = Depends(_form)):
 
 @app.post("/alerts/silences/{sid}/delete")
 def silence_delete(sid: int, f: dict[str, str] = Depends(_form)):
-    """Remove a silence. What it covered returns on the next poll, as a
-    new raise if the condition still holds."""
+    """Remove a silence. What it covered returns to the Active tab and the
+    rail badge at once (#153); the next poll raises it as new if the
+    condition still holds."""
     conn = _conn()
     try:
         db.init(conn)
