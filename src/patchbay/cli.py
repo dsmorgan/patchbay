@@ -338,6 +338,19 @@ def cmd_poller(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """The MCP tools over stdio: the client launches this, so stdout is the
+    protocol and every message to a person goes to stderr."""
+    try:
+        from . import mcp_server
+    except ImportError:
+        print("patchbay mcp needs the web extra: pip install 'patchbay[web]'",
+              file=sys.stderr)
+        return 2
+    mcp_server.run_stdio()
+    return 0
+
+
 def cmd_web(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -551,6 +564,10 @@ def main(argv: list[str] | None = None) -> int:
     p_web.add_argument("--host", default="0.0.0.0")
     p_web.add_argument("--port", type=int, default=8080)
     p_web.set_defaults(func=cmd_web)
+
+    p_mcp = sub.add_parser("mcp", help="serve the read-only MCP tools over "
+                           "stdio, for an assistant on this host (ADR-0004)")
+    p_mcp.set_defaults(func=cmd_mcp)
 
     p_snap = sub.add_parser("snapshot",
                             help="write a self-contained break-glass HTML snapshot")
