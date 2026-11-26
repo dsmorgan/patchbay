@@ -318,7 +318,10 @@ class HTTPEndpoint:
 
     async def __call__(self, scope, receive, send) -> None:
         from starlette.concurrency import run_in_threadpool
+        from starlette.datastructures import Headers
         from starlette.responses import Response
+
+        from .auth import bearer_ok
 
         manager = self._manager
         if manager is None:
@@ -328,6 +331,15 @@ class HTTPEndpoint:
         # re-read per request, like the gate, so an allowlist edit applies
         # without a restart; stateless transports read it as they start
         settings = await run_in_threadpool(load_settings, read_db=False)
+        # auth.mcp_gate already ran; checking again here means nothing
+        # reaches the SDK without the token, however the request was routed
+        if not settings.mcp_token:
+            await Response("Not Found", status_code=404)(scope, receive, send)
+            return
+        if not bearer_ok(settings, Headers(scope=scope).get("authorization")):
+            await Response("authentication required", status_code=401, headers={
+                "WWW-Authenticate": 'Bearer realm="patchbay"'})(scope, receive, send)
+            return
         manager.security_settings = transport_security(settings.allowed_hosts)
         # the gate checked the token; the SDK has no use for it
         scope = {**scope, "headers": [(k, v) for k, v in scope["headers"]
