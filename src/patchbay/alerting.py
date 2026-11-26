@@ -616,12 +616,15 @@ def _silenced(conn, it: dict, name: str, rule: dict, row, silence: dict,
                 conn.execute("UPDATE alerts SET active_at = NULL WHERE id = ?",
                              (fired["id"],))
             return
+        # stamped when it happened, as an unsilenced event is: the badge's
+        # 24-hour window and the rule's switch-on test read raised_at, and
+        # the tab reads the same moment from the item (#153)
         cur = conn.execute(
             "INSERT INTO alerts (key, rule, category, severity, state, polls, "
             "raised_at, cleared_at, text, href, about) "
             "VALUES (?,?,?,?, 'cleared', 1, ?,?,?,?,?)",
-            (it["key"], name, a["category"], a["severity"], now, now, a["text"],
-             a["href"], _about(it)))
+            (it["key"], name, a["category"], a["severity"], it.get("at") or now, now,
+             a["text"], a["href"], _about(it)))
         _event(conn, cur.lastrowid, now, "silenced", a, why)
         _event(conn, cur.lastrowid, now, "cleared", a, "silenced")
         return
