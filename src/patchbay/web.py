@@ -1456,20 +1456,12 @@ def api_freshness():
     """One fact for the base shell's refresh script: when the last poll
     finished (epoch seconds, null before the first poll ever). Pages reload
     when this advances rather than on a blind timer — see base.html."""
-    import json as _json
-
     conn = _conn()
     try:
         db.init(conn)
-        raw = db.get_state(conn, "last_poll")
+        ts = db.last_poll_ts(conn)
     finally:
         conn.close()
-    ts = None
-    if raw:
-        try:
-            ts = _json.loads(raw).get("ts")
-        except ValueError:
-            ts = None
     return {"last_poll": ts}
 
 
