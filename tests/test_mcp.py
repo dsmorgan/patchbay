@@ -427,3 +427,19 @@ def test_tools_never_write_the_database(clean_env, demo_db):
     assert hashlib.sha256(demo_db.read_bytes()).hexdigest() == before
     assert demo_db.stat().st_mtime_ns == mtime
     assert not list(demo_db.parent.glob("test.db-*"))     # no journal, no WAL
+
+
+def test_the_tool_connection_refuses_writes(clean_env, demo_db, monkeypatch):
+    # on a writable file, so the refusal comes from mode=ro, not from the
+    # file's permissions (CI may run as root, where chmod proves nothing)
+    settings = load_settings()
+    with mcp_server._read_only(settings) as conn:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            conn.execute("INSERT INTO app_state (key, value) VALUES ('x', 'y')")
+    # and no tool migrates the database on the way in
+    called = []
+    monkeypatch.setattr(db, "init", lambda conn: called.append(conn))
+    mcp_server.freshness()
+    mcp_server.alerts(history=True)
+    mcp_server.find("nas1")
+    assert not called
