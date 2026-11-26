@@ -722,6 +722,20 @@ def save_last_poll(conn: sqlite3.Connection, lines: list[str]) -> None:
     set_state(conn, "last_poll", json.dumps({"ts": now(), "lines": lines}))
 
 
+def last_poll_ts(conn: sqlite3.Connection) -> float | None:
+    """When the last poll finished (epoch seconds), or None before the
+    first poll or for an unreadable record. The top bar's refresh check
+    and the MCP freshness tool both read it here."""
+    raw = get_state(conn, "last_poll")
+    if not raw:
+        return None
+    try:
+        ts = json.loads(raw).get("ts")
+    except (ValueError, AttributeError):
+        return None
+    return ts if isinstance(ts, (int, float)) else None
+
+
 # Seconds each collector's collect() took (#83), per source: the last
 # poll's figure and whether it succeeded, plus the last few successful
 # ones, so /ops shows what each source costs and one slow poll can be told
