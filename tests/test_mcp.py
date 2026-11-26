@@ -2,6 +2,7 @@
 tool's answer on the demo network, and what never leaves the host."""
 
 import asyncio
+import contextlib
 import hashlib
 import html
 import json
@@ -118,6 +119,60 @@ def test_session_cookie_never_opens_mcp_and_token_opens_nothing_else(clean_env, 
         assert c.post("/ops/poll", headers={"Authorization": f"Bearer {TOKEN}"}
                       ).status_code == 401
         assert c.post("/mcp", headers=HEADERS, json=INIT).status_code == 200
+
+
+@pytest.mark.parametrize("auth_mode", ["none", "password"])
+def test_a_root_path_never_skips_the_gate(clean_env, demo_db, auth_mode):
+    # uvicorn --root-path /pb: the router strips the prefix, so the gate
+    # must judge the routed path, or /pb/mcp reads as "not /mcp"
+    clean_env.setenv("PATCHBAY_MCP_TOKEN", TOKEN)
+    if auth_mode == "password":
+        clean_env.setenv("PATCHBAY_AUTH", "password")
+        clean_env.setenv("PATCHBAY_PASSWORD_HASH", auth.hash_password("pw"))
+    from patchbay import web
+    bare = {"Accept": HEADERS["Accept"], "MCP-Protocol-Version": PROTO}
+    with TestClient(web.app, root_path="/pb", follow_redirects=False) as c:
+        if auth_mode == "password":
+            c.cookies.set(auth.SESSION_COOKIE,
+                          auth.session_token(load_settings(), "operator"))
+        r = c.post("/pb/mcp", headers=bare, json=_rpc("tools/list"))
+        assert r.status_code == 401, r.text
+        assert c.post("/pb/mcp", headers=HEADERS, json=_rpc("tools/list")).status_code == 200
+        clean_env.delenv("PATCHBAY_MCP_TOKEN")
+        assert c.post("/pb/mcp", headers=HEADERS, json=_rpc("tools/list")).status_code == 404
+
+
+def test_gate_judges_the_routed_path(clean_env):
+    from starlette.requests import Request
+
+    def req(path, root=""):
+        return Request({"type": "http", "method": "POST", "path": path,
+                        "root_path": root, "query_string": b"", "headers": []})
+
+    assert auth.route_path(req("/pb/mcp", "/pb")) == "/mcp"
+    assert auth.route_path(req("/pb", "/pb")) == "/"
+    assert auth.route_path(req("/pbx/mcp", "/pb")) == "/pbx/mcp"
+    assert auth.route_path(req("/mcp")) == "/mcp"
+    clean_env.setenv("PATCHBAY_MCP_TOKEN", TOKEN)
+    s = load_settings(read_db=False)
+    # the gate's own answer, not the page gate's (auth none lets pages through)
+    r = auth.gate(req("/pb/mcp", "/pb"), s)
+    assert r is not None and r.status_code == 401
+    assert auth.gate(req("/pb/healthz", "/pb"), s) is None
+
+
+def test_a_parent_mount_never_skips_the_gate(clean_env, demo_db):
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    from patchbay import web
+    clean_env.setenv("PATCHBAY_MCP_TOKEN", TOKEN)
+    parent = Starlette(routes=[Mount("/pb", app=web.app)], lifespan=web._lifespan)
+    with TestClient(parent) as c:
+        r = c.post("/pb/mcp", headers={"Accept": HEADERS["Accept"]},
+                   json=_rpc("tools/call", {"name": "find", "arguments": {"query": "nas1"}}))
+        assert r.status_code == 401
+        assert c.post("/pb/mcp", headers=HEADERS, json=INIT).status_code == 200
 
 
 def test_mcp_keeps_the_host_allowlist_and_origin_check(clean_env, demo_db):
