@@ -448,6 +448,9 @@ def test_the_tool_connection_refuses_writes(clean_env, demo_db, monkeypatch):
 def test_a_busy_database_says_retry(mcp_client, monkeypatch):
     # a poll holding the write lock: rollback-journal readers wait, then fail
     monkeypatch.setattr(mcp_server, "DB_TIMEOUT", 0.1)
+    # skip the stored declarations, whose own read would wait out its 10 s
+    monkeypatch.setattr(mcp_server, "load_settings",
+                        lambda **_: load_settings(read_db=False))
     holder = sqlite3.connect(os.environ["PATCHBAY_DB"])
     holder.execute("BEGIN EXCLUSIVE")
     try:
