@@ -407,7 +407,8 @@ def _about(item: dict) -> str:
 
 
 def _keep_about(conn, row_id: int, about: str) -> None:
-    """Refresh a fired event's `about`, a no-op write when it is current."""
+    """Refresh a row's `about` on a path that otherwise leaves the row alone
+    (a fired event, a held alert); a no-op write when it is current."""
     conn.execute("UPDATE alerts SET about = ? WHERE id = ? AND about IS NOT ?",
                  (about, row_id, about))
 
@@ -465,8 +466,11 @@ def evaluate(conn: sqlite3.Connection, items: list[dict], *,
             continue
         if inhibited(it, down):
             # neither raised nor cleared: when the device returns, a port
-            # that is still down picks up where it was
+            # that is still down picks up where it was. Its open row still
+            # learns what it is about, for the badge's silence match.
             held.add(key)
+            if key in open_:
+                _keep_about(conn, open_[key]["id"], _about(it))
             continue
         seen.add(key)
         a = {"key": key, "rule": name, "category": it["category"],
@@ -739,8 +743,9 @@ def open_count(conn: sqlite3.Connection, now: float | None = None) -> dict[str, 
       24-hour window ends;
     - a row stored before `about` existed keeps the last poll's answer,
       except that a key or category silence added since applies at once.
-      The first poll after the upgrade stores `about` on every row whose
-      item is still listed.
+      The first poll after the upgrade stores `about` on every open row
+      whose item is still listed, held ones included, and on every event
+      row whose item is.
 
     Two selects joined by UNION ALL: open rows come through the partial
     index on `state != 'cleared'`, events through the index on `raised_at`,
