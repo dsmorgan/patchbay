@@ -215,6 +215,19 @@ def set_session(response: Response, request: Request, settings: Settings,
 
 # --- request gate ------------------------------------------------------------
 
+def route_path(request: Request) -> str:
+    """The path the router matches: the request path without the ASGI
+    root_path (uvicorn --root-path, or a parent app's Mount). Starlette's
+    request.url.path keeps the prefix, so a gate that read it would judge
+    /pb/mcp as some other page while the router served /mcp."""
+    path = request.scope["path"]
+    root = request.scope.get("root_path", "")
+    if root and path.startswith(root) and (len(path) == len(root)
+                                           or path[len(root)] == "/"):
+        return path[len(root):] or "/"
+    return path
+
+
 def is_public(path: str) -> bool:
     return path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
 
@@ -333,9 +346,10 @@ def gate(request: Request, settings: Settings) -> Response | None:
         if origin and host and urlsplit(origin).netloc != host:
             return Response("cross-origin request rejected", status_code=403)
     # /mcp answers to its token in every auth mode, never to the cookie
-    if is_mcp(request.url.path):
+    path = route_path(request)
+    if is_mcp(path):
         return mcp_gate(request, settings)
-    if settings.auth_mode == "none" or is_public(request.url.path):
+    if settings.auth_mode == "none" or is_public(path):
         request.state.auth = None
         return None
     identity = authenticated_identity(request, settings)
