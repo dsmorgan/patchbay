@@ -30,6 +30,7 @@ NAS_MAC = "02:d3:00:00:02:c7"
 @pytest.mark.parametrize("query", [
     NAS_MAC, NAS_MAC.upper(), NAS_MAC.replace(":", "-"),
     "02d3.0000.02c7", "02d300-0002c7", "02d3-0000-02c7", "02D3000002C7",
+    "2:d3:0:0:2:c7", "2-D3-0-0-2-C7",
 ])
 def test_every_mac_spelling_finds_the_same_port(model, query):
     conn, settings = model
@@ -50,6 +51,12 @@ def test_classify():
     assert find.classify("NAS1.example.net") == ("name", "nas1")
     assert find.classify("02:d3:00:00:02") == ("name", "02:d3:00:00:02")  # too short
     assert find.classify("") == ("name", "")
+    # six short groups are a MAC; IPv6 needs eight groups or a "::"
+    assert find.classify("2:d3:0:0:2:c7") == ("mac", "02:d3:00:00:02:c7")
+    assert find.classify("2001:db8:0:0:2:c7:0:1") == ("ip", "2001:db8::2:c7:0:1")
+    assert find.classify("2001:db8::2:c7") == ("ip", "2001:db8::2:c7")
+    assert find.classify("2:d3:0:0:2") == ("name", "2:d3:0:0:2")   # five groups
+    assert find.classify("2:d3:0:0:2-c7")[0] == "name"            # mixed separators
 
 
 def test_ip_finds_the_device_and_its_ipam_record(model):
