@@ -8,11 +8,14 @@ put.
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-11-26
+
 ### Added
 - A read-only MCP endpoint lets an AI assistant ask patchbay about the network. Set `PATCHBAY_MCP_TOKEN` and point the client at `/mcp` with the header `Authorization: Bearer <token>`; unset, `/mcp` answers `404`. Three tools: `freshness` (the last poll and each source's age), `find` (where a MAC, IP address, hostname, or alias is: port, cables, IPAM record, and whether each map draws it), and `alerts` (open and silenced alerts, optionally with recent events). The tools read the database read-only and never return secrets, setting values, or raw payloads. `patchbay mcp` serves the same tools over stdio. See [docs/configuration.md](docs/configuration.md#mcp-endpoint). (#155)
 
 ### Changed
 - On the **Alerts** → **Active** tab, a one-shot event's row now says it's an event and how long until it leaves the tab, for example "18h · event · leaves in 6h". A config change or a failed snapshot has no condition to clear it, so it stays for 24 hours and then drops off; before, its age read like an alert that was stuck. The **Rules** tab summaries for `config-changed` and `snapshot-failed` mention the 24-hour window. (#154)
+- Updated dependencies: FastAPI 0.165.0 and the uv build image 0.13.9. The test workflow's `setup-uv` action is also updated. The image adds the `mcp` SDK, which the MCP endpoint uses. (#155)
 
 ### Fixed
 - The **Alerts** badge on the rail now changes as soon as you add or delete a silence, or one expires: the same moment the **Active** tab does. It used to wait for the next poll. This covers open alerts and one-shot events such as a config change. An event silenced when it fired also leaves the badge when its 24-hour window on the tab ends. The badge used to time that window from the poll that stored the event, not from the change itself, so it kept the event for as long as the change took to reach a poll. (#153)
